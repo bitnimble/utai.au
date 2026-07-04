@@ -134,7 +134,7 @@ async def lifespan(app: FastAPI):
     log.info("Starting up: warming separation model...")
     started = time.perf_counter()
     separator = Separator()
-    await asyncio.to_thread(separator.load, stems_per=False)
+    await asyncio.to_thread(separator.load)
     app.state.separator = separator
     log.info(
         "Startup complete in %.2fs - service is ready to accept requests.",

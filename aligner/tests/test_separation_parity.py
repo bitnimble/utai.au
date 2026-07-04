@@ -1,7 +1,7 @@
-"""torch <-> ONNX full-model parity guard for the SEPARATION models.
+"""torch <-> ONNX full-model parity guard for the SEPARATION model.
 
 Complements the DSP-level `test_np_stft_parity.py` (which pins the numpy STFT/
-iSTFT to torch): this runs the WHOLE separation of both shipped models through
+iSTFT to torch): this runs the WHOLE separation of the vocals separator through
 BOTH paths on the same input and asserts the stems agree, so a future re-export
 or an onnxruntime bump can't silently shift the separated stems.
 
@@ -34,10 +34,9 @@ import pytest
 from app.config import settings
 from app.pipeline.provision import yaml_for_ckpt
 
-# (torch ckpt filename, expected kind) for both shipped separators.
+# (torch ckpt filename, expected kind) for the shipped vocals separator.
 _MODELS = [
     (settings.demucs_model, "bs_roformer"),  # model_bs_roformer_sw.ckpt
-    (settings.drum_pieces_model, "mdx23c"),  # drumsep_5stems_mdx23c_jarredou.ckpt
 ]
 
 _DEFAULT_CKPT_DIR = "/codebox-workspace/utai/models-cache"
@@ -93,12 +92,12 @@ pytestmark = [
 
 
 def _stereo_noise(seconds: float = 3.5, sr: int = 44100, seed: int = 0) -> np.ndarray:
-    """A short seeded stereo waveform, shape (samples, channels) -- the shape both
-    `separate()` entry points expect for a 2D ndarray (they transpose to channels-
-    first internally). Tones + noise + a broadband click train: the transients give
-    the percussion separators (MDX23C kick/snare/toms) real energy to route, so the
-    correlation check covers more than one stem, not just whichever stem the steady
-    tones land in. Decorrelated L/R so the stereo path is non-trivial."""
+    """A short seeded stereo waveform, shape (samples, channels) -- the shape
+    `separate()` expects for a 2D ndarray (it transposes to channels-first
+    internally). Tones + noise + a broadband click train: the transients give the
+    separator's percussive stems real energy to route, so the correlation check
+    covers more than one stem, not just whichever stem the steady tones land in.
+    Decorrelated L/R so the stereo path is non-trivial."""
     rng = np.random.default_rng(seed)
     n = int(sr * seconds)
     t = np.arange(n) / sr

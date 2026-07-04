@@ -14,16 +14,13 @@ Why a ContextVar (and not, say, a thread-local or an explicit arg):
     snapshots the *calling* context with `contextvars.copy_context()` and
     runs the worker inside it. So as long as we `set_request_id(...)` on
     the event-loop side before the `to_thread` hop, the worker thread sees
-    the same id with zero plumbing. The same mechanism already carries the
-    debug-sink / run-log contextvars (see `app.debug`, `app.run_log`).
+    the same id with zero plumbing.
 
-  * The LLM fan-out stages (`filter_llm`, `quantise`) submit work onto
-    their own `ThreadPoolExecutor`s. Executors do NOT copy contextvars
-    into their worker threads, so those log lines would otherwise drop
-    back to the `"-"` default. Each of those call sites submits through
-    `contextvars.copy_context().run(...)` so the id (and the existing
-    debug-sink / run-log contextvars) ride along, see the comments at
-    each submit site.
+  * Any stage that fans work onto its own `ThreadPoolExecutor` needs to
+    submit through `contextvars.copy_context().run(...)` for the id to
+    ride along: executors do NOT copy contextvars into their worker
+    threads, so those log lines would otherwise drop back to the `"-"`
+    default.
 
 The `RequestIdLogFilter` is what bridges the contextvar to the log
 record: it stamps `record.request_id` on its way through the single

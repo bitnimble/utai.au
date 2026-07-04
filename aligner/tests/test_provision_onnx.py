@@ -22,8 +22,7 @@ def _names(capability):
 
 def test_separation_is_scoped_to_separation():
     names = _names("separation")
-    assert {"model_bs_roformer_sw.fp16.onnx", "drumsep_5stems_mdx23c_jarredou.fp16.onnx",
-            "config_bs_roformer_sw.yaml"} <= names
+    assert {"model_bs_roformer_sw.fp16.onnx", "config_bs_roformer_sw.yaml"} <= names
     # never pulls lyrics weights
     assert not any("ctc_align" in f for f in names)
 
@@ -39,7 +38,7 @@ def test_every_loader_lookup_is_provisioned_by_some_capability():
     for cap in ("separation", "lyrics"):
         provisioned |= _names(cap)
     loader_names = {
-        "model_bs_roformer_sw", "drumsep_5stems_mdx23c_jarredou",  # separation
+        "model_bs_roformer_sw",  # separation
         f"ctc_align__{settings.lyrics_align_model_english.replace('/', '__')}",
         f"ctc_align__{settings.lyrics_align_model_default.replace('/', '__')}",  # lyrics
     }
@@ -56,14 +55,6 @@ def test_roformer_ships_platform_variant_under_canonical_local_name(monkeypatch)
         assert asset.filename == f"{stem}.fp16.onnx"
         # ...while the remote file is the platform's mutually-exclusive variant.
         assert asset.url.endswith(f"{stem}.{variant}.fp16.onnx")
-
-
-def test_mdx23c_is_platform_agnostic(monkeypatch):
-    stem = Path(settings.drum_pieces_model).stem  # conv-only, one file everywhere
-    monkeypatch.setattr("app.pipeline.provision.sys.platform", "darwin")
-    asset = _sep_onnx_asset(stem)
-    assert asset.filename == f"{stem}.fp16.onnx"
-    assert asset.url.endswith(f"{stem}.fp16.onnx")  # no .coreml./.mha. suffix
 
 
 def test_deprovision_removes_only_orphaned_assets(tmp_path, monkeypatch):

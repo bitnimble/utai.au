@@ -11,16 +11,12 @@ import { formatPlayheadTime, playheadBarBeat } from './playhead_label';
  * visible across the whole vertical stack.
  *
  * Position is NOT driven from this component; it's read from the
- * `--playhead-x` CSS custom property that `PlayheadPosVar` writes once
- * per frame on each `[data-playhead="1"]` element (see jot_editor.tsx).
- * The var is registered `inherits: false`, so the per-tick `setProperty`
- * has to be made per-playhead; `PlayheadPosVar` iterates a cached
- * `DomTargetCache.playheads` Set (maintained via a single
- * `MutationObserver` on the JotEditor root) instead of `querySelectorAll`-ing
- * every frame. The shell only re-renders when `state` / `cued` / `timeline`
- * change (i.e. transport events, not per-frame playback) so a debug bundle
- * with many tracks doesn't pay N × (reconciliation + new style object +
- * new closure) every frame the way it used to.
+ * `--playhead-x` CSS custom property that the `autorun` in
+ * `karaoke/karaoke_page.tsx` writes each frame it changes onto every
+ * `[data-playhead="1"]` element. The var is registered `inherits: false`,
+ * so that write targets each playhead directly. The shell only re-renders
+ * when `state` / `cued` / `timeline` change (i.e. transport events, not
+ * per-frame playback), so per-frame position updates never reconcile React.
  *
  * Drag-to-scrub still works because the mousedown handler measures
  * against the parent bars-row's bounding rect, which is unaffected by

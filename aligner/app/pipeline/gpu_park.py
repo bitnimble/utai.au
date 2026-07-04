@@ -1,12 +1,12 @@
 """GPU-residency control for warm model singletons.
 
-The pipeline worker holds several model singletons across the process
-lifetime: the two drum separators (eagerly loaded at startup), the
-vocals separator (lazy, /lyrics/align only), Beat This! + ADTOF
-(lazy, /transcribe only), and the lyrics aligner's CTC checkpoints
-(lazy). On a 6 GB consumer GPU all of these resident simultaneously
-exceeds the budget once CTC forced alignment tries to allocate its
-emissions tensor.
+The pipeline worker holds two model singletons across the process
+lifetime: the vocals separator (BS-Roformer SW, eagerly loaded at
+startup) and the lyrics aligner's CTC checkpoints (lazy). On a 6 GB
+consumer GPU both resident simultaneously exceeds the budget once CTC
+forced alignment tries to allocate its emissions tensor, so the vocals
+separator is parked to CPU once its stem is extracted, freeing VRAM
+before the aligner loads.
 
 This module exposes a "park to CPU" primitive: move an nn.Module's
 parameters/buffers to host RAM and `torch.cuda.empty_cache()` so the
@@ -14,14 +14,14 @@ freed VRAM is actually returned to the allocator. Unpark is the
 inverse - a CUDA <-> host memcpy, ~hundreds of ms, vs reloading from
 disk + state_dict which is multi-second.
 
-Coordinator functions swap "warm but parked" sets at endpoint entry:
+The /lyrics/align entry point unparks the vocals separator + CTC
+aligner (`park_for_lyrics`), then parks the vocals separator once its
+stem is out (`park_vocals_after_extraction`) so the aligner has the
+GPU to itself.
 
-  - /transcribe entry   -> park lyrics models, unpark drum models
-  - /lyrics/align entry -> park drum models, unpark vocals + CTC
-
-Process-wide serialization across the two endpoints is the caller's
-responsibility (see main.py::_gpu_lock); parking a model while another
-request is mid-stream through it would device-mismatch the inputs.
+Process-wide serialization is the caller's responsibility (see
+main.py::_gpu_lock); parking a model while another request is
+mid-stream through it would device-mismatch the inputs.
 
 Each helper is idempotent (a model already on the target device is a
 no-op) and a no-op when the underlying model hasn't been loaded yet
@@ -112,17 +112,14 @@ def unpark_module(module: Any, label: str) -> None:
 
 
 def park_for_lyrics(separator: Any, aligner: Any) -> None:
-    """Free VRAM held by the separation model so /lyrics/align can
-    safely load its CTC aligner. The separation Stage-1/Stage-2 models
-    get parked to CPU; the lyrics side (vocals separator + any
-    previously-loaded CTC aligners) gets unparked so the request runs
-    on a clean GPU.
+    """Prepare the GPU for /lyrics/align: the vocals separator and any
+    previously-loaded CTC aligners are unparked so the request runs on a
+    clean GPU.
 
     Called at the top of /lyrics/align under the process-wide GPU
     lock, so no in-flight stage can be holding a CUDA tensor whose
     source module is about to move host-side."""
     before = _mem_allocated_mb()
-    separator.park_drum_models()
     # Lyrics side: vocals separator and CTC aligner(s) need to be on
     # GPU for the upcoming separate() / generate_emissions() calls.
     # Both are no-ops if never loaded.

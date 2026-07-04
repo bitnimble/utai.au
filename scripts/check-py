@@ -6,8 +6,8 @@
 # through to pytest for fast single-test iteration, e.g.
 # `scripts/check-py tests/test_foo.py::test_bar`.
 #
-# Requires aligner/.venv (uv-managed). Does NOT install deps, see
-# aligner/Dockerfile / the project's Python env notes for the install recipe.
+# Requires aligner/.venv (uv-managed). Does NOT install deps, see AGENTS.md
+# for the install recipe.
 #
 # Torch caveat: any test that needs a WORKING CUDA torch won't run on a host
 # without one (e.g. the codebox host, where libcusparseLt is missing); run those

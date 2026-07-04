@@ -1,27 +1,28 @@
 # utai sandbox container.
 #
 # A bare CUDA + Python environment that carries the *exact same*
-# dependency stack as the aligner runtime (docker/Dockerfile) but
-# runs NOTHING on its own. No Caddy, no uvicorn workers, no frontend
-# bundle, no entrypoint - just an idle container an agent can exec into
-# to run Python scripts freely, poke at CUDA, and read/write at will.
+# dependency stack as the aligner runtime (installed from
+# aligner/pyproject.toml, below) but runs NOTHING on its own. No uvicorn
+# workers, no frontend bundle, no entrypoint - just an idle container an
+# agent can exec into to run Python scripts freely, poke at CUDA, and
+# read/write at will.
 #
 # The intended use is exploratory: mount /codebox-workspace (where the
 # aligner writes debug artifacts, separated stems, benchmark results,
 # etc.) read-only or read-write, inspect the output of previous runs,
-# and prototype new pipeline code against the same torch / audio-separator
-# / librosa stack the real service uses - without rebuilding or touching
-# the production image.
+# and prototype new pipeline code against the same torch / librosa stack
+# the real service uses - without rebuilding anything.
 #
 # Deps are managed with uv (the aligner's dev loop uses uv, not
 # pip), installed into a venv at /opt/venv that's on PATH - so `python`,
 # `python3`, and any console scripts resolve to it automatically, and
 # `uv pip install <more>` Just Works for the agent.
 #
-# Base: CUDA runtime on Ubuntu 22.04, identical to docker/Dockerfile, so
-# anything that runs here runs there. Works on any host with NVIDIA
-# driver 555+ and the NVIDIA Container Toolkit. Falls back to CPU if no
-# GPU is exposed to the container.
+# Base: CUDA runtime on Ubuntu 22.04, matching the aligner's torch cu128
+# stack, so anything that runs here runs against the same deps the real
+# service resolves. Works on any host with NVIDIA driver 555+ and the
+# NVIDIA Container Toolkit. Falls back to CPU if no GPU is exposed to the
+# container.
 #
 # Build (from the repo root, NOT from sandbox/ - the build context needs
 # aligner/pyproject.toml):
@@ -44,22 +45,19 @@
 
 # uv binary source. Aliased as a build stage (rather than referenced
 # inline in the COPY below) because an ARG only expands in a stage's
-# image reference, not in `COPY --from=<image>`. Pin UV_VERSION (e.g.
-# 0.9.0) for reproducibility; it defaults to `latest` so the image
-# builds out of the box - bump deliberately, like the CADDY_VERSION pin
-# in docker/Dockerfile.
-# Both version ARGs must precede the first FROM to be usable in a stage's
-# image reference (an ARG declared after a FROM is stage-scoped, not
-# global). Pin UV_VERSION (defaults to `latest`) for reproducibility;
-# bump deliberately, like the CADDY_VERSION pin in docker/Dockerfile.
+# image reference, not in `COPY --from=<image>`. Both version ARGs must
+# precede the first FROM to be usable in a stage's image reference (an ARG
+# declared after a FROM is stage-scoped, not global). UV_VERSION defaults
+# to `latest` so the image builds out of the box; pin it (e.g. 0.9.0) and
+# bump deliberately for reproducibility.
 ARG UV_VERSION=latest
 ARG BUN_VERSION=1.3.5
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
 # bun binary source. The aligner runtime is pure Python (no bun);
 # this is a sandbox-only convenience so an agent can run JS/TS one-liners
-# (`bun -e`) alongside Python. Version matches package.json's
-# `packageManager`.
+# (`bun -e`) alongside Python. Pinned to 1.3.5 (see BUN_VERSION above);
+# sandbox-only, so it need not track the frontend's packageManager pin.
 FROM oven/bun:${BUN_VERSION} AS bun
 
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
@@ -125,8 +123,8 @@ ARG APP_GID=1000
 RUN groupadd -g ${APP_GID} app \
     && useradd -u ${APP_UID} -g ${APP_GID} -m -s /bin/bash app
 
-# Python deps in three independently-cacheable layers, mirroring
-# docker/Dockerfile so the heavy torch fetch stays cached across edits.
+# Python deps in three independently-cacheable layers so the heavy torch
+# fetch stays cached across edits.
 
 # Layer 1: numpy bedrock. Isolating the layer seeds the dep cache.
 RUN uv pip install 'numpy>=1.26'
@@ -137,11 +135,10 @@ RUN uv pip install 'numpy>=1.26'
 RUN uv pip install --index-url https://download.pytorch.org/whl/cu128 \
         'torch>=2.8,<2.12' 'torchaudio>=2.8,<2.12'
 
-# Layer 3: the full aligner dependency set. Same trick as
-# docker/Dockerfile: drop in ONLY pyproject.toml and `uv pip install -e .`
-# with no package source present - setuptools finds nothing to build but
-# uv still resolves and installs every declared dependency
-# (audio-separator, ctc-forced-aligner, librosa, ...), keeping the
+# Layer 3: the full aligner dependency set. Drop in ONLY pyproject.toml
+# and `uv pip install -e .` with no package source present - setuptools
+# finds nothing to build but uv still resolves and installs every declared
+# dependency (ctc-forced-aligner, librosa, onnxruntime, ...), keeping the
 # sandbox's deps in lockstep with the real service. Installed into
 # /opt/deps so the editable .pth points there and /sandbox stays pristine.
 # --extra-index-url keeps any transitive torch resolution on the cu128

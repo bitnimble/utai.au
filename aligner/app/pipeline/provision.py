@@ -37,7 +37,6 @@ _HTTP_TIMEOUT = httpx.Timeout(30.0, read=None)  # read=None: large weights
 # ckpt -> paired architecture yaml (a bare state_dict can't load without it).
 _CKPT_YAML: dict[str, str] = {
     "model_bs_roformer_sw.ckpt": "config_bs_roformer_sw.yaml",
-    "drumsep_5stems_mdx23c_jarredou.ckpt": "config_drumsep_5stems_mdx23c.yaml",
 }
 
 
@@ -77,13 +76,10 @@ def _sep_onnx_asset(stem: str) -> _Asset:
 
 
 def _separation_assets() -> list[_Asset]:
-    """Both separation model bodies (fp16 onnx) + their yamls. No ckpts (the
-    shipped runtime uses the onnx). Names derive from `settings.*_model`."""
-    out: list[_Asset] = []
-    for ckpt in (settings.demucs_model, settings.drum_pieces_model):
-        out.append(_onnx(yaml_for_ckpt(ckpt)))
-        out.append(_sep_onnx_asset(Path(ckpt).stem))
-    return out
+    """The vocals separator body (fp16 onnx) + its yaml. No ckpt (the shipped
+    runtime uses the onnx). Name derives from `settings.demucs_model`."""
+    ckpt = settings.demucs_model
+    return [_onnx(yaml_for_ckpt(ckpt)), _sep_onnx_asset(Path(ckpt).stem)]
 
 
 def _lyrics_assets() -> list[_Asset]:
@@ -171,9 +167,9 @@ def deprovision(keep_capabilities: list[str]) -> int:
 
     Only ever touches files in the known capability -> asset map: it removes
     `union(all capabilities' assets) - union(keep_capabilities' assets)`, so a
-    weight shared with a still-installed capability (e.g. the separation bodies
-    under a kept `transcription`) is preserved, and no unrelated file under
-    `models_dir` (caches, user data) is at risk. Idempotent."""
+    weight shared with a still-installed capability (e.g. the separation body
+    under a kept `lyrics`, which composes separation) is preserved, and no
+    unrelated file under `models_dir` (caches, user data) is at risk. Idempotent."""
     keep = {a.filename for cap in keep_capabilities for a in _capability_assets(cap)}
     everything = {a.filename for cap in _KNOWN_CAPABILITIES for a in _capability_assets(cap)}
     models_dir = Path(settings.models_dir)

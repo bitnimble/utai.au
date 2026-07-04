@@ -9,9 +9,8 @@
 # failing test, or after a change you know is lint-clean. For the full
 # Python post-change loop (ruff --fix + pytest), use `scripts/check-py`.
 #
-# Requires aligner/.venv (uv-managed). Does NOT install deps, see
-# aligner/Dockerfile / the project's Python env notes for the install
-# recipe.
+# Requires aligner/.venv (uv-managed). Does NOT install deps, see AGENTS.md
+# for the install recipe.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

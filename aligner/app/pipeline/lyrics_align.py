@@ -365,7 +365,7 @@ class LyricsAligner:
 
         Callers must hold the process-wide GPU lock so an in-flight
         `realign_text` isn't mid-`generate_emissions` on the model
-        being moved. See `app.pipeline.gpu_park.park_for_transcribe`."""
+        being moved. See `app.pipeline.gpu_park.park_for_lyrics`."""
         from app.pipeline.gpu_park import park_module
 
         for key, entry in list(self._align_models.items()):
@@ -402,9 +402,8 @@ class LyricsAligner:
 
         `language` overrides automatic detection; pass it whenever the
         caller knows (e.g. lifted from a lyrics-file metadata tag). When
-        omitted, we try script-based text detection first (cheap,
-        deterministic) and fall back to a one-off faster-whisper pass
-        over the first 30 s of audio.
+        omitted, we detect the script from the text (`_detect_language_from_text`,
+        cheap and deterministic) and fall back to English.
 
         Empty-text input lines (LRC instrumental markers) are passed
         through to the output untouched - the aligner has nothing to
@@ -428,7 +427,7 @@ class LyricsAligner:
             # any choice romanizes to nothing anyway.
             language_code = (
                 language
-                or settings.whisper_language
+                or settings.align_language
                 or _detect_language_from_text(input_lines)
                 or "en"
             )
@@ -1457,7 +1456,7 @@ def _diagnose_get_spans_failure(
 # romanization). Covers the codes _detect_language_from_text emits
 # (en/ja/ko/zh/th plus the Cyrillic set uk/ru/bg/sr/mk) plus a few common
 # Latin-script tags so callers can pin specific Romance / Germanic
-# languages through `settings.whisper_language` or the request's
+# languages through `settings.align_language` or the request's
 # `language` field. Anything else - including the `_OTHER_SCRIPT_LANG`
 # (`und`) catch-all - falls back to `eng`, which is deliberate: MMS
 # handles unspecified text fine and uroman romanizes the real script by

@@ -41,14 +41,14 @@ ResultRef = Annotated[PathRef | UrlRef | InlineRef, Field(discriminator="kind")]
 
 
 class Artifact(BaseModel):
-    role: Literal["midi", "stem", "audio"]
+    role: Literal["stem", "audio"]
     ref: ResultRef
-    # Semantic label for multi-stem results (e.g. "drums", "no_drums", or a DSL
-    # pitch letter "k"/"s"/"h"/"c"/"t"); lets the frontend map a stem to a lane.
+    # Semantic label for multi-artifact results; lets the frontend distinguish
+    # one artifact from another.
     name: str | None = None
 
 
-Op = Literal["separate", "alignLyrics"]
+Op = Literal["alignLyrics"]
 
 
 # ---- client -> backend ----------------------------------------------------
@@ -88,12 +88,11 @@ class ProgressMessage(BaseModel):
     frac: float = Field(ge=0.0, le=1.0)
     message: str | None = None
     # Fraction of progress WITHIN the current `stage`, when genuinely known (a
-    # chunked separation pass, a per-instrument filter substage). `frac` above
-    # keeps its own meaning (coarse stage position for `transcribe`, whole-op
-    # progress for `separate`); this is the finer-grained sibling a UI shows as
-    # e.g. "(Stage 2/7, 34%)". None when no per-call progress signal exists for
-    # the current stage (beats/onsets/quantise/render are single blocking calls
-    # -- onnxruntime's InferenceSession.run() has no intermediate callback API).
+    # chunked separation pass). `frac` above keeps its own meaning (whole-op
+    # progress for `alignLyrics`); this is the finer-grained sibling a UI shows
+    # as e.g. "(34%)". None when no per-call progress signal exists for the
+    # current stage (the CTC alignment is a single blocking call -- onnxruntime's
+    # InferenceSession.run() has no intermediate callback API).
     # camelCase (not stage_frac) to match the wire convention every other
     # camelCase-on-the-wire field here follows (uploadId, bytesB64): the field
     # name IS the JSON key, no alias layer.

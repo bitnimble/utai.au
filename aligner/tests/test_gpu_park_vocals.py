@@ -1,9 +1,9 @@
 """Tests for parking the vocals-extraction model.
 
-Vocals now comes from the Stage-1 BS-Roformer SW separator (a torch model), so
+Vocals comes from the BS-Roformer SW separator (a torch model), so
 `park_vocals` / `unpark_vocals` just move that `SeparationRunner`'s module
-between CPU and GPU like the drum models. The old dedicated MDX/ONNX vocals
-model (whose ORT-session CUDA arena needed a full release) is gone.
+between CPU and GPU. The old dedicated MDX/ONNX vocals model (whose ORT-session
+CUDA arena needed a full release) is gone.
 
 These use lightweight stand-ins (no torch, no GPU) so they run on CPU in CI.
 """
@@ -35,7 +35,6 @@ def _sep_with_sw(model: object) -> Separator:
     runner = SeparationRunner.__new__(SeparationRunner)
     runner.model = model  # type: ignore[attr-defined]
     sep._stems_all = runner  # type: ignore[attr-defined]
-    sep._stems_per = None  # type: ignore[attr-defined]
     return sep
 
 
@@ -56,6 +55,5 @@ def test_park_vocals_noop_when_sw_not_loaded() -> None:
     """No SW loaded (e.g. a vocals cache hit) -> park/unpark are no-ops."""
     sep = Separator.__new__(Separator)
     sep._stems_all = None  # type: ignore[attr-defined]
-    sep._stems_per = None  # type: ignore[attr-defined]
     sep.park_vocals()
     sep.unpark_vocals()

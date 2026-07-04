@@ -1,1 +1,1 @@
-"""Stem separation + onset detection + LLM transcription pipeline."""
+"""Vocal separation + CTC forced-alignment pipeline."""

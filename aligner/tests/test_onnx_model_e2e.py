@@ -46,7 +46,7 @@ def _tone_clip(path, dur=6.0, sr=44100):
 
 def test_shipped_separation_onnx_runs(tmp_path):
     """The provisioned BS-Roformer ONNX body loads through the real `Separator`
-    and produces a drum stem, proving the model ran (not just that the file
+    and produces a vocals stem, proving the model ran (not just that the file
     loads)."""
     from app.pipeline.separate import Separator
 
@@ -54,37 +54,8 @@ def test_shipped_separation_onnx_runs(tmp_path):
     _tone_clip(clip)
 
     sep = Separator()
-    sep.load(stems_all=True, stems_per=False)
-    res = sep.run_stems_all(clip, tmp_path, build_no_drums=True)
-    assert res.drum_stem.exists(), "no drum stem produced"
-    assert res.drum_stem.stat().st_size > 0
-
-
-def test_shipped_separation_via_sidecar_separate_op(tmp_path):
-    """Drive the `separate` op through the real sidecar registry + StdioAdapter --
-    the exact path the desktop app's Rust broker feeds over stdio -- and confirm
-    it produced stem artifacts. The headless twin of the desktop WebDriver e2e."""
-    import asyncio
-    import io
-    import json
-
-    from app.comms.protocol import RequestMessage
-    from app.comms.runners import build_registry
-    from app.comms.stdio_adapter import StdioAdapter
-
-    clip = tmp_path / "tone.wav"
-    _tone_clip(clip)
-
-    request = RequestMessage(
-        type="request",
-        id="s1",
-        op="separate",
-        args={"audio": {"kind": "path", "path": str(clip)}, "params": {"stage": "stems_all"}},
-    ).model_dump_json()
-    stdout = io.StringIO()
-    asyncio.run(StdioAdapter(build_registry(), stdin=io.StringIO(request + "\n"), stdout=stdout).run())
-    frames = [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
-
-    result = frames[-1]
-    assert result["type"] == "result", frames
-    assert result["artifacts"], "separate op returned no artifacts"
+    sep.load()
+    vocals = sep.run_vocals(clip, tmp_path)
+    assert vocals is not None, "no vocals stem produced"
+    assert vocals.exists()
+    assert vocals.stat().st_size > 0

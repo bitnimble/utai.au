@@ -36,9 +36,8 @@ export type AlignLyricsRequest = {
 };
 
 /** Non-terminal progress emitted while the alignment stream runs:
- *  `queued` while the request waits behind another in-flight GPU job
- *  (transcribe or another align), then `running` once it owns the GPU and
- *  alignment actually starts. */
+ *  `queued` while the request waits behind another in-flight align on the
+ *  GPU, then `running` once it owns the GPU and alignment actually starts. */
 export type AlignLyricsProgress = { kind: 'queued' | 'running' };
 
 export type AlignLyricsOptions = {
@@ -57,7 +56,7 @@ export type AlignLyricsOptions = {
  * Non-terminal envelopes drive `opts.onProgress` so the caller can show
  * a wait state; the `result` lines (shape `{lines: LyricLine[]}`, an
  * exact match for our in-memory type) go straight into
- * `lyricsStore.replace(id, ...)` via `JotEditorStore.alignLyricsForced`.
+ * `lyricsStore.replace(id, ...)` via `LyricsPresenter.alignTrackToVocals`.
  *
  * Input-validation failures arrive as a real 4xx (before any stream
  * bytes) and surface here as the server's `detail` message, same as
@@ -163,8 +162,7 @@ export async function alignLyricsForced(
 }
 
 /** Parse one NDJSON line without throwing; a malformed envelope is
- *  logged and skipped so a single bad line can't kill the whole stream
- *  (mirrors the transcribe stream reader in `src/transcriber.ts`). */
+ *  logged and skipped so a single bad line can't kill the whole stream. */
 function parseNdjsonLine(line: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(line);

@@ -47,9 +47,8 @@ def _warm_native_imports() -> None:
     """Import each runner's lazy-imported pipeline module on the MAIN thread,
     before any job runs in an asyncio worker.
 
-    Load-bearing on Windows: every runner (`separate_runner.py`,
-    `align_lyrics_runner.py`) lazy-imports its heavy pipeline module inside
-    `asyncio.to_thread` -- deferred
+    Load-bearing on Windows: the `align_lyrics_runner.py` runner lazy-imports
+    its heavy pipeline module inside `asyncio.to_thread` -- deferred
     on purpose so a capability-less sidecar never pays for deps it doesn't have.
     But the FIRST import of a native-extension module (numpy, scipy, soundfile,
     torch, onnxruntime, ...) from a background worker thread of THIS process
@@ -63,7 +62,7 @@ def _warm_native_imports() -> None:
     module: a capability whose deps aren't installed is simply skipped, so this
     never blocks startup for an op the box can't run anyway."""
     for mod in (
-        "app.pipeline.separate",  # separate, alignLyrics
+        "app.pipeline.separate",  # alignLyrics (vocals separation)
         "app.pipeline.lyrics_align",  # alignLyrics
     ):
         with contextlib.suppress(Exception):

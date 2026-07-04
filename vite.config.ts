@@ -50,14 +50,14 @@ const noHmrPushPlugin: Plugin = {
   },
 };
 
-// Note: the dev server intentionally has NO `/api` proxy. The browser
-// bundle talks to `/api` on its own origin, and routing `/api/*` onward
-// to the aligner backend is handled by the Caddy edge proxy that fronts
-// this dev server (see docker/Caddyfile.dev). Vite's own `server.proxy`
-// used to do it, but the dev server runs under Bun, whose node:http layer
-// can't relay the backend's chunked NDJSON streaming responses (it hangs -
-// oven-sh/bun#5737, #28396). So the proxy lives in Caddy and Vite never
-// touches /api.
+// Note: the dev server has NO `/api` proxy, and there's no bundled dev
+// proxy in this repo yet. The browser bundle talks to `/api` on its own
+// origin, so local web dev needs the aligner backend reachable there --
+// point the frontend at the backend URL (Settings -> Advanced) or stand up
+// a proxy (Caddy/nginx) in front of this dev server. Vite's own
+// `server.proxy` is NOT an option: the dev server runs under Bun, whose
+// node:http layer can't relay the backend's chunked NDJSON streaming
+// responses (it hangs - oven-sh/bun#5737, #28396).
 
 // Signalsmith Stretch installs its AudioWorklet processor by
 // stringifying a function (via `${fn}`) and dropping it into a

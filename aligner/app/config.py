@@ -21,17 +21,14 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # --- Separation models ---
-    # Both Stage-1 and Stage-2 models are NOT in audio-separator's
-    # registry; `pipeline/provision.py` injects them and downloads their
-    # weights on startup. These values are the *local* filenames it writes
-    # into `models_dir`. Stage-1 `model_bs_roformer_sw.ckpt` = BS-Roformer
-    # SW (6-stem; the /lyrics path consumes its `vocals` stem). Stage-2
-    # `drumsep_5stems_mdx23c_jarredou.ckpt` is retained for the `separate`
-    # sidecar op (per-instrument split); the field name `demucs_model` is
-    # historical (Stage 1 is a Roformer now, not Demucs).
+    # --- Separation model ---
+    # The vocals separator is NOT in audio-separator's registry;
+    # `pipeline/provision.py` injects it and downloads its weights on startup.
+    # This value is the *local* filename it writes into `models_dir`.
+    # `model_bs_roformer_sw.ckpt` = BS-Roformer SW (6-stem; the /lyrics path
+    # consumes its `vocals` stem). The field name `demucs_model` is historical
+    # (it's a Roformer now, not Demucs).
     demucs_model: str = "model_bs_roformer_sw.ckpt"
-    drum_pieces_model: str = "drumsep_5stems_mdx23c_jarredou.ckpt"
 
     # --- Model asset sources (build/packaging) ---
     # Every model URL / HF id / repo that the packaged app has baked in lives
@@ -98,7 +95,7 @@ class Settings(BaseSettings):
     # (`_detect_language_from_text`); set explicitly to override that
     # (e.g. to force a specific same-script language uroman would
     # otherwise guess).
-    whisper_language: str = ""
+    align_language: str = ""
 
 
 settings = Settings()

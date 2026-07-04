@@ -1,20 +1,15 @@
-"""Utai transcriber backend.
+"""Utai karaoke backend.
 
-Pipeline (beat-aware, no fixed grid):
-    audio bytes
-        -> BS-Roformer SW                       (full mix -> drum stem)
-        -> Jarredou MDX23C 6-stem DrumSep       (drum stem -> per-instrument stems)
-        -> ADTOF Frame_RNN per stem             (per-stem onset candidates)
-        -> Beat This! beat/downbeat tracker     (per-beat anchors, downbeats,
-                                                 per-bar time signature + feel)
-        -> attach (bar, beat_in_bar) positions to each onset
-        -> Claude filter (per instrument) → rejects artifact onsets
-        -> render kept onsets to MIDI (prediction.mid)
-        -> client receives the prediction MIDI URL + a per-note debug
-           provenance sidecar; the frontend converts the MIDI to a
-           Utai Jot via src/midi/from_midi.ts.
+Word-timed lyrics from a full mix + the caller's lyric text:
 
-The legacy DSL-output pathway (LLM-emitted Utai DSL + F1-gated
-refinement) and the librosa onset backend were removed in May 2026; see
-docs/ai-midi-to-jot-notes.md for the techniques captured from them.
+    audio bytes + lyric lines
+        -> BS-Roformer SW                 (full mix -> vocals stem)
+        -> CTC forced alignment (MMS-300m via ctc-forced-aligner)
+                                          (align the caller's text to the vocals)
+        -> word/line timings returned as structured data
+
+The endpoint is forced-alignment only -- it never transcribes speech from
+audio; the caller's lyric text is treated as ground truth and only the
+timings are recomputed. See `app/main.py` (HTTP) and `app/comms/` (the stdio
+sidecar) for the two transports.
 """
