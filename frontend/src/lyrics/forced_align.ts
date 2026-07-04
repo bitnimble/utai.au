@@ -11,6 +11,7 @@
  */
 
 import { backendFetch } from 'src/net/backend_fetch';
+import { alignLyricsSidecar, isSidecarAvailable } from 'src/net/sidecar_transport';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import type { LyricLine } from './lrc';
 
@@ -48,6 +49,21 @@ export type AlignLyricsOptions = {
 };
 
 /**
+ * Run forced alignment against an audio source, returning the parsed lyric
+ * lines. On the Tauri desktop build this drives the bundled Python sidecar
+ * over the Rust broker ({@link alignLyricsSidecar}); on web and Android it
+ * POSTs to the HTTP `/api` backend ({@link alignLyricsHttp}). Both paths share
+ * the same request/progress/result contract, so callers (the lyrics presenter)
+ * don't branch on transport.
+ */
+export function alignLyricsForced(
+  req: AlignLyricsRequest,
+  opts: AlignLyricsOptions = {},
+): Promise<LyricLine[]> {
+  return isSidecarAvailable() ? alignLyricsSidecar(req, opts) : alignLyricsHttp(req, opts);
+}
+
+/**
  * POST to `/lyrics/align` and return the parsed lyric lines.
  *
  * The endpoint streams NDJSON: one envelope per line, `queued` (only
@@ -62,7 +78,7 @@ export type AlignLyricsOptions = {
  * bytes) and surface here as the server's `detail` message, same as
  * before the endpoint streamed.
  */
-export async function alignLyricsForced(
+async function alignLyricsHttp(
   req: AlignLyricsRequest,
   opts: AlignLyricsOptions = {},
 ): Promise<LyricLine[]> {

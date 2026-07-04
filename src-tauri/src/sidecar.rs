@@ -138,9 +138,10 @@ fn finish_line(mut buf: Vec<u8>) -> String {
 }
 
 /// Run one backend job. `request` is a validated client control-protocol frame
-/// (the frontend builds it via `encodeClientMessage`); each backend frame is
-/// forwarded verbatim through `on_event`. Resolves when the sidecar emits a
-/// terminal `result`/`error`, the stream closes, or the job is cancelled.
+/// (the frontend builds it via `buildAlignLyricsRequest` in
+/// `frontend/src/net/control_protocol.ts`); each backend frame is forwarded
+/// verbatim through `on_event`. Resolves when the sidecar emits a terminal
+/// `result`/`error`, the stream closes, or the job is cancelled.
 #[tauri::command]
 pub async fn run_job<R: Runtime>(
     app: AppHandle<R>,
