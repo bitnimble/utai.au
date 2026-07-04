@@ -19,8 +19,7 @@ import { LyricLine } from './lrc';
 
 /** Neutral fill for a lyrics row's `color`. Lyrics rows have no visible
  *  per-row colour today; a fixed neutral value lets downstream code treat
- *  every row uniformly. (Was `LYRICS_FALLBACK_COLOR` on drumjot's shared
- *  tracks module, inlined here since karaoke has no drum-track layer.) */
+ *  every row uniformly. */
 const LYRICS_FALLBACK_COLOR = '#8a8a8a';
 
 export type LyricsSource = 'lrclib' | 'file' | 'plaintext';

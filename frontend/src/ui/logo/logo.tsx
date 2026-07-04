@@ -1,5 +1,5 @@
 /**
- * Drumjot brand mark. The SVG itself lives at `public/favicon.svg`
+ * Brand mark. The SVG itself lives at `public/favicon.svg`
  * (single source of truth, also referenced by the favicon `<link>`
  * in `index.html`); this component just renders it via `<img>`.
  *

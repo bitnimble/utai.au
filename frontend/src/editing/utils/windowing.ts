@@ -18,9 +18,9 @@ export type BeatRange = { startBeat: number; endBeat: number };
  * A bars-row's `--bars-row-width` (`layerBeats × pxPerBeat`, in px), the
  * width every beat-anchored child positions against. `pxPerBeat` is read
  * tracked, so an `observer` row that sets this in its inline style
- * re-renders on zoom and the width follows. (Drumjot kept rows off the
- * zoom path via an imperative `ScoreZoomVar` writer; utai.au has few rows
- * and no such writer, so a plain reactive read is simpler and correct.)
+ * re-renders on zoom and the width follows. (utai.au has few rows, so a
+ * plain reactive read is simpler than an imperative zoom-var writer and
+ * still correct.)
  */
 export function barsRowWidthSeed(structural: StructuralPresenter, layerBeats: number): string {
   return `${structural.pxPerBeat * layerBeats}px`;

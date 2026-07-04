@@ -4,8 +4,8 @@
  * A loaded track plays through the Signalsmith Stretch AudioWorklet on the
  * shared `AudioContext`, so pitch is preserved at any speed and seek/pause
  * are single `schedule()` messages. Karaoke has `songLeadIn == 0`, so media
- * (recorded-audio) time equals playback (jot) time; the drum-scheduler /
- * drift-map machinery drumjot needed is gone.
+ * (recorded-audio) time equals playback (jot) time; there's no drum-scheduler
+ * / drift-map machinery.
  */
 
 import { makeAutoObservable } from 'mobx';

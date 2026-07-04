@@ -20,7 +20,7 @@ export const All: Story = {
         <Logo size={56} />
       </Variant>
       <Variant label="Large (128, with title)">
-        <Logo size={128} title="Drumjot" />
+        <Logo size={128} title="utai.au" />
       </Variant>
     </Gallery>
   ),

@@ -1,8 +1,7 @@
 /**
- * Slim structural view-model for the karaoke build. Drumjot's version
- * projected a musical bar/tempo/lane structure off a Loro-CRDT document;
- * karaoke has none of that, so this exposes only what the lyrics + waveform
- * views read, backed by the song duration + the viewport zoom:
+ * Slim structural view-model for the karaoke build. There's no musical
+ * bar/tempo/lane structure here, so this exposes only what the lyrics +
+ * waveform views read, backed by the song duration + the viewport zoom:
  *
  *  - `pxPerBeat`, pixels per SECOND (the "1 beat == 1 second" collapse).
  *  - `layerBeats`, the whole-song span in beats (== `durationSec`).

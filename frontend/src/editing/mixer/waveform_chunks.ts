@@ -15,7 +15,7 @@
 
 /** Seconds per chunk tile. */
 export const SECONDS_PER_CHUNK = 4;
-/** Kept name-compatible with drumjot's beat-space constant. */
+/** Alias in beat-space terms; consumed where "beats" == seconds. */
 export const BEATS_PER_CHUNK = SECONDS_PER_CHUNK;
 
 /** Per-bar layout: cumulative position (seconds) + the audio-time window
