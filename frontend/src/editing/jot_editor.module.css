@@ -1,0 +1,8 @@
+/* Shared base for every beat-anchored bars row (lyrics, waveform). Width
+   is driven inline by `--bars-row-width` (= layerBeats × px-per-second);
+   children position themselves against it. */
+.barsRowBase {
+    position: relative;
+    flex: 0 0 auto;
+    width: var(--bars-row-width);
+}

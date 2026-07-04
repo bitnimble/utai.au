@@ -1,0 +1,52 @@
+/* Shared rotating-border spinner. Every in-flight indicator in the app
+   composes one of these classes so the keyframes + circle shape live
+   in one place; consumers add their own size, border-thickness and
+   color (the size/color is wildly different between a 10px pill
+   spinner and a 44px loading-overlay spinner, but the rotation cadence
+   and the border-radius geometry should be uniform). */
+
+/* Base: circle + spin animation. Consumers must still set `width`,
+   `height`, and `border-*` (color + width). The base does NOT set a
+   border-width because the per-consumer choice (1.5px vs 4px) carries
+   visual weight. */
+.spinner {
+    box-sizing: border-box;
+    border-style: solid;
+    border-radius: var(--radius-circle);
+    animation: drumjot-spinner-spin 0.8s linear infinite;
+    /* Own compositor layer so the rotation stays a pure GPU composite: without
+       it, a spinner inside the loading overlay repaints that layer every frame,
+       re-running the overlay's backdrop-filter blur full-screen (~40% GPU). */
+    will-change: transform;
+}
+
+@keyframes drumjot-spinner-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ─── Tones ──────────────────────────────────────────────────────────────
+   Ring colour + the leading "head" colour. The <Spinner> component picks
+   one; `size` / `thickness` come through as inline styles. */
+
+/* Translucent ring with an accent head: the default in-flight indicator on
+   neutral surfaces (status pills, the full-page loading overlay). */
+.toneAccent {
+    border-color: var(--color-border-translucent);
+    border-top-color: var(--color-accent);
+}
+
+/* Muted three-quarter ring (transparent head): a quieter indicator that
+   sits beside a track's secondary label without pulling focus. */
+.toneMuted {
+    border-color: var(--color-text-disabled);
+    border-top-color: transparent;
+}
+
+/* Inherits the surrounding text colour; for spinners on a coloured button
+   where the ring must read against the button's own foreground. */
+.toneCurrent {
+    border-color: color-mix(in srgb, currentColor 35%, transparent);
+    border-top-color: currentColor;
+}

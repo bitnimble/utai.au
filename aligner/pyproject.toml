@@ -1,0 +1,160 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "utai-aligner"
+version = "0.1.0"
+description = "Lyrics alignment + vocal separation service for Utai."
+requires-python = ">=3.11"
+# Lean base: the API shell + the stdio sidecar (control protocol). Everything
+# heavy (torch / separation / lyrics) lives in the capability dependency-groups
+# below, so the desktop installer can pull one capability at a time. `uv sync`
+# installs the default-groups (full parity for dev / Docker); the desktop
+# installer uses `uv sync --no-default-groups --group <capability>` (base deps +
+# that group).
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    "httpx>=0.27",
+]
+
+# Capability dependency-groups (PEP 735).
+[dependency-groups]
+# Shared torch base for every ML capability.
+ml = [
+    "torch>=2.8,<2.12",
+    "torchaudio>=2.8,<2.12",
+    # The forced aligner rides transformers.
+    "transformers>=4.40",
+    "librosa>=0.10.2",
+    "soundfile>=0.12",
+    "scipy>=1.11",
+    "numpy>=1.26",
+]
+
+# Stem separation: BS-Roformer (the /lyrics vocals stem) and MDX23C
+# (per-instrument split), run through our vendored torch wrapper
+# (pipeline/separation/). Its own capability so a user can stem-split without
+# the lyrics stack.
+separation = [
+    { include-group = "ml" },
+    # Cross-platform ONNX inference path (UTAI_SEP_ONNX). `onnxruntime-gpu`
+    # (CUDA / DirectML) ships Linux + Windows wheels only; on macOS the standard
+    # `onnxruntime` arm64 wheel carries the CoreML EP (Apple GPU/ANE). Pin the
+    # CUDA-12 line: 1.26 moved to a CUDA-13 build (libcudart.so.13); the image is
+    # CUDA 12 + torch cu128, so <=1.25.x matches. Bump only alongside a CUDA-13 base.
+    "onnxruntime-gpu>=1.19,<1.26; sys_platform != 'darwin'",
+    "onnxruntime>=1.19,<1.26; sys_platform == 'darwin'",
+    # `onnx` (distinct from onnxruntime): the folded STFT/iSTFT path builds its
+    # forward/inverse graphs with onnx.helper at runtime (onnx_stft.py), so it's a
+    # separation runtime dep, not just export tooling. Without it the fold's import
+    # fails and separation silently falls back to the (2x slower) numpy pre/post.
+    "onnx>=1.16",
+    # Runtime deps of the vendored BS-Roformer / MDX23C model classes (formerly
+    # pulled in transitively via audio-separator, which we've now dropped).
+    "einops>=0.8",
+    "rotary-embedding-torch>=0.6",
+    "ml-collections>=1.1",
+]
+
+# Lyrics alignment: MahmoudAshraf97's pure-PyTorch long-form CTC forced aligner
+# (MMS-300m under the hood). Pinned by commit SHA. NOT the deskpai PyPI port,
+# which hard-pins the CPU onnxruntime wheel and shadows onnxruntime-gpu. Includes
+# separation: the mix flow runs BS-Roformer SW to extract a vocals stem before aligning.
+lyrics = [
+    { include-group = "separation" },
+    "ctc-forced-aligner @ git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git@264e7a1f81bff9ff5e787a5537020c2ad0b0df02",
+]
+
+# Japanese-aware romanization for lyrics: cutlet (fugashi/MeCab + unidic-lite)
+# produces contextual readings before they reach the aligner's preprocess_text.
+lyrics-ja = [
+    { include-group = "lyrics" },
+    "cutlet>=0.4",
+    "fugashi>=1.3",
+    "unidic-lite>=1.0.8",
+]
+
+# Dev-only: linters, tests, and the ONNX export/fp16-convert toolchain. Not
+# shipped in the desktop install (the shipped runtime downloads pre-built fp16
+# onnx via provision and never exports; see allow_local_export). `onnxsim`
+# (onnx-simplifier) is export-only: coreml_optimize / mha_fusion use it to fold
+# the BS-Roformer graph to CoreML-native / MultiHeadAttention ops. (`onnx`
+# itself is now a `separation` runtime dep -- see the fold note there.)
+dev = ["ruff>=0.6", "pytest>=8", "onnxsim>=0.4"]
+
+# PyTorch lives on a dedicated wheel index because the default PyPI wheels now
+# target CUDA 13 (driver 580+); cu128 = CUDA 12.8 = highest CUDA most consumer
+# drivers (570+) handle. `explicit = true` means packages come from this index
+# only when listed in [tool.uv.sources].
+[tool.uv]
+# `uv sync` installs all groups so dev / Docker keep full parity; the desktop
+# installer pulls capabilities via `uv sync --no-default-groups --group <cap>`
+# (base deps plus the selected group(s)).
+default-groups = ["dev", "lyrics", "lyrics-ja"]
+# Drop torchvision: unused, and on cu128/WSL its compiled ops fail to load and
+# break transformers model loading. The impossible marker removes it from the
+# resolved graph.
+override-dependencies = ["torchvision; sys_platform == 'never'"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# cu128 torch is Linux/Windows only; on macOS torch resolves from PyPI (the arm64
+# MPS build) by having no source point at the cu128 index there.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+torchaudio = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+# Match repo-wide style: 100-char line limit.
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    # Cached / generated dirs that shouldn't be linted even if present.
+    ".venv",
+    "venv",
+    "build",
+    "models",
+    # Vendored BS-Roformer / MDX23C model classes (copied near-verbatim from
+    # audio-separator so they stay diffable against upstream); not our style.
+    "app/pipeline/separation/architectures",
+]
+
+[tool.ruff.lint]
+# Enabled lint groups, in roughly decreasing order of strictness:
+#   E,W = pycodestyle errors / warnings
+#   F   = pyflakes (unused imports, undefined names, ...)
+#   I   = isort (import sorting)
+#   B   = flake8-bugbear (likely bugs)
+#   UP  = pyupgrade (modern syntax suggestions)
+#   SIM = flake8-simplify
+select = ["E", "W", "F", "I", "B", "UP", "SIM"]
+# E501 line-too-long is reported by `select = ["E"]` but we already cap
+# at 100 chars; long URLs / log strings shouldn't trip ruff for cosmetic
+# reasons - the formatter (if/when adopted) handles wrapping anyway.
+ignore = [
+    "E501",
+    # B008: function calls in defaults are intentional for FastAPI's
+    # `Depends(...)` / `File(...)` parameter pattern.
+    "B008",
+    # SIM117: nested `with` blocks are kept for readability in places.
+    "SIM117",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use deliberately ugly fixtures and patterns; relax the checks.
+"tests/*" = ["E", "F841"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]

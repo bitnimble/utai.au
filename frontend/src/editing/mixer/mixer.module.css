@@ -1,0 +1,45 @@
+/* Mixer-row chrome shared by the lyrics + audio-track rows. Trimmed to
+   the classes the karaoke build actually composes/uses. */
+
+.mixerDragHandle {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 100%;
+    color: var(--color-text-disabled-warm);
+    /* stylelint-disable-next-line property-disallowed-list -- the drag-handle glyph is a tightly-tracked pair; not a use case worth promoting. */
+    font-size: 10px;
+    /* stylelint-disable-next-line property-disallowed-list -- negative tracking pulls the glyph pair together. */
+    letter-spacing: -1px;
+    cursor: grab;
+    user-select: none;
+    font-family: inherit;
+    line-height: 1;
+}
+
+.mixerDragHandle:hover {
+    color: var(--color-text-secondary);
+}
+
+/* Per-row overflow-menu trigger (the lyrics row's ⋯ button). */
+.overflowTrigger {
+    composes: bodyMd from '../../typography.module.css';
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    line-height: 1;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+}
+
+.overflowTrigger:hover {
+    background: var(--color-bg-hover);
+    color: var(--color-text-strong);
+}

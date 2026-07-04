@@ -1,0 +1,341 @@
+/* Drumjot design tokens.
+ *
+ * Every color, border-radius, and shadow used across the app lives here
+ * as a CSS custom property on :root. Module CSS files should reference
+ * `var(--token-name)` rather than literal values so the palette is
+ * editable in one place.
+ *
+ * Tokens are loaded as a plain global stylesheet (NOT a CSS module) so
+ * the :root variables are visible to every other module. Imported once
+ * from src/index.tsx at app bootstrap.
+ */
+
+:root {
+    /* ─── Surfaces / backgrounds ──────────────────────────────────── */
+    /* The base UI sits on white; the warm-beige ramp paints panels,
+       gutters, hover states, and the rest of the cream-paper aesthetic. */
+    --color-bg-base: #fff;
+    --color-bg-neutral: #fafaf7;        /* near-white app neutral */
+    --color-bg-cream: #fbf6ec;          /* palest cream: gutters, tuplet bg */
+    --color-bg-cream-strong: #fff6e8;   /* instrument-row stripe */
+    --color-bg-cream-warm: #f0ebe2;     /* dropdown menu group bg */
+    --color-bg-hover: #f6efe0;          /* hover treatment on transport/icon buttons */
+
+    /* Translucent overlays (used for blur backdrops & subtle veils). */
+    --color-bg-overlay-soft: rgba(255, 255, 255, 0.5);
+    --color-bg-overlay: rgba(255, 255, 255, 0.65);
+    --color-bg-overlay-strong: rgba(255, 255, 255, 0.85);
+    --color-bg-cream-translucent: rgba(251, 246, 236, 0.55);
+
+    /* ─── Borders ─────────────────────────────────────────────────── */
+    --color-border: #c9bfae;            /* primary border (most chrome) */
+    --color-border-soft: #e7e0d5;       /* low-emphasis divider */
+    --color-border-soft-alt: #e7e0d2;   /* near-duplicate used by one toolbar group */
+    --color-border-subtle: #e2d8c4;     /* very low contrast outline */
+    --color-border-subtle-2: #d5cab4;
+    --color-border-subtle-3: #b8a98c;
+    --color-border-strong: #b09d80;     /* darker border for hover/active */
+    --color-border-translucent: rgba(201, 191, 174, 0.55);
+    --color-border-translucent-faint: rgba(201, 191, 174, 0.12);
+
+    /* ─── Text ────────────────────────────────────────────────────── */
+    --color-text: #2b2b2b;              /* primary copy */
+    --color-text-strong: #333;          /* slightly darker variant (toolbar) */
+    --color-text-secondary: #4a4a4a;
+    --color-text-secondary-alt: #444;
+    --color-text-muted: #555;
+    --color-text-muted-alt: #6b6b6b;    /* most-common "muted readout" grey */
+    --color-text-muted-warm: #6b6256;
+    --color-text-faint: #666;
+    --color-text-faint-alt: #777;
+    --color-text-faint-strong: #888;    /* common "faint label" grey */
+    --color-text-disabled: #999;
+    --color-text-disabled-warm: #b0a48c;
+    --color-text-disabled-strong: #b9b0a0;
+
+    /* ─── Accent (orange) ─────────────────────────────────────────── */
+    --color-accent: #ff8c55;            /* primary accent (focus rings, sliders, action buttons) */
+    --color-accent-hover: #ff7335;      /* accent button hover */
+    --color-accent-strong: #ff5c0a;     /* playhead, drop indicator, alert orange */
+    --color-accent-on-text: #b03d00;    /* high-contrast text on light accent bg */
+    --color-accent-on-text-alt: #b46100; /* near-duplicate toolbar variant */
+    --color-accent-busy: #b95c1e;       /* status-pill "busy/working" text */
+
+    /* Accent overlays — the accent at fractional opacity, used as washes. */
+    --color-accent-overlay-faint: rgba(255, 140, 85, 0.04);
+    --color-accent-overlay-light: rgba(255, 140, 85, 0.1);
+    --color-accent-overlay-medium: rgba(255, 140, 85, 0.12);
+    --color-accent-strong-glow: rgba(255, 92, 10, 0.5);     /* playhead halo */
+    --color-accent-strong-ring: rgba(255, 92, 10, 0.35);    /* selected-note ring */
+
+    /* ─── Status ──────────────────────────────────────────────────── */
+    --color-error: #b00020;             /* error red (text, border, stop button) */
+    --color-error-hover: #8a0019;
+    --color-error-alt: #b1281c;         /* slightly different red (one toolbar group) */
+    --color-error-bg: #ffecec;
+    --color-error-border: #ffc7c7;
+
+    --color-success: #1b5e20;
+    --color-success-bg: #e8f5e9;
+    --color-success-border: #b7dfb9;
+
+    --color-busy-bg: #fff3e6;
+    --color-busy-border: #ffd4a8;
+
+    --color-warning: #8a5a00;
+    --color-warning-bg: #fff3e0;
+    --color-warning-border: #ffd9a0;
+
+    /* ─── Toggle accent (solo button yellow) ──────────────────────── */
+    --color-toggle-active: #f2b300;
+    --color-toggle-active-border: #d99f00;
+    --color-toggle-active-hover-border: #b88600;
+    --color-toggle-active-text: #2b2b2b;
+
+    /* ─── Pattern bracket palette ─────────────────────────────────── */
+    /* Distinct colors cycled through to tell pattern brackets apart in
+       the score. Each is dark/saturated enough that the small white
+       pattern label text stays legible. The assigner in jot.ts wraps
+       at the end of this list so all 12 slots are consumed before a
+       jot starts reusing colors. Keep them visually distinct (different
+       hues, not just shades) since adjacent patterns often sit on the
+       same row in the mixer. */
+    --color-pattern-1: #ff7f50;         /* coral */
+    --color-pattern-2: #5ba8e8;         /* sky blue */
+    --color-pattern-3: #7bc74d;         /* leaf green */
+    --color-pattern-4: #a155e0;         /* violet */
+    --color-pattern-5: #daa520;         /* goldenrod */
+    --color-pattern-6: #ef476f;         /* rose */
+    --color-pattern-7: #06aed5;         /* cyan */
+    --color-pattern-8: #8d6e63;         /* warm brown */
+    --color-pattern-9: #2a9d8f;         /* teal */
+    --color-pattern-10: #e76f51;        /* terracotta */
+    --color-pattern-11: #6a5acd;        /* slate-blue */
+    --color-pattern-12: #b85590;        /* magenta */
+
+    /* ─── Misc one-off colors ─────────────────────────────────────── */
+    /* These appear once each but still belong in the palette so the
+       "no naked color literals" rule holds end-to-end. */
+    --color-teal: #2aa198;              /* score: special role indicator */
+    --color-blue-info: #5a7d9a;         /* toolbar: informational accent */
+
+    /* ─── Grid lines ──────────────────────────────────────────────── */
+    /* Sub-beat practice grids drawn behind the notes when toggled from
+       the View menu. Tuned so the visual hierarchy reads main beat
+       (most prominent, dashed) > 16ths > 48ths (most subtle); triplets
+       use a distinct violet hue so they don't blur into the warm-gray
+       16th/48th lines when both are on. The triplet color is sized to
+       sit between 16ths and 48ths in visual weight. */
+    --color-grid-subbeat: #cfc3a6;      /* 16ths: warm gray, lighter than the main beat */
+    --color-grid-subbeat-48: #d7c9ab;   /* 48ths: faint warm gray, just below 16ths */
+    --color-grid-quarter-triplet: #8554b8; /* 6ths: deeper violet so it reads as the "parent" of 12ths */
+    --color-grid-triplet: #a374cf;      /* triplets: subtle violet, distinct hue */
+
+    /* "LEAD-IN" caption floating over the hatched lead-in stripe.
+       Subtle warm gray on the cream paper background so it doesn't
+       compete with the bars; the dark-theme override below brightens
+       it so contrast against the dark surface stays readable. */
+    --color-lead-in-label: #8a7e6b;
+
+    /* ─── Radii ───────────────────────────────────────────────────── */
+    --radius-xs: 2px;
+    --radius-sm: 3px;
+    --radius-md: 4px;
+    --radius-lg: 6px;
+    --radius-xl: 10px;
+    --radius-circle: 50%;
+    --radius-pill: 999px;
+
+    /* ─── Controls ────────────────────────────────────────────────────
+       Unified height for single-line form controls (text inputs, selects,
+       numeric steppers, the bar/beat field, segmented radios) so they line
+       up when placed side by side. */
+    --control-height: 28px;
+
+    /* ─── Sidebar ──────────────────────────────────────────────────────
+       The right-hand sidebar's always-reserved icon rail and its panel
+       width. Shared so the score region (jot_editor) reserves matching
+       right padding: the rail alone when floating/closed, rail + panel
+       when a panel is pinned (so the score never renders under the dock). */
+    --sidebar-rail-width: 48px;
+    --sidebar-panel-width: 360px;
+
+    /* ─── Shadows ─────────────────────────────────────────────────── */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+    --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.12);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.14);
+    --shadow-note: 0 1px 2px rgba(0, 0, 0, 0.18);
+    --shadow-playhead-label: 0 1px 3px rgba(0, 0, 0, 0.2);
+    --shadow-accent-glow: 0 0 4px rgba(255, 92, 10, 0.5);
+}
+
+/* ─── Dark theme override ──────────────────────────────────────────
+ * Applied when `<html data-theme="dark">` is set (explicit user
+ * override, or `data-theme="system"` resolving to dark via the OS
+ * preference; see src/theme.ts). The radius tokens above are
+ * structural so they carry over; everything else is re-mapped to a
+ * warm-dark palette that keeps the original cream aesthetic recognisable
+ * by inverting only the lightness ramp, not the hue.
+ *
+ * Token names match the light block one-for-one so consuming module
+ * CSS stays unchanged; the lint-banned naked color literals never
+ * appear here either.
+ */
+:root[data-theme='dark'] {
+    /* ─── Surfaces / backgrounds ──────────────────────────────────── */
+    --color-bg-base: #1a1814;
+    --color-bg-neutral: #1f1d18;
+    --color-bg-cream: #25221b;
+    --color-bg-cream-strong: #2c2820;
+    --color-bg-cream-warm: #322e25;
+    --color-bg-hover: #3a352b;
+
+    --color-bg-overlay-soft: rgba(26, 24, 20, 0.5);
+    --color-bg-overlay: rgba(26, 24, 20, 0.65);
+    --color-bg-overlay-strong: rgba(26, 24, 20, 0.85);
+    --color-bg-cream-translucent: rgba(37, 34, 27, 0.6);
+
+    /* ─── Borders ─────────────────────────────────────────────────── */
+    --color-border: #4a4438;
+    --color-border-soft: #38332a;
+    --color-border-soft-alt: #38332a;
+    --color-border-subtle: #322e25;
+    --color-border-subtle-2: #3f3a30;
+    --color-border-subtle-3: #6b6354;
+    --color-border-strong: #7a6f5c;
+    --color-border-translucent: rgba(122, 111, 92, 0.55);
+    --color-border-translucent-faint: rgba(122, 111, 92, 0.18);
+
+    /* ─── Text ────────────────────────────────────────────────────── */
+    --color-text: #ece8de;
+    --color-text-strong: #f4f0e6;
+    --color-text-secondary: #d8d2c2;
+    --color-text-secondary-alt: #d8d2c2;
+    --color-text-muted: #b5ad9c;
+    --color-text-muted-alt: #9c9381;
+    --color-text-muted-warm: #a8a08e;
+    --color-text-faint: #8a8170;
+    --color-text-faint-alt: #807866;
+    --color-text-faint-strong: #6f6757;
+    --color-text-disabled: #5f5748;
+    --color-text-disabled-warm: #5a5345;
+    --color-text-disabled-strong: #4d473b;
+
+    /* ─── Accent (orange) ─────────────────────────────────────────── */
+    /* Slight tone shifts so the orange stays vibrant on the dark surface; `accent-strong` brightens (#ff5c0a reads dim on dark bg) and
+       `accent-on-text` lightens so text on a light-accent fill stays
+       legible. */
+    --color-accent: #ff8c55;
+    --color-accent-hover: #ff9866;
+    --color-accent-strong: #ff7a3a;
+    --color-accent-on-text: #ffd1a8;
+    --color-accent-on-text-alt: #ffc28e;
+    --color-accent-busy: #ffa066;
+
+    --color-accent-overlay-faint: rgba(255, 140, 85, 0.06);
+    --color-accent-overlay-light: rgba(255, 140, 85, 0.16);
+    --color-accent-overlay-medium: rgba(255, 140, 85, 0.22);
+    --color-accent-strong-glow: rgba(255, 122, 58, 0.55);
+    --color-accent-strong-ring: rgba(255, 122, 58, 0.45);
+
+    /* ─── Status ──────────────────────────────────────────────────── */
+    --color-error: #ff6b78;
+    --color-error-hover: #ff8590;
+    --color-error-alt: #ff7a6a;
+    --color-error-bg: #3a1c1f;
+    --color-error-border: #5a2d33;
+
+    --color-success: #7dd391;
+    --color-success-bg: #1c2e22;
+    --color-success-border: #2e4d36;
+
+    --color-busy-bg: #3a2e1d;
+    --color-busy-border: #5a4628;
+
+    --color-warning: #e6b35c;
+    --color-warning-bg: #3a2e1d;
+    --color-warning-border: #5a4628;
+
+    /* ─── Toggle accent (solo button yellow) ──────────────────────── */
+    --color-toggle-active: #f2b300;
+    --color-toggle-active-border: #c9920a;
+    --color-toggle-active-hover-border: #ffd24d;
+    --color-toggle-active-text: #1a1814;
+
+    /* ─── Misc one-off colors ─────────────────────────────────────── */
+    --color-teal: #5dc4b8;
+    --color-blue-info: #88a9c4;
+
+    /* ─── Grid lines ──────────────────────────────────────────────── */
+    /* Mirrors the light-theme intent: less contrast against the dark
+       bg = more subtle. 16ths read just dim enough to clearly defer
+       to the main-beat dashed line; 48ths sit close to the bg
+       luminance; triplets keep a violet hue that still reads on dark. */
+    --color-grid-subbeat: #574f41;      /* 16ths: dim warm gray */
+    --color-grid-subbeat-48: #4a4232;   /* 48ths: faint warm gray, just below 16ths */
+    --color-grid-quarter-triplet: #b393d8; /* 6ths: brighter violet so it reads as the "parent" of 12ths on the dark bg */
+    --color-grid-triplet: #9676b8;      /* triplets: muted violet, distinct hue */
+
+    --color-lead-in-label: #b5ac98;     /* bright enough to read against dark bg */
+
+    /* ─── Shadows ─────────────────────────────────────────────────── */
+    /* Dark surfaces need deeper alphas to read as elevation against the
+       low-luminance background. */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
+    --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.55);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.65);
+    --shadow-note: 0 1px 2px rgba(0, 0, 0, 0.55);
+    --shadow-playhead-label: 0 1px 3px rgba(0, 0, 0, 0.6);
+    --shadow-accent-glow: 0 0 4px rgba(255, 122, 58, 0.55);
+}
+
+/* Per-frame animation vars used by playback. Registered with
+   `inherits: false` so the per-frame `setProperty` writes only invalidate
+   the elements they're written on; without this, an inherited custom
+   property change on `.jotContainer` invalidates style on every
+   descendant in the score subtree (~22ms recalc on a long song). The
+   consumer CSS rules already pair these with `will-change: transform`,
+   so paint stays composite-only. Writers live in jot_editor.tsx:
+   `setPlayheadVar`, `setScrollVars`. */
+@property --playhead-x {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 0px;
+}
+/* `--scroll-x` is non-inheriting so the per-tick `setProperty` only
+   invalidates style on the elements it's written to. Inheriting it
+   instead would force a style recalc across the entire score subtree
+   (measured at ~21 ms on a long song), which blows the 8.3 ms frame
+   budget during playback. The trade-off is that the JS writing the
+   var must target every consumer explicitly, including any that
+   mount AFTER the var was last set; see the `MutationObserver` in
+   `ScrollVar` (jot_editor.tsx) that watches for new sticky elements
+   and seeds them with the current scroll position. */
+@property --scroll-x {
+    syntax: '<number>';
+    inherits: false;
+    initial-value: 0;
+}
+@property --scroll-y {
+    syntax: '<number>';
+    inherits: false;
+    initial-value: 0;
+}
+/* Per-bars-row pixel width (`layerBeats × pxPerBeat`). Replaces the old
+   inherited `--px-per-beat` as the one quantity zoom mutates: instead of
+   a root custom property that cascades a style recalc across every bar /
+   note / grid layer on each wheel tick (~the dominant cost of a zoom
+   frame on a long song), each beat-anchored element now sizes/positions
+   itself as a PERCENTAGE of its bars-row, and only the row's own width
+   changes on zoom. `inherits: false` so writing it per row (see
+   `setBarsRowVars` in jot_editor.tsx) invalidates only that row element,
+   not its subtree; the percentage children relayout (cheap, windowed)
+   with no style-recalc cascade. The score's lyrics rows keep a scoped
+   `--px-per-beat` (written on the lyrics bars-row only) for their
+   zoom-responsive font metrics, which can't be expressed as a
+   percentage. */
+@property --bars-row-width {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 0px;
+}

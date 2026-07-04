@@ -43,9 +43,29 @@
     },
     {
       "commands": [
+        "Bash(source *)",
+        "Bash(pytest *)",
+        "Bash(python -m pytest *)",
+        "Bash(python3 -m pytest *)",
+        "Bash(uv run pytest *)",
+        "Bash(uvx pytest *)",
+        "Bash(.venv/bin/pytest *)",
+        "Bash(aligner/.venv/bin/pytest *)",
+        "Bash(.venv/bin/ruff *)",
+        "Bash(./.venv/bin/ruff *)",
+        "Bash(./.venv/bin/pytest *)",
+        "Bash(.venv/bin/python -m pytest *)"
+      ],
+      "reason": "Use scripts in the scripts/ folder instead of running pytest or python compile directly"
+    },
+    {
+      "commands": [
+        "Bash(python -c *)",
+        "Bash(python3 -c *)",
+        "Bash(python3.11 -c *)",
         "Bash(bun -e *)"
       ],
-      "reason": "Do not run arbitrary JS scripts"
+      "reason": "Use scripts/sandbox-py and scripts/sandbox-bun in the scripts/ folder instead of running python or bun directly"
     },
     {
       "commands": ["Bash(echo \"rc=$?\")", "Bash(echo \"EXIT=${PIPESTATUS[0]}\")"],

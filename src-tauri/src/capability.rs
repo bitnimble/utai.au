@@ -1,0 +1,628 @@
+//! Hardware detection + capability install state.
+//!
+//! The accelerator probe picks the torch wheel variant the frontend offers;
+//! the capability-state file is the persisted record the (point-of-use)
+//! installer writes on success and the frontend `CapabilityStore` reads. Actual
+//! dependency installation (uv sync of the multi-GB stack) is intentionally not
+//! performed here, see the spec's capability-mechanism section.
+
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+
+use serde::Serialize;
+use tauri::ipc::Channel;
+use tauri::path::BaseDirectory;
+use tauri::{AppHandle, Manager, Runtime};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
+
+use crate::no_console::NoConsole;
+
+/// Lowest NVIDIA driver major version the cu128 wheels run on (see the
+/// aligner pyproject note: cu128 needs driver 570+).
+const CUDA_MIN_DRIVER_MAJOR: u32 = 570;
+
+#[derive(Serialize)]
+// The webview reads camelCase (`gpuName`/`driverVersion`/`meetsCudaMin`, see
+// hardware_info.tsx); without this the snake_case fields arrive as undefined.
+#[serde(rename_all = "camelCase")]
+pub struct AcceleratorInfo {
+    /// `cuda` | `mps` | `cpu` (rocm/directml detection is future work).
+    pub kind: String,
+    pub gpu_name: Option<String>,
+    pub driver_version: Option<String>,
+    /// NVIDIA driver new enough for the cu128 build.
+    pub meets_cuda_min: bool,
+}
+
+impl AcceleratorInfo {
+    fn plain(kind: &str) -> Self {
+        Self {
+            kind: kind.to_string(),
+            gpu_name: None,
+            driver_version: None,
+            meets_cuda_min: false,
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn detect_accelerator() -> AcceleratorInfo {
+    if cfg!(target_os = "macos") {
+        return AcceleratorInfo {
+            kind: "mps".to_string(),
+            gpu_name: mac_chip_name().await,
+            driver_version: None,
+            meets_cuda_min: false,
+        };
+    }
+    if let Some(info) = detect_nvidia().await {
+        return info;
+    }
+    AcceleratorInfo::plain("cpu")
+}
+
+/// Apple Silicon / Intel chip name (e.g. "Apple M2 Pro"), shown as the Hardware
+/// panel's "Device" row -- the GPU is integrated into the SoC on Apple Silicon,
+/// so the chip name is the closest analogue to the NVIDIA GPU model string.
+/// `sysctl` reads a kernel sysctl node directly (no process/disk scan), unlike
+/// `system_profiler` which can take upward of a second. `None` on a read failure
+/// (falls back to the panel's "Unknown" label).
+async fn mac_chip_name() -> Option<String> {
+    let out = Command::new("sysctl")
+        .args(["-n", "machdep.cpu.brand_string"])
+        .no_console()
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+async fn detect_nvidia() -> Option<AcceleratorInfo> {
+    // Bound the probe: a wedged driver (post-CUDA-crash, during a GPU reset) can
+    // make nvidia-smi hang, which would otherwise park the command forever.
+    let probe = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        Command::new("nvidia-smi")
+            .args(["--query-gpu=name,driver_version", "--format=csv,noheader"])
+            .no_console()
+            .output(),
+    )
+    .await;
+    let out = match probe {
+        Err(_) => {
+            log::warn!("nvidia-smi probe timed out");
+            return None;
+        }
+        Ok(Err(e)) => {
+            log::info!("nvidia-smi not available: {e}");
+            return None;
+        }
+        Ok(Ok(out)) => out,
+    };
+    if !out.status.success() {
+        log::warn!(
+            "nvidia-smi exited {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    log::info!("nvidia-smi query-gpu: {:?}", text.trim());
+    // Skip any leading blank / warning line nvidia-smi may emit before the CSV row.
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let mut parts = line.split(',').map(|s| s.trim().to_string());
+    let gpu_name = parts.next().filter(|s| !s.is_empty());
+    let driver_version = parts.next().filter(|s| !s.is_empty());
+    let meets_cuda_min = driver_version
+        .as_deref()
+        .and_then(driver_major)
+        .map(|m| m >= CUDA_MIN_DRIVER_MAJOR)
+        .unwrap_or(false);
+    Some(AcceleratorInfo {
+        kind: "cuda".to_string(),
+        gpu_name,
+        driver_version,
+        meets_cuda_min,
+    })
+}
+
+fn driver_major(v: &str) -> Option<u32> {
+    v.split('.').next()?.parse().ok()
+}
+
+fn state_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    Ok(crate::paths::data_root(app)?.join("capabilities.json"))
+}
+
+async fn read_states<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let path = state_path(app)?;
+    match tokio::fs::read_to_string(&path).await {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::Map::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+// async (not a plain sync command) so the filesystem read/write runs off the
+// webview's main thread.
+#[tauri::command]
+pub async fn capability_states<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
+    Ok(serde_json::Value::Object(read_states(&app).await?))
+}
+
+#[tauri::command]
+pub async fn set_capability_installed<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+    installed: bool,
+) -> Result<(), String> {
+    let mut states = read_states(&app).await?;
+    states.insert(id, serde_json::json!({ "installed": installed }));
+    let path = state_path(&app)?;
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(&states).map_err(|e| e.to_string())?;
+    // Write to a temp sibling then rename, so a crash mid-write can't leave a
+    // truncated/corrupt capabilities.json.
+    let tmp = path.with_extension("json.tmp");
+    tokio::fs::write(&tmp, text).await.map_err(|e| e.to_string())?;
+    tokio::fs::rename(&tmp, &path).await.map_err(|e| e.to_string())
+}
+
+/// Free bytes available to a non-privileged user on the volume holding the
+/// writable data root, so the frontend can warn before a multi-GB install that
+/// wouldn't fit. Walks up to the nearest existing ancestor (the data root may
+/// not exist yet on a first run) so the query lands on the right volume.
+#[tauri::command]
+pub async fn available_disk_space<R: Runtime>(app: AppHandle<R>) -> Result<u64, String> {
+    let probe = existing_ancestor(crate::paths::data_root(&app)?);
+    fs2::available_space(&probe).map_err(|e| e.to_string())
+}
+
+fn existing_ancestor(mut path: PathBuf) -> PathBuf {
+    while !path.exists() {
+        match path.parent() {
+            Some(parent) => path = parent.to_path_buf(),
+            None => break,
+        }
+    }
+    path
+}
+
+/// Path to the python interpreter inside a venv (platform-specific layout).
+pub fn venv_python(venv: &Path) -> PathBuf {
+    if cfg!(windows) {
+        venv.join("Scripts").join("python.exe")
+    } else {
+        venv.join("bin").join("python")
+    }
+}
+
+/// The app-managed capability venv (separate from the dev `aligner/.venv`).
+pub fn app_venv<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    Ok(crate::paths::data_root(app)?.join("venv"))
+}
+
+/// The `uv` to run: explicit override, else the binary bundled at
+/// `$RESOURCE/bin/uv` (packaged builds), else `uv` on PATH (dev). The bundled
+/// copy is marked executable on unix (resources don't preserve the mode).
+fn resolve_uv(app: &AppHandle) -> String {
+    if let Ok(p) = std::env::var("UTAI_UV") {
+        return p;
+    }
+    let rel = if cfg!(windows) { "bin/uv.exe" } else { "bin/uv" };
+    if let Ok(bundled) = app.path().resolve(rel, BaseDirectory::Resource) {
+        if bundled.exists() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&bundled, std::fs::Permissions::from_mode(0o755));
+            }
+            return bundled.to_string_lossy().into_owned();
+        }
+    }
+    "uv".to_string()
+}
+
+/// Directory holding the aligner pyproject + uv.lock the capability groups
+/// are defined in: explicit override, else the bundled `$RESOURCE/python/
+/// aligner` (packaged), else the in-repo `../aligner` (dev).
+fn resolve_aligner_dir(app: &AppHandle) -> PathBuf {
+    if let Ok(d) = std::env::var("UTAI_ALIGNER_DIR") {
+        return PathBuf::from(d);
+    }
+    if let Ok(bundled) = app.path().resolve("python/aligner", BaseDirectory::Resource) {
+        if bundled.exists() {
+            return bundled;
+        }
+    }
+    // Dev fallback: anchored to the crate manifest (fixed at compile time), not
+    // the process CWD, so `cargo run`/`cargo test` from any directory still
+    // finds the sibling `aligner/` checkout.
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../aligner")
+}
+
+/// Progress for a capability install, streamed to the webview.
+#[derive(Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum InstallEvent {
+    Line { line: String },
+    Done,
+    Error { message: String },
+}
+
+/// `uv sync --no-default-groups --group <g>…` the app capability venv to exactly
+/// `groups` (the union of every capability that should be present afterwards, since
+/// uv sync replaces the env). Streams uv's progress lines through `on_event`; Ok
+/// when uv exits 0, Err otherwise. Does NOT send a terminal `Done`/`Error` frame:
+/// the caller owns that, running further steps (model download on install, model
+/// prune on uninstall) around this shared sync.
+async fn sync_venv(
+    app: &AppHandle,
+    id: &str,
+    groups: &[String],
+    on_event: &Channel<InstallEvent>,
+) -> Result<(), String> {
+    let venv = app_venv(app)?;
+    let dir = resolve_aligner_dir(app);
+    log::info!("[sync:{id}] uv sync groups={groups:?} -> {}", venv.display());
+
+    // `venv` is entirely app-owned (always `<data_root>/venv`, never user data),
+    // so it's safe for us to clear it ourselves when it's broken. uv refuses to
+    // reuse an existing directory that isn't a valid Python env (e.g. left
+    // behind by an install killed mid managed-Python-download); without this,
+    // that leftover permanently wedges every future install attempt into the
+    // exact same error, recoverable only by the user manually deleting it.
+    if venv.exists() && !venv_python(&venv).is_file() {
+        log::warn!(
+            "[sync:{id}] {} exists but has no python executable (likely an interrupted \
+             prior install); removing it so uv can recreate it",
+            venv.display()
+        );
+        if let Err(e) = tokio::fs::remove_dir_all(&venv).await {
+            log::warn!("[sync:{id}] failed to remove stale venv: {e}");
+        }
+    }
+
+    let uv = resolve_uv(app);
+    let mut cmd = Command::new(&uv);
+    // Pin 3.11 to match the bundled cp311 wheels (see prepare-desktop-resources).
+    cmd.arg("sync").arg("--no-default-groups").arg("--python").arg("3.11");
+    for group in groups {
+        cmd.arg("--group").arg(group);
+    }
+    let mut child = cmd
+        .current_dir(&dir)
+        .env("UV_PROJECT_ENVIRONMENT", &venv)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .no_console()
+        .spawn()
+        .map_err(|e| format!("failed to spawn uv ({uv}): {e}"))?;
+
+    let stdout = child.stdout.take().ok_or("uv has no stdout")?;
+    let stderr = child.stderr.take().ok_or("uv has no stderr")?;
+    // uv reports progress on stderr; forward both streams as lines.
+    let forward = |reader: tokio::process::ChildStdout| {
+        let sink = on_event.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(reader).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::info!("[sync] {line}");
+                let _ = sink.send(InstallEvent::Line { line });
+            }
+        })
+    };
+    let out_task = forward(stdout);
+    let err_sink = on_event.clone();
+    let err_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            log::info!("[sync] {line}");
+            let _ = err_sink.send(InstallEvent::Line { line });
+        }
+    });
+
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    let _ = out_task.await;
+    let _ = err_task.await;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("uv sync failed ({status})"))
+    }
+}
+
+/// Install (or re-resolve) the app capability venv to `groups`, then pre-fetch the
+/// capabilities' model assets so they run offline afterwards. Provisioning is
+/// surfaced, NOT best-effort: a download failure fails the install, so a capability
+/// is never recorded installed while its weights are missing (breaking the offline
+/// promise). The gate shows the error + offers Retry.
+#[tauri::command]
+pub async fn install_capability(
+    app: AppHandle,
+    id: String,
+    groups: Vec<String>,
+    on_event: Channel<InstallEvent>,
+) -> Result<(), String> {
+    if let Err(message) = sync_venv(&app, &id, &groups, &on_event).await {
+        let _ = on_event.send(InstallEvent::Error { message: message.clone() });
+        return Err(message);
+    }
+    let venv = app_venv(&app)?;
+    let dir = resolve_aligner_dir(&app);
+    if let Err(message) = provision_models(&venv, &dir, &groups, &on_event).await {
+        let _ = on_event.send(InstallEvent::Error { message: message.clone() });
+        return Err(message);
+    }
+    let _ = on_event.send(InstallEvent::Done);
+    Ok(())
+}
+
+/// Uninstall capabilities: first delete the model files no still-installed
+/// capability needs (`keep_caps` -> `provision --prune`, run while the venv still
+/// has the deps `provision` imports), then re-resolve the venv down to `keep_groups`
+/// (the union of every remaining capability's uv groups; empty removes all). The
+/// prune must precede the sync-down, or the sync could strip the deps the prune
+/// step imports. `id` is just the operation's log label.
+#[tauri::command]
+pub async fn uninstall_capability(
+    app: AppHandle,
+    id: String,
+    keep_groups: Vec<String>,
+    keep_caps: Vec<String>,
+    on_event: Channel<InstallEvent>,
+) -> Result<(), String> {
+    let venv = app_venv(&app)?;
+    let dir = resolve_aligner_dir(&app);
+    log::info!("[uninstall:{id}] keep_groups={keep_groups:?} keep_caps={keep_caps:?}");
+    if let Err(message) = prune_models(&venv, &dir, &keep_caps, &on_event).await {
+        let _ = on_event.send(InstallEvent::Error { message: message.clone() });
+        return Err(message);
+    }
+    if let Err(message) = sync_venv(&app, &id, &keep_groups, &on_event).await {
+        let _ = on_event.send(InstallEvent::Error { message: message.clone() });
+        return Err(message);
+    }
+    let _ = on_event.send(InstallEvent::Done);
+    Ok(())
+}
+
+/// Run `python -m app.pipeline.provision <groups>` in the freshly-synced venv to
+/// download the capability's models, streaming progress to the webview. Returns
+/// an error if the download can't be started or exits non-zero, so
+/// `install_capability` surfaces it rather than reporting a capability installed
+/// without its weights.
+async fn provision_models(
+    venv: &Path,
+    dir: &Path,
+    groups: &[String],
+    on_event: &Channel<InstallEvent>,
+) -> Result<(), String> {
+    let python = venv_python(venv);
+    if !python.exists() {
+        return Err("model download skipped: venv python missing after sync".to_string());
+    }
+    let mut cmd = Command::new(&python);
+    cmd.arg("-m").arg("app.pipeline.provision");
+    for group in groups {
+        cmd.arg(group);
+    }
+    let mut child = cmd
+        .current_dir(dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .no_console()
+        .spawn()
+        .map_err(|e| format!("failed to start model download: {e}"))?;
+    let _ = on_event.send(InstallEvent::Line { line: "Downloading models…".to_string() });
+    let out = child.stdout.take();
+    let err = child.stderr.take();
+    let out_sink = on_event.clone();
+    let out_task = tokio::spawn(async move {
+        if let Some(r) = out {
+            let mut lines = BufReader::new(r).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::info!("[provision] {line}");
+                let _ = out_sink.send(InstallEvent::Line { line });
+            }
+        }
+    });
+    let err_sink = on_event.clone();
+    let err_task = tokio::spawn(async move {
+        if let Some(r) = err {
+            let mut lines = BufReader::new(r).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::info!("[provision] {line}");
+                let _ = err_sink.send(InstallEvent::Line { line });
+            }
+        }
+    });
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    let _ = out_task.await;
+    let _ = err_task.await;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("model download failed ({status})"))
+    }
+}
+
+/// Run `python -m app.pipeline.provision --prune <keep_caps>` in the app venv to
+/// delete the model files no remaining capability needs. Skipped (Ok) when the
+/// venv python is already gone -- nothing was installed to have downloaded, so
+/// there's nothing to prune.
+async fn prune_models(
+    venv: &Path,
+    dir: &Path,
+    keep_caps: &[String],
+    on_event: &Channel<InstallEvent>,
+) -> Result<(), String> {
+    let python = venv_python(venv);
+    if !python.exists() {
+        log::info!("[uninstall] venv python missing; skipping model prune");
+        return Ok(());
+    }
+    let mut cmd = Command::new(&python);
+    cmd.arg("-m").arg("app.pipeline.provision").arg("--prune");
+    for cap in keep_caps {
+        cmd.arg(cap);
+    }
+    let mut child = cmd
+        .current_dir(dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .no_console()
+        .spawn()
+        .map_err(|e| format!("failed to start model prune: {e}"))?;
+    let _ = on_event.send(InstallEvent::Line { line: "Removing models…".to_string() });
+    let out = child.stdout.take();
+    let err = child.stderr.take();
+    let out_sink = on_event.clone();
+    let out_task = tokio::spawn(async move {
+        if let Some(r) = out {
+            let mut lines = BufReader::new(r).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::info!("[prune] {line}");
+                let _ = out_sink.send(InstallEvent::Line { line });
+            }
+        }
+    });
+    let err_sink = on_event.clone();
+    let err_task = tokio::spawn(async move {
+        if let Some(r) = err {
+            let mut lines = BufReader::new(r).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::info!("[prune] {line}");
+                let _ = err_sink.send(InstallEvent::Line { line });
+            }
+        }
+    });
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    let _ = out_task.await;
+    let _ = err_task.await;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("model prune failed ({status})"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::test::{mock_builder, mock_context, noop_assets};
+
+    // Serialises the env-mutating tests in this file (only `XDG_DATA_HOME`).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn mock_app() -> tauri::App<tauri::test::MockRuntime> {
+        mock_builder()
+            .build(mock_context(noop_assets()))
+            .expect("failed to build mock app")
+    }
+
+    /// Sets an env var and restores its prior value on drop, so a panicking
+    /// assertion can't leak it to other tests in the process.
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<std::ffi::OsString>,
+    }
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &std::ffi::OsStr) -> Self {
+            let prev = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.prev.take() {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn driver_major_parses_leading_int() {
+        assert_eq!(driver_major("570.86.15"), Some(570));
+        assert_eq!(driver_major("525"), Some(525));
+        assert_eq!(driver_major("abc"), None);
+        assert_eq!(driver_major(""), None);
+    }
+
+    #[test]
+    fn venv_python_matches_platform_layout() {
+        let venv = std::path::Path::new("/opt/app/venv");
+        #[cfg(unix)]
+        assert_eq!(venv_python(venv), venv.join("bin").join("python"));
+        #[cfg(windows)]
+        assert_eq!(venv_python(venv), venv.join("Scripts").join("python.exe"));
+    }
+
+    #[test]
+    fn meets_cuda_min_thresholds_on_driver_version() {
+        assert!(!AcceleratorInfo::plain("cpu").meets_cuda_min);
+        // The accelerator probe maps driver major >= 570 to meets_cuda_min.
+        assert!(driver_major("570.1").map(|m| m >= CUDA_MIN_DRIVER_MAJOR).unwrap());
+        assert!(!driver_major("525.0").map(|m| m >= CUDA_MIN_DRIVER_MAJOR).unwrap());
+    }
+
+    #[test]
+    fn detect_accelerator_returns_a_known_kind() {
+        // No assumptions about the CI box's GPU: just assert the probe resolves
+        // to one of the known kinds and never panics (it shells out to
+        // nvidia-smi behind a 10s timeout).
+        let info = tauri::async_runtime::block_on(detect_accelerator());
+        assert!(matches!(info.kind.as_str(), "cuda" | "mps" | "cpu"));
+    }
+
+    // Round-trips the capability-state file through the two commands. Linux-only
+    // because it redirects the writable dir via XDG_DATA_HOME (mac/Windows use
+    // OS dirs XDG doesn't steer, and we won't write into a real user dir).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn capability_state_file_round_trips() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("utai-cap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _env = EnvVarGuard::set("XDG_DATA_HOME", tmp.as_os_str());
+
+        let app = mock_app();
+        let handle = app.handle().clone();
+        tauri::async_runtime::block_on(async {
+            // Nothing written yet -> empty object.
+            let initial = capability_states(handle.clone()).await.unwrap();
+            assert!(initial.as_object().unwrap().is_empty());
+
+            set_capability_installed(handle.clone(), "lyrics".into(), true)
+                .await
+                .unwrap();
+            let after = capability_states(handle.clone()).await.unwrap();
+            assert_eq!(after["lyrics"]["installed"], serde_json::json!(true));
+
+            // A second write replaces the entry (atomic temp+rename).
+            set_capability_installed(handle.clone(), "lyrics".into(), false)
+                .await
+                .unwrap();
+            let toggled = capability_states(handle.clone()).await.unwrap();
+            assert_eq!(toggled["lyrics"]["installed"], serde_json::json!(false));
+        });
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}

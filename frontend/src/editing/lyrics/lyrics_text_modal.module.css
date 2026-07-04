@@ -1,0 +1,55 @@
+/* Plain-text lyrics loader modal. Backdrop / panel / header / footer chrome
+   comes from the shared <Modal> primitive; only the textarea body and the
+   word-level footer controls live here. */
+
+.textarea {
+    composes: fieldBlock from '../../ui/form/form.module.css';
+    width: 100%;
+    min-height: 280px;
+    resize: vertical;
+    line-height: 1.4;
+}
+
+.errorMessage {
+    composes: bodyMd from '../../typography.module.css';
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--color-error-bg);
+    color: var(--color-error);
+    border: 1px solid var(--color-error);
+}
+
+/* Word-level controls; mirrors the LRCLIB search modal's footer
+   styling so the two loaders feel like siblings. */
+.infoIcon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-text-muted-alt);
+    cursor: help;
+    flex: 0 0 auto;
+}
+
+.infoIcon:hover {
+    color: var(--color-text-strong);
+}
+
+.wordLevelLabel {
+    composes: bodyMd from '../../typography.module.css';
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-text-strong);
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+
+.wordLevelLabelDisabled {
+    color: var(--color-text-muted-alt);
+    cursor: not-allowed;
+}
+
+.hiddenInput {
+    display: none;
+}

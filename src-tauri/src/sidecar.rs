@@ -1,0 +1,419 @@
+//! Rust broker between the webview and the Python aligner sidecar.
+//!
+//! The webview never talks to the sidecar directly: it invokes `run_job`,
+//! passing a Tauri `Channel`, and the broker spawns the Python process, writes
+//! the request frame to its stdin, and re-emits each control-protocol frame it
+//! reads from stdout back up the channel. No bound TCP port, no socket, the
+//! sidecar is fully isolated behind this process. See
+//! `docs/superpowers/specs/2026-06-29-desktop-app-design.md`.
+
+use std::collections::{HashMap, HashSet};
+use std::process::Stdio;
+use std::sync::Mutex as StdMutex;
+
+use serde_json::Value;
+use tauri::ipc::Channel;
+use tauri::{AppHandle, Runtime, State};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
+use tokio::sync::{oneshot, Mutex};
+
+use crate::capability::{app_venv, venv_python};
+use crate::no_console::NoConsole;
+
+/// In-flight jobs keyed by request `id`; the value cancels the read loop.
+#[derive(Default)]
+pub struct SidecarState {
+    jobs: Mutex<HashMap<String, oneshot::Sender<()>>>,
+    /// PIDs of live sidecar processes, so the app can tree-kill them on exit.
+    /// A window-close/quit doesn't drop the task that owns the `Child`, so its
+    /// `kill_on_drop` never fires and a mid-separation Python child is orphaned
+    /// -- still pinning the GPU. A std (not tokio) Mutex: the exit handler runs
+    /// synchronously on the main thread, off the async runtime.
+    children: StdMutex<HashSet<u32>>,
+}
+
+impl SidecarState {
+    fn track(&self, pid: Option<u32>) {
+        if let Some(pid) = pid {
+            self.children.lock().unwrap().insert(pid);
+        }
+    }
+
+    fn untrack(&self, pid: Option<u32>) {
+        if let Some(pid) = pid {
+            self.children.lock().unwrap().remove(&pid);
+        }
+    }
+
+    /// Tree-kill every live sidecar child. Called from the Tauri `Exit` event so
+    /// closing the app doesn't leave a Python process running on the GPU.
+    pub fn kill_all_children(&self) {
+        for pid in self.children.lock().unwrap().drain() {
+            kill_tree(pid);
+        }
+    }
+}
+
+/// Kill a process and its descendants (the sidecar may itself spawn workers).
+#[cfg(windows)]
+fn kill_tree(pid: u32) {
+    use std::os::windows::process::CommandExt;
+    // /T = whole tree; CREATE_NO_WINDOW so it doesn't flash a console.
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &pid.to_string()])
+        .creation_flags(0x0800_0000)
+        .status();
+}
+
+#[cfg(not(windows))]
+fn kill_tree(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status();
+}
+
+/// Resolve the Python interpreter that runs the sidecar: the capability-managed
+/// app venv when present, else the dev `aligner/.venv` so the broker is
+/// exercisable end-to-end. Override with `UTAI_SIDECAR_PYTHON`.
+pub fn resolve_python<R: Runtime>(app: &AppHandle<R>) -> String {
+    if let Ok(p) = std::env::var("UTAI_SIDECAR_PYTHON") {
+        return p;
+    }
+    if let Ok(venv) = app_venv(app) {
+        let py = venv_python(&venv);
+        if py.exists() {
+            return py.to_string_lossy().into_owned();
+        }
+    }
+    // Dev fallback: anchored to the crate manifest (fixed at compile time), not
+    // the process CWD, so `cargo run`/`cargo test` from any directory still
+    // finds the sibling `aligner/.venv`; `venv_python` picks the right
+    // layout (`Scripts/python.exe` vs `bin/python`) instead of hardcoding unix.
+    let dev_venv = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../aligner/.venv");
+    venv_python(&dev_venv).to_string_lossy().into_owned()
+}
+
+/// Largest single protocol frame the broker will buffer. Real frames are small
+/// (large artifacts pass by reference), so this only bounds a misbehaving
+/// sidecar that writes an unbounded run with no newline, which a plain `lines()`
+/// would otherwise buffer forever.
+const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+
+/// Read one newline-terminated line, capped at `MAX_FRAME_BYTES`: like
+/// `AsyncBufReadExt::next_line` but errors instead of buffering an unbounded
+/// no-newline stream. Strips the trailing `\r\n` / `\n`; `Ok(None)` at EOF.
+async fn read_capped_line<R>(reader: &mut R) -> std::io::Result<Option<String>>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        let chunk = reader.fill_buf().await?;
+        if chunk.is_empty() {
+            return Ok(if buf.is_empty() { None } else { Some(finish_line(buf)) });
+        }
+        if let Some(pos) = chunk.iter().position(|&b| b == b'\n') {
+            buf.extend_from_slice(&chunk[..pos]);
+            reader.consume(pos + 1);
+            return Ok(Some(finish_line(buf)));
+        }
+        let n = chunk.len();
+        buf.extend_from_slice(chunk);
+        reader.consume(n);
+        if buf.len() > MAX_FRAME_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "sidecar frame exceeds the size cap",
+            ));
+        }
+    }
+}
+
+fn finish_line(mut buf: Vec<u8>) -> String {
+    if buf.last() == Some(&b'\r') {
+        buf.pop();
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// Run one backend job. `request` is a validated client control-protocol frame
+/// (the frontend builds it via `encodeClientMessage`); each backend frame is
+/// forwarded verbatim through `on_event`. Resolves when the sidecar emits a
+/// terminal `result`/`error`, the stream closes, or the job is cancelled.
+#[tauri::command]
+pub async fn run_job<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SidecarState>,
+    request: Value,
+    on_event: Channel<Value>,
+) -> Result<(), String> {
+    let id = request
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("request missing id")?
+        .to_string();
+
+    let python = resolve_python(&app);
+    let mut command = Command::new(&python);
+    command
+        .args(["-u", "-m", "app.sidecar"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .no_console();
+    // The sidecar writes artifacts to UTAI_OUTPUTS_DIR, which the broker sets
+    // in the process env at startup (paths::redirect_env) + scopes for the webview
+    // (lib.rs setup); the child inherits it. No per-job override needed.
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("failed to spawn sidecar ({python}): {e}"))?;
+    let pid = child.id();
+    state.track(pid);
+
+    let mut stdin = child.stdin.take().ok_or("sidecar has no stdin")?;
+    let stdout = child.stdout.take().ok_or("sidecar has no stdout")?;
+    let stderr = child.stderr.take().ok_or("sidecar has no stderr")?;
+
+    let mut line = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+    line.push('\n');
+
+    // Register the cancel channel BEFORE writing the request. `cancel_job`
+    // removes-then-sends on this same map, so a cancel that races in during the
+    // awaited write below must find the entry, otherwise it is silently dropped
+    // and the job runs to completion. A cancel arriving now is buffered in the
+    // oneshot and honoured on the select loop's first poll.
+    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+    state.jobs.lock().await.insert(id.clone(), cancel_tx);
+
+    // On a write failure the read loop never runs, so unregister here to avoid
+    // leaking a dead entry that a later cancel_job would match.
+    if let Err(e) = stdin.write_all(line.as_bytes()).await {
+        state.jobs.lock().await.remove(&id);
+        state.untrack(pid);
+        return Err(format!("failed to write request: {e}"));
+    }
+    if let Err(e) = stdin.flush().await {
+        state.jobs.lock().await.remove(&id);
+        state.untrack(pid);
+        return Err(e.to_string());
+    }
+
+    // stderr is diagnostics only (the protocol owns stdout); drain it to the log.
+    let stderr_task = tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr);
+        while let Ok(Some(l)) = read_capped_line(&mut reader).await {
+            log::info!("[sidecar] {l}");
+        }
+    });
+
+    let mut reader = BufReader::new(stdout);
+    let outcome = loop {
+        tokio::select! {
+            next = read_capped_line(&mut reader) => match next {
+                Ok(Some(raw)) => {
+                    let raw = raw.trim();
+                    if raw.is_empty() {
+                        continue;
+                    }
+                    match serde_json::from_str::<Value>(raw) {
+                        Ok(frame) => {
+                            // Terminal only for a `result`/`error` carrying THIS
+                            // request's id (the broker is one-shot today, but
+                            // keying on id keeps a future multiplexed sidecar from
+                            // being torn down by another job's terminal frame).
+                            let terminal = matches!(
+                                frame.get("type").and_then(|t| t.as_str()),
+                                Some("result") | Some("error")
+                            ) && frame.get("id").and_then(|v| v.as_str()) == Some(id.as_str());
+                            // Break (don't `?`-return) on a send failure so the
+                            // jobs-map removal + child reap below still run.
+                            if let Err(e) = on_event.send(frame) {
+                                break Err(e.to_string());
+                            }
+                            if terminal {
+                                break Ok(());
+                            }
+                        }
+                        Err(e) => log::warn!("[sidecar] dropping malformed frame: {e}: {raw}"),
+                    }
+                }
+                Ok(None) => break Ok(()),
+                Err(e) => break Err(format!("sidecar read error: {e}")),
+            },
+            _ = &mut cancel_rx => {
+                let cancel = serde_json::json!({"v": 1, "type": "cancel", "id": id}).to_string();
+                let _ = stdin.write_all(format!("{cancel}\n").as_bytes()).await;
+                let _ = stdin.flush().await;
+                let _ = child.start_kill();
+                break Ok(());
+            }
+        }
+    };
+
+    state.jobs.lock().await.remove(&id);
+    // Close the sidecar's stdin so its blocking readline loop sees EOF and the
+    // process exits. Without this, on the normal terminal-frame path the sidecar
+    // is still waiting for more input and child.wait() below deadlocks. (The
+    // cancel path already start_kill()ed it; the stdout-EOF path already exited.)
+    drop(stdin);
+    let _ = child.wait().await;
+    state.untrack(pid);
+    // Drain remaining stderr before returning (the pipe closed when the child
+    // exited, so this completes promptly) rather than detaching the task.
+    let _ = stderr_task.await;
+    outcome
+}
+
+/// Cooperatively cancel the job with the matching `id`.
+#[tauri::command]
+pub async fn cancel_job(state: State<'_, SidecarState>, id: String) -> Result<(), String> {
+    if let Some(tx) = state.jobs.lock().await.remove(&id) {
+        let _ = tx.send(());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::ipc::InvokeResponseBody;
+    use tauri::test::{mock_builder, mock_context, noop_assets};
+    use tauri::Manager;
+
+    // Serialises the env-mutating tests in this file (only UTAI_SIDECAR_PYTHON).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn mock_app() -> tauri::App<tauri::test::MockRuntime> {
+        let app = mock_builder()
+            .build(mock_context(noop_assets()))
+            .expect("failed to build mock app");
+        app.manage(SidecarState::default());
+        app
+    }
+
+    /// A `Channel<Value>` that records every frame the broker forwards.
+    fn recording_channel() -> (Channel<Value>, std::sync::Arc<std::sync::Mutex<Vec<Value>>>) {
+        let frames = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = frames.clone();
+        let channel = Channel::new(move |body: InvokeResponseBody| {
+            if let InvokeResponseBody::Json(s) = body {
+                if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                    sink.lock().unwrap().push(v);
+                }
+            }
+            Ok(())
+        });
+        (channel, frames)
+    }
+
+    /// Sets an env var and restores its prior value on drop, so a panicking
+    /// assertion can't leak it to other tests in the process.
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<std::ffi::OsString>,
+    }
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &std::ffi::OsStr) -> Self {
+            let prev = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.prev.take() {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_python_prefers_the_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = EnvVarGuard::set("UTAI_SIDECAR_PYTHON", std::ffi::OsStr::new("/custom/python3"));
+        let app = mock_app();
+        assert_eq!(resolve_python(app.handle()), "/custom/python3");
+    }
+
+    #[test]
+    fn cancel_unknown_job_is_a_no_op() {
+        let app = mock_app();
+        let state = app.state::<SidecarState>();
+        let r = tauri::async_runtime::block_on(cancel_job(state, "no-such-job".into()));
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn read_capped_line_splits_lines_and_strips_terminators() {
+        tauri::async_runtime::block_on(async {
+            let mut r = BufReader::new(&b"one\r\ntwo\nthree"[..]);
+            assert_eq!(read_capped_line(&mut r).await.unwrap(), Some("one".to_string()));
+            assert_eq!(read_capped_line(&mut r).await.unwrap(), Some("two".to_string()));
+            // A final line with no trailing newline still returns before EOF.
+            assert_eq!(read_capped_line(&mut r).await.unwrap(), Some("three".to_string()));
+            assert_eq!(read_capped_line(&mut r).await.unwrap(), None);
+        });
+    }
+
+    #[test]
+    fn read_capped_line_errors_past_the_cap() {
+        tauri::async_runtime::block_on(async {
+            // A no-newline run past the cap errors instead of buffering forever.
+            let big = vec![b'x'; MAX_FRAME_BYTES + 10];
+            let mut r = BufReader::new(&big[..]);
+            assert!(read_capped_line(&mut r).await.is_err());
+        });
+    }
+
+    // Drives the broker against a fake sidecar that speaks the control protocol:
+    // it must forward each frame up the channel and resolve on the terminal one.
+    #[cfg(unix)]
+    #[test]
+    fn run_job_forwards_frames_until_the_terminal_result() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Ignores the `-u -m app.sidecar` args, consumes the request line, then
+        // emits one progress + one terminal result frame and exits.
+        let script = std::env::temp_dir().join(format!("utai-fake-sidecar-{}.sh", std::process::id()));
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+read _req
+printf '{"v":1,"type":"progress","id":"job1","stage":"separating","frac":0.5}\n'
+printf '{"v":1,"type":"result","id":"job1","artifacts":[]}\n'
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _env = EnvVarGuard::set("UTAI_SIDECAR_PYTHON", script.as_os_str());
+
+        let app = mock_app();
+        let handle = app.handle().clone();
+        let state = app.state::<SidecarState>();
+        let (channel, frames) = recording_channel();
+        // A well-formed protocol frame (RequestArgs.audio is required): the fake
+        // sidecar ignores stdin, but keeping the fixture valid means the broker's
+        // request-forwarding path is exercised against a shape the real Python
+        // backend would actually accept.
+        let request = serde_json::json!({
+            "v": 1, "type": "request", "id": "job1", "op": "align",
+            "args": { "audio": { "kind": "path", "path": "/tmp/song.mp3" }, "params": {} }
+        });
+
+        let result = tauri::async_runtime::block_on(run_job(handle, state, request, channel));
+        assert!(result.is_ok(), "run_job errored: {result:?}");
+
+        let frames = frames.lock().unwrap();
+        assert_eq!(frames.len(), 2, "expected progress + result, got {frames:?}");
+        assert_eq!(frames[0]["type"], "progress");
+        assert_eq!(frames[1]["type"], "result");
+        // The job must be reaped from the in-flight map once it terminates.
+        assert!(tauri::async_runtime::block_on(app.state::<SidecarState>().jobs.lock()).is_empty());
+
+        let _ = std::fs::remove_file(&script);
+    }
+}

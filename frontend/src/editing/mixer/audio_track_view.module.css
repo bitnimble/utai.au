@@ -1,0 +1,50 @@
+/* Audio-track row: sticky gutter (filename) + tiled waveform bars-row. */
+
+.musicTrack {
+    position: relative;
+    display: flex;
+    min-width: max-content;
+    border-top: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg-cream);
+}
+
+.musicTrackGutter {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    width: 160px;
+    padding: 0 12px;
+    box-sizing: border-box;
+    border-right: 1px solid var(--color-border);
+    background: var(--color-bg-cream);
+}
+
+.musicTrackName {
+    composes: label from '../../typography.module.css';
+    color: var(--color-text-muted-alt);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.musicTrackBarsRow {
+    composes: barsRowBase from '../jot_editor.module.css';
+}
+
+/* One waveform tile. `left`/`width` are set inline from JS (snapped to
+   integer CSS px in lockstep with the canvas backing store) so adjacent
+   tiles share a pixel-perfect boundary and the bitmap displays 1:1. */
+.musicTrackWaveformChunk {
+    display: block;
+    position: absolute;
+    top: 0;
+    image-rendering: pixelated;
+}

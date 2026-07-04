@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# scripts/sandbox-run <command> [args...]
+#
+# Internal helper: ensure the utai sandbox container is running, then
+# exec a command inside it (working dir = the bind-mounted repo, so relative
+# paths like `aligner/scripts/foo.py` resolve). Used by sandbox-py and
+# sandbox-bun; not usually called directly, but
+# `scripts/sandbox-run nvidia-smi` works too.
+#
+# The container is built from sandbox/Dockerfile (see its header). This
+# script auto-starts it if it's merely stopped, but won't create it from
+# scratch, that needs the GPU/volume run flags, which it prints instead.
+
+set -euo pipefail
+
+CONTAINER=utai-sandbox
+# The repo is bind-mounted into the container at the SAME absolute path, so
+# temp files Write()n in the repo (and `sandbox-py FILE.py`) resolve there.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The HOST's effective timezone, injected per-exec so in-container timestamps
+# (runner logs, `date`, Python localtime) match the host even in a container
+# created before start.sh passed TZ. Zone files come from the image's tzdata.
+HOST_TZ="${TZ:-$(timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo Etc/UTC)}"
+
+# Use plain `docker` if this user can reach the daemon, else fall back to
+# `sudo docker` (the build steps for this image run under sudo on this
+# host). The sudo path may prompt for a password the first time.
+DOCKER=(docker)
+if ! docker info >/dev/null 2>&1; then
+    DOCKER=(sudo docker)
+fi
+
+# Ensure the container is up. Three cases: running (nothing to do),
+# exists-but-stopped (start it), or absent (guide the user to create it).
+running=$("${DOCKER[@]}" inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || true)
+if [ "$running" != "true" ]; then
+    if [ -n "$running" ]; then
+        # inspect returned something ("false") -> container exists, stopped.
+        "${DOCKER[@]}" start "$CONTAINER" >/dev/null
+    else
+        echo "error: container '$CONTAINER' does not exist. Create it with:" >&2
+        echo >&2
+        echo "  ${DOCKER[*]} run -d --name $CONTAINER \\" >&2
+        echo "      --gpus all --shm-size=2g \\" >&2
+        echo "      -e TZ=$HOST_TZ \\" >&2
+        echo "      -v /codebox-workspace:/codebox-workspace \\" >&2
+        echo "      -v $REPO:$REPO \\" >&2
+        echo "      -w $REPO \\" >&2
+        echo "      utai-sandbox" >&2
+        echo >&2
+        echo "(drop --gpus all to run CPU-only; build the image first with:" >&2
+        echo "  ${DOCKER[*]} build -f sandbox/Dockerfile -t utai-sandbox .)" >&2
+        exit 1
+    fi
+fi
+
+# -i forwards stdin so `sandbox-run python3 - <<'EOF'` (and other stdin-fed
+# commands) work; without it docker exec silently feeds the command an empty
+# stdin, which no-ops with no error. No -t: these are non-interactive.
+exec "${DOCKER[@]}" exec -i -e TZ="$HOST_TZ" --workdir "$REPO" "$CONTAINER" "$@"

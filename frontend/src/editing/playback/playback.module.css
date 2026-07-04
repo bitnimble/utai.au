@@ -1,0 +1,65 @@
+/* Travelling playback marker. Rendered in each row so the playhead line
+   spans the vertical stack. Position is driven by the `--playhead-x` CSS
+   custom property, written once per frame by the karaoke page's playhead
+   position writer on every `[data-playhead="1"]` element. */
+
+.playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 2px;
+    background: var(--color-accent-strong);
+    z-index: 5;
+    box-shadow: var(--shadow-accent-glow);
+    cursor: ew-resize;
+    /* 3D transform (not translateX): Chrome's compositor honours sub-pixel
+       positions reliably for 3D transforms; a 2D translate on a
+       will-change layer integer-snaps and jitters against the scrolling
+       bars below. */
+    transform: translate3d(var(--playhead-x, 0px), 0, 0);
+    will-change: transform;
+}
+
+/* Widen the drag hit area without changing the 2px visual width. */
+.playhead::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -5px;
+    right: -5px;
+}
+
+.playheadLabel {
+    composes: labelSm from '../../typography.module.css';
+    position: absolute;
+    top: 0;
+    left: 1px;
+    transform: translateX(-50%);
+    background: var(--color-accent-strong);
+    color: var(--color-bg-base);
+    /* stylelint-disable-next-line property-disallowed-list -- tabular-nums stops the timecode jumping width as digits change. */
+    font-variant-numeric: tabular-nums;
+    /* stylelint-disable-next-line property-disallowed-list -- looser tracking so the timecode reads as a chip. */
+    letter-spacing: 0.02em;
+    /* stylelint-disable-next-line property-disallowed-list -- pin glyphs against the chip's vertical centre. */
+    text-transform: none;
+    line-height: 1.15;
+    padding: 3px 5px;
+    border-radius: var(--radius-xs);
+    white-space: nowrap;
+    z-index: 6;
+    box-shadow: var(--shadow-playhead-label);
+    cursor: ew-resize;
+    text-align: center;
+}
+
+.playheadLabelBarBeat {
+    /* stylelint-disable-next-line property-disallowed-list -- secondary readout, one notch smaller than the parent chip. */
+    font-size: 9px;
+    /* stylelint-disable-next-line property-disallowed-list -- one notch lighter so it reads as the chip's secondary line. */
+    font-weight: 600;
+    opacity: 0.85;
+    margin-top: 1px;
+}

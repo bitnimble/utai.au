@@ -1,0 +1,45 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "utai.au desktop shell"
+authors = ["utai.au"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+# Cross-platform free-disk-space query for the pre-install space check (std has
+# no portable API; the alternative is fragile df/wmic shell-outs).
+fs2 = "0.4"
+tauri = { version = "2.11.3", features = ["protocol-asset"] }
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
+# WebdriverIO desktop e2e plugins (the in-app Execute API + the embedded
+# WebDriver server). Optional + behind the `wdio` feature so they NEVER ride a
+# shipped build; only `cargo build --features wdio` (the e2e build) pulls them.
+tauri-plugin-wdio = { version = "1", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
+
+[features]
+wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+
+[dev-dependencies]
+# The mock runtime (tauri::test::mock_builder) for unit-testing commands without
+# a real webview. A dev-dep so the `test` feature never rides the shipped build
+# (resolver v2 keeps dev-dep features out of normal builds).
+tauri = { version = "2.11.3", features = ["test"] }
