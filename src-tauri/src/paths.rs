@@ -11,7 +11,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager, Runtime};
 
 /// True iff `dir` has a `portable` marker FILE directly in it. MUST be
@@ -162,26 +161,6 @@ fn set_dir(key: &str, path: PathBuf) {
 fn set_var(key: &str, val: impl AsRef<std::ffi::OsStr>) {
     // SAFETY: called once at startup, before any threads/webview that read env.
     unsafe { std::env::set_var(key, val) };
-}
-
-/// Point the pipeline at any model checkpoint bundled in a packaged build (dev
-/// keeps the Settings/.env defaults). No-op unless the aligner Python backend was
-/// bundled under `python/aligner` AND a checkpoint dir rode along; otherwise the
-/// aligner falls back to the weights it fetches/provisions at runtime (under
-/// HF_HOME/TORCH_HOME, see `redirect_env`).
-pub fn init_checkpoint_env(app: &AppHandle) {
-    let resource = |rel: &str| {
-        app.path()
-            .resolve(rel, BaseDirectory::Resource)
-            .ok()
-            .filter(|p| p.exists())
-    };
-    if resource("python/aligner").is_none() {
-        return; // dev / unbundled: leave Settings defaults in place
-    }
-    if let Some(dir) = resource("python/aligner_checkpoint") {
-        set_var("UTAI_ALIGNER_CHECKPOINT", dir.as_os_str());
-    }
 }
 
 /// Point every dependency's cache/download/state dir under `root` via process env
