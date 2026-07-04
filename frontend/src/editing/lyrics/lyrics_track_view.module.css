@@ -78,17 +78,13 @@
 
 .lyricsBarsRow {
     composes: barsRowBase from '../jot_editor.module.css';
-    /* Lyrics rows keep a SCOPED `--px-per-beat`: the score-wide inherited
-       one was removed (zoom now drives per-row width + percentage
-       geometry), but the lyric chips' zoom-responsive font metrics
-       (letter-spacing / wdth / wght below) and the word-cell `left` /
-       `width` can't be expressed as percentages, so `setBarsRowVars`
-       (jot_editor.tsx) writes `--px-per-beat` on this element only. The
-       cascade is confined to this row's (windowed) chips. `--note-pad-px`
-       (the engraving inset other rows now express as a percentage) is
-       rebuilt here from that scoped value; `--note-pad-beats` inherits
-       from the score container (zoom-invariant). */
-    --note-pad-px: calc(var(--note-pad-beats) * var(--px-per-beat) * 1px);
+    /* `--px-per-beat` (px per second) is written inline per row by
+       lyrics_track_view.tsx; the chips' zoom-responsive font metrics
+       (letter-spacing / wdth / wght below) and word-cell `left` / `width`
+       cascade from it, confined to this row's windowed chips. Karaoke has
+       no engraving inset, so `--note-pad-beats` has no writer and defaults
+       to 0. */
+    --note-pad-px: calc(var(--note-pad-beats, 0) * var(--px-per-beat) * 1px);
     /* Furigana annotation font size, shared by the `rt` rule and the
        plain-word reserve (`.lyricsBarsRowFurigana`) so the rt's line box
        and the reserved strip stay in lockstep. 0.65em of the 22px base =

@@ -8,7 +8,6 @@
  * "does this element fall inside it?".
  */
 
-import { untracked } from 'mobx';
 import type { StructuralPresenter } from 'src/editing/structure/structural_presenter';
 
 /** A half-open-ish quarter-note-beat window. Both ends inclusive (see
@@ -16,25 +15,15 @@ import type { StructuralPresenter } from 'src/editing/structure/structural_prese
 export type BeatRange = { startBeat: number; endBeat: number };
 
 /**
- * Inline seed for a bars-row's `--bars-row-width` (`layerBeats ×
- * pxPerBeat`, in px). Every beat-anchored child sizes/positions itself
- * as a percentage of this width, so a row with the var unset collapses to
- * 0.
- *
- * `pxPerBeat` is read through `untracked` so setting this in an
- * `observer` row's inline style does NOT subscribe the row to zoom (the
- * row must stay off the zoom re-render path; `ScoreZoomVar` updates the
- * var imperatively on each zoom tick instead). The seed covers the cases
- * `ScoreZoomVar` can't: the row's initial mount, a row mounted *after*
- * load (a freshly loaded audio / lyrics track, which doesn't change
- * pxPerBeat so `ScoreZoomVar` wouldn't re-fire), and any non-zoom
- * re-render of the row (React would otherwise reset the imperatively-set
- * var to a stale inline value - reading the live pxPerBeat here keeps it
- * correct). Mirrors how `--gutter-width` is seeded inline + updated by
- * `GutterWidthVar`.
+ * A bars-row's `--bars-row-width` (`layerBeats × pxPerBeat`, in px), the
+ * width every beat-anchored child positions against. `pxPerBeat` is read
+ * tracked, so an `observer` row that sets this in its inline style
+ * re-renders on zoom and the width follows. (Drumjot kept rows off the
+ * zoom path via an imperative `ScoreZoomVar` writer; utai.au has few rows
+ * and no such writer, so a plain reactive read is simpler and correct.)
  */
 export function barsRowWidthSeed(structural: StructuralPresenter, layerBeats: number): string {
-  return `${untracked(() => structural.pxPerBeat) * layerBeats}px`;
+  return `${structural.pxPerBeat * layerBeats}px`;
 }
 
 /**

@@ -52,6 +52,21 @@ export const KaraokePage = observer(function KaraokePage() {
   const [session] = React.useState(buildSession);
   const { song, viewport, structural, lyricsAlign, lyricsPresenter, presenter } = session;
 
+  // Expose the live session on `window.utai` for e2e specs + debugging
+  // (the karaoke analogue of Drumjot's `window.drumjot`).
+  React.useEffect(() => {
+    (window as Window & { utai?: Record<string, unknown> }).utai = {
+      song,
+      viewport,
+      structural,
+      lyricsAlign,
+      lyricsPresenter,
+      presenter,
+      lyricsStore,
+      jotPlayer,
+    };
+  }, [song, viewport, structural, lyricsAlign, lyricsPresenter, presenter]);
+
   return (
     <KaraokePresenterContext.Provider value={presenter}>
       <SongStoreContext.Provider value={song}>
