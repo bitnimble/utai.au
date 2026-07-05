@@ -34,6 +34,8 @@ from fastapi.responses import StreamingResponse
 from app.cache import BlobCache
 from app.config import settings
 from app.models import HealthResponse
+from app.music.routes import aclose_facade as aclose_music_facade
+from app.music.routes import router as music_router
 from app.pipeline import gpu_park
 from app.pipeline.lyrics_align import InputLine, get_aligner, lines_to_json
 from app.pipeline.separate import Separator
@@ -124,6 +126,7 @@ async def lifespan(app: FastAPI):
         )
         app.state.separator = None
         yield
+        await aclose_music_facade()
         log.info("Shutting down.")
         return
 
@@ -141,6 +144,7 @@ async def lifespan(app: FastAPI):
         time.perf_counter() - started,
     )
     yield
+    await aclose_music_facade()
     log.info("Shutting down.")
 
 
@@ -153,9 +157,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+app.include_router(music_router)
 
 
 @app.get("/health", response_model=HealthResponse)

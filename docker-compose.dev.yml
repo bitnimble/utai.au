@@ -1,0 +1,102 @@
+# utai.au dev harness for the music-source (OnTheSpot) feature. NOT for production.
+#
+# Brings up four services tied into one origin by Caddy:
+#   - onthespot : OnTheSpot's headless web API (the thing we wrap)
+#   - backend   : the aligner (music facade), reusing the CUDA sandbox image so
+#                 stem separation can run here later; music runs in the light
+#                 `api` worker role (no model load, no GPU needed)
+#   - web       : the Vite dev server over a repo bind-mount (edit -> refresh)
+#   - caddy     : edge proxy; /api -> backend, /onthespot -> onthespot, / -> web
+#
+# Run:   docker compose -f docker-compose.dev.yml up --build
+# Then:  open http://localhost:8080  (refresh to pick up code changes)
+#
+# First run is heavy: the backend reuses `utai-sandbox` (sandbox/Dockerfile), a
+# multi-GB CUDA/torch build - the same image `scripts/sandbox-*` already use, so
+# it's likely cached. Accounts/credentials live only in the `otsconfig` volume.
+
+services:
+  onthespot:
+    build:
+      context: .
+      dockerfile: docker/onthespot.Dockerfile
+    image: utai-onthespot
+    restart: unless-stopped
+    environment:
+      ONTHESPOTDIR: /config
+    volumes:
+      - otsconfig:/config
+      - otsdownloads:/root/Music
+    expose:
+      - "5000"
+
+  backend:
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    image: utai-sandbox
+    restart: unless-stopped
+    working_dir: /aligner
+    # Run as root (the sandbox image defaults to uid 1000): the `otsconfig`
+    # volume is shared with the root `onthespot` container, and the facade must
+    # write music_config.json + seed the YouTube Music account into it. Same-uid
+    # avoids a permission clash. The image sets PYTHONDONTWRITEBYTECODE=1, so no
+    # root-owned __pycache__ leaks onto the bind-mounted source.
+    user: "0:0"
+    command: /opt/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      PYTHONPATH: /aligner
+      # Music needs no GPU/model load; `api` skips the eager separation-model
+      # load. Switch to `pipeline` (and add GPU access below) to run separation.
+      WORKER_ROLE: api
+      ONTHESPOT_BASE_URL: http://onthespot:5000
+      ONTHESPOT_CONFIG_PATH: /config/otsconfig.json
+      MUSIC_CONFIG_PATH: /config/music_config.json
+    volumes:
+      - ./aligner:/aligner
+      - otsconfig:/config
+    expose:
+      - "8000"
+    depends_on:
+      - onthespot
+    # To run stem separation here later: set WORKER_ROLE=pipeline above and give
+    # the container GPU access, e.g.:
+    #   gpus: all
+    # (or, on older Compose: deploy.resources.reservations.devices with nvidia)
+
+  web:
+    image: oven/bun:1.3.14
+    restart: unless-stopped
+    working_dir: /repo
+    command: sh -c "bunx vite --host 0.0.0.0 --port 5174"
+    # Run as the host user so Vite's writes over the bind-mount aren't root-owned.
+    user: "1000:1000"
+    environment:
+      HOME: /tmp
+      # Origin-relative /api (Caddy serves it on this same origin).
+      VITE_ALIGNER_URL: ""
+      # Keep Vite's dep-optimizer cache off the (possibly read-only-ish) mount.
+      VITE_CACHE_DIR: /tmp/utai-vite
+    volumes:
+      - .:/repo
+    expose:
+      - "5174"
+    ports:
+      # Optional direct Vite access (e.g. if you want HMR straight, not via Caddy).
+      - "5174:5174"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - web
+      - backend
+      - onthespot
+
+volumes:
+  otsconfig:
+  otsdownloads:

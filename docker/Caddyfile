@@ -1,0 +1,27 @@
+# utai.au dev harness edge proxy. Single browser origin (this Caddy on :8080),
+# which keeps the frontend's `<origin>/api/*` convention intact, /api same-origin
+# (no CORS), and the interactive-login `/onthespot/` path reachable.
+#
+# Why Caddy and not Vite's own proxy: the music fetch streams chunked NDJSON, and
+# Vite-under-Bun can't relay that (it hangs). Caddy streams it fine
+# (`flush_interval -1`).
+:8080 {
+	# Aligner backend (music facade + lyrics). `handle_path` strips the /api
+	# prefix, so /api/music/search -> backend /music/search.
+	handle_path /api/* {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+		}
+	}
+
+	# OnTheSpot's own web UI, for the interactive logins (Spotify / Tidal) the
+	# facade can't drive headlessly. /onthespot/settings -> OnTheSpot /settings.
+	handle_path /onthespot/* {
+		reverse_proxy onthespot:5000
+	}
+
+	# Everything else: the Vite dev server (HMR websocket proxied transparently).
+	handle {
+		reverse_proxy web:5174
+	}
+}
