@@ -188,14 +188,41 @@ def _fold_stft_enabled(default: bool) -> bool:
     return default
 
 
+def _no_tf32(providers):
+    """Force full-fp32 (no TF32) matmuls on the CUDA EP for the STFT fold graphs.
+
+    The onnx_stft DFT-as-matmul must match numpy's fp32 STFT exactly. TF32 (the
+    Ampere+ tensor-core default) approximates fp32 matmuls to ~1e-3 relative, and
+    the fp16 separation model amplifies that ~1000x into a ~3% output divergence
+    -- enough to trip the fold's first-chunk parity self-check, which then reverts
+    to the ~2x-slower numpy STFT for the whole pass. The fold graphs are tiny
+    (~2% of a chunk), so dropping their tensor-core path costs nothing. Only the
+    fp32 STFT graphs need this; the fp16 model body is unaffected by TF32."""
+    out = []
+    for p in providers:
+        if p == "CUDAExecutionProvider":
+            out.append(("CUDAExecutionProvider", {"use_tf32": "0"}))
+        elif isinstance(p, tuple) and p and p[0] == "CUDAExecutionProvider":
+            out.append((p[0], {**p[1], "use_tf32": "0"}))
+        else:
+            out.append(p)
+    return out
+
+
 class _RoformerFold:
     """Forward STFT + model + inverse iSTFT for one chunk, all on the GPU: the
     `onnx_stft` forward/inverse graphs run as their own CUDA sessions chained
-    around the model, replacing numpy bs_pack / bs_apply_mask / bs_unpack. The
-    spectrogram + mask still round-trip host<->device between the three plain
-    `run`s (a resident IOBinding chain is a later optimisation), but the heavy
-    per-chunk compute -- the O(N^2) DFT/iDFT matmuls + the mask multiply + the
-    overlap-add -- moves off the CPU."""
+    around the model, replacing numpy bs_pack / bs_apply_mask / bs_unpack, so the
+    heavy per-chunk compute -- the O(N^2) DFT/iDFT matmuls + the mask multiply +
+    the overlap-add -- moves off the CPU.
+
+    The three sessions chain via IOBinding (ported from `_Mdx23cFold`): the
+    spectrogram + mask stay resident in VRAM between runs, so only the input audio
+    (h->d) and final stems (d->h) cross the PCIe bus -- vs a plain `run` chain,
+    which round-trips both intermediates through host and leaves the GPU idling on
+    the copies. Unlike the MDX fold, the roformer inverse needs BOTH the forward
+    spectrogram and the model's mask, so the forward output is bound to the model
+    input AND (reused, still resident) to the inverse."""
 
     def __init__(self, model_session, model_in, providers, n_fft, hop, n_freq,
                  n_frames, n_stems, channels, window) -> None:
@@ -205,18 +232,38 @@ class _RoformerFold:
 
         fwd = onnx_stft.build_forward(n_fft, hop, n_freq, n_frames, channels, window)
         inv = onnx_stft.build_inverse(n_fft, hop, n_freq, n_frames, n_stems, channels, window)
+        providers = _no_tf32(providers)
         self._fwd = ort.InferenceSession(fwd.SerializeToString(), providers=providers)
         self._inv = ort.InferenceSession(inv.SerializeToString(), providers=providers)
         self._model = model_session
         self._model_in = model_in
+        self._model_out = model_session.get_outputs()[0].name
         self._n = n_stems
+        # CUDA device the chain keeps its intermediates on (0 within the process;
+        # CUDA_VISIBLE_DEVICES pins which physical GPU that is).
+        self._devid = 0
 
     def run(self, part: np.ndarray) -> np.ndarray:
         """part [s, chunk] -> stems, matching bs_unpack(...)[0]: [n, s, chunk] for
         multi-stem, [s, chunk] when n_stems == 1 (bs_unpack collapses the stem axis)."""
-        stft_repr = self._fwd.run(None, {"audio": part[None].astype(np.float32)})[0]
-        mask = self._model.run(None, {self._model_in: stft_repr})[0]
-        out = self._inv.run(None, {"stft_repr": stft_repr, "mask": mask})[0]  # [1,n,s,chunk]
+        io_f = self._fwd.io_binding()
+        io_f.bind_cpu_input("audio", part[None].astype(np.float32))
+        io_f.bind_output("stft_repr", device_type="cuda", device_id=self._devid)
+        self._fwd.run_with_iobinding(io_f)
+        stft_repr = io_f.get_outputs()[0]  # resident in VRAM
+
+        io_m = self._model.io_binding()
+        io_m.bind_ortvalue_input(self._model_in, stft_repr)
+        io_m.bind_output(self._model_out, device_type="cuda", device_id=self._devid)
+        self._model.run_with_iobinding(io_m)
+        mask = io_m.get_outputs()[0]  # resident in VRAM
+
+        io_i = self._inv.io_binding()
+        io_i.bind_ortvalue_input("stft_repr", stft_repr)  # reuse the resident forward output
+        io_i.bind_ortvalue_input("mask", mask)
+        io_i.bind_output("out", device_type="cuda", device_id=self._devid)
+        self._inv.run_with_iobinding(io_i)
+        out = io_i.get_outputs()[0].numpy()  # [1,n,s,chunk] d->h
         return (out[:, 0] if self._n == 1 else out)[0]
 
 
@@ -235,7 +282,7 @@ class _RoformerFoldMac:
         from app.pipeline.separation import onnx_stft
 
         inv = onnx_stft.build_inverse_frames(n_fft, n_freq, n_frames, n_stems, channels, window)
-        self._inv = ort.InferenceSession(inv.SerializeToString(), providers=providers)
+        self._inv = ort.InferenceSession(inv.SerializeToString(), providers=_no_tf32(providers))
         self._model = model_session
         self._model_in = model_in
         self._n_fft, self._hop, self._window = n_fft, hop, window
@@ -268,6 +315,14 @@ class NumpySeparator:
         self._providers = list(providers) if providers is not None else _separation_providers()
         self.session = _ort_session(onnx_path, self._providers)
         self._in = self.session.get_inputs()[0].name
+        # Cached across separate() calls: the STFT-fold ORT sessions (~1.5s to
+        # build) + its one-time parity verification (~0.9s). Rebuilding + re-
+        # verifying every call dwarfs the ~0.7s of actual roformer work (only ~2
+        # chunks per call amortise it). `_fold_off` latches once the fold is
+        # config-disabled, errors, or fails the parity check -> numpy from then on.
+        self._fold = None
+        self._fold_verified = False
+        self._fold_off = False
 
     def _run(self, x: np.ndarray) -> np.ndarray:
         return self.session.run(None, {self._in: x})[0]
@@ -327,11 +382,14 @@ class NumpySeparator:
         req = (len(self.instruments), *mix.shape)
         result = np.zeros(req, np.float32)
         counter = np.zeros(req, np.float32)
-        # Run the STFT/iSTFT on the GPU (chained around the model) instead of numpy
-        # -- ~2x faster on CUDA. Verified against numpy on the first chunk; reverts
-        # to numpy on any error or divergence.
-        fold = self._build_fold(n_fft, hop, segment, num_stems, audio_channels, window)
-        fold_verified = False
+        # Run the STFT/iSTFT on the GPU (chained around the model) instead of numpy.
+        # Built + parity-verified once, then cached on the instance and reused across
+        # calls (see __init__); reverts to numpy on any error or divergence.
+        if self._fold is None and not self._fold_off:
+            self._fold = self._build_fold(n_fft, hop, segment, num_stems, audio_channels, window)
+            if self._fold is None:
+                self._fold_off = True  # config-disabled or build failed; don't retry
+        fold = self._fold
         for done, i in enumerate(starts):
             part = mix[:, i : i + chunk_size]
             length = part.shape[-1]
@@ -346,19 +404,22 @@ class NumpySeparator:
                     x = fold.run(part)  # (n, s, chunk)
                 except Exception:
                     log.exception("folded STFT/iSTFT failed; reverting to the numpy path")
-                    fold, x = None, self._numpy_chunk(part, n_fft, hop, window, audio_channels, num_stems)
+                    self._fold, self._fold_off, fold = None, True, None
+                    x = self._numpy_chunk(part, n_fft, hop, window, audio_channels, num_stems)
                 else:
-                    if not fold_verified:  # first-chunk parity self-check vs numpy
+                    if not self._fold_verified:  # one-time parity self-check vs numpy
                         ref = self._numpy_chunk(part, n_fft, hop, window, audio_channels, num_stems)
                         d = float(np.abs(x - ref).max())
-                        # loose vs peak: GPU TF32/fp16 gives ~1e-3 divergence, a
-                        # wiring bug gives O(1). Catches the latter, not the former.
+                        # loose vs peak: residual GPU fp rounding is ~1e-3, a wiring
+                        # bug gives O(1). Catches the latter, not the former. (The
+                        # fold graphs force fp32/no-TF32, so the fp16 model's input
+                        # sensitivity no longer inflates this past the gate.)
                         if d <= 3e-2 * (float(np.abs(ref).max()) + 1e-6):
-                            fold_verified = True
+                            self._fold_verified = True
                             log.info("folded STFT/iSTFT verified vs numpy (max|d|=%.3g); GPU pre/post active", d)
                         else:
                             log.warning("folded STFT/iSTFT diverged from numpy (max|d|=%.3g); reverting to numpy", d)
-                            fold, x = None, ref
+                            self._fold, self._fold_off, fold, x = None, True, None, ref
             start = result.shape[-1] - chunk_size if at_tail else i
             safe = min(length, x.shape[-1], ham.shape[0])
             if safe > 0:
