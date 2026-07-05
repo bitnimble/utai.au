@@ -36,10 +36,9 @@ ml = [
     "numpy>=1.26",
 ]
 
-# Stem separation: BS-Roformer (the /lyrics vocals stem) and MDX23C
-# (per-instrument split), run through our vendored torch wrapper
-# (pipeline/separation/). Its own capability so a user can stem-split without
-# the lyrics stack.
+# Stem separation: BS-Roformer (the /lyrics vocals stem), run through our
+# vendored torch wrapper (pipeline/separation/). Its own capability so a user
+# can stem-split without the lyrics stack.
 separation = [
     { include-group = "ml" },
     # Cross-platform ONNX inference path (UTAI_SEP_ONNX). `onnxruntime-gpu`
@@ -54,8 +53,8 @@ separation = [
     # separation runtime dep, not just export tooling. Without it the fold's import
     # fails and separation silently falls back to the (2x slower) numpy pre/post.
     "onnx>=1.16",
-    # Runtime deps of the vendored BS-Roformer / MDX23C model classes (formerly
-    # pulled in transitively via audio-separator, which we've now dropped).
+    # Runtime deps of the vendored BS-Roformer model classes (formerly pulled in
+    # transitively via audio-separator, which we've now dropped).
     "einops>=0.8",
     "rotary-embedding-torch>=0.6",
     "ml-collections>=1.1",
@@ -126,7 +125,7 @@ extend-exclude = [
     "venv",
     "build",
     "models",
-    # Vendored BS-Roformer / MDX23C model classes (copied near-verbatim from
+    # Vendored BS-Roformer model classes (copied near-verbatim from
     # audio-separator so they stay diffable against upstream); not our style.
     "app/pipeline/separation/architectures",
 ]

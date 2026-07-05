@@ -61,18 +61,13 @@ def _onnx(name: str) -> _Asset:
 
 
 def _sep_onnx_asset(stem: str) -> _Asset:
-    """The fp16 onnx body for a separation ckpt stem, saved under the canonical
-    local name `{stem}.fp16.onnx` (what the loader looks up). BS-Roformer ships
-    two platform-specific variants -- `.coreml.` (macOS ANE) and `.mha.` (CUDA/
+    """The fp16 onnx body for the BS-Roformer separator stem, saved under the
+    canonical local name `{stem}.fp16.onnx` (what the loader looks up). Ships two
+    platform-specific variants -- `.coreml.` (macOS ANE) and `.mha.` (CUDA/
     DirectML memory-efficient attention) -- that must never be cross-used, so the
-    remote file is chosen by platform while the local name stays canonical. The
-    conv-only MDX23C body is EP-agnostic (one `.fp16.onnx` for all platforms)."""
-    local = f"{stem}.fp16.onnx"
-    is_roformer = stem == Path(settings.demucs_model).stem
-    if is_roformer:
-        variant = "coreml" if sys.platform == "darwin" else "mha"
-        return _Asset(local, f"{settings.onnx_repo}/{stem}.{variant}.fp16.onnx")
-    return _onnx(local)
+    remote file is chosen by platform while the local name stays canonical."""
+    variant = "coreml" if sys.platform == "darwin" else "mha"
+    return _Asset(f"{stem}.fp16.onnx", f"{settings.onnx_repo}/{stem}.{variant}.fp16.onnx")
 
 
 def _separation_assets() -> list[_Asset]:

@@ -1,19 +1,13 @@
-"""Load BS-Roformer / MDX23C checkpoints from a (ckpt, yaml) pair without
-importing `audio-separator`.
+"""Load a BS-Roformer checkpoint from a (ckpt, yaml) pair without importing
+`audio-separator`.
 
-Replicates audio-separator's two loading paths:
-
-  * **BS-Roformer** -- mirrors
-    `architectures/mdxc_separator.py::MDXCSeparator.load_model` (the
-    `is_roformer` branch) -> `roformer/roformer_loader.py::RoformerLoader`
-    -> `roformer/configuration_normalizer.py`. The yaml `model:` section is
-    flattened, parameter-name aliases are mapped, defaults are applied, then a
-    fixed set of kwargs is handed to `BSRoformer(**kwargs)`. We reproduce the
-    same kwarg selection; see `_bs_roformer_kwargs`.
-
-  * **MDX23C** -- mirrors the non-roformer branch of the same `load_model`:
-    `TFC_TDF_net(ConfigDict(model_data), device)` then
-    `load_state_dict(torch.load(ckpt, map_location="cpu"))`.
+Mirrors audio-separator's roformer loading path:
+`architectures/mdxc_separator.py::MDXCSeparator.load_model` (the `is_roformer`
+branch) -> `roformer/roformer_loader.py::RoformerLoader` ->
+`roformer/configuration_normalizer.py`. The yaml `model:` section is flattened,
+parameter-name aliases are mapped, defaults are applied, then a fixed set of
+kwargs is handed to `BSRoformer(**kwargs)`. We reproduce the same kwarg
+selection; see `_BS_DEFAULTS` / `_BS_ALIASES`.
 
 The yaml is read exactly as audio-separator does in
 `separator.py::load_model_data_from_yaml` (`yaml.FullLoader`).
@@ -29,17 +23,16 @@ import yaml
 from ml_collections import ConfigDict
 
 from .architectures.bs_roformer import BSRoformer
-from .architectures.tfc_tdf import TFC_TDF_net
 
 
 @dataclass
 class LoadedModel:
     """A loaded separation model plus the config metadata the runner needs.
 
-    `kind` is "bs_roformer" or "mdx23c". `config` is the parsed yaml as a
+    `kind` is always "bs_roformer". `config` is the parsed yaml as a
     `ConfigDict` (the runner reads `audio`/`inference`/`training` from it).
     `instruments` is the ordered output-stem list. `target_instrument` is set
-    only for single-target models (None for these two multi-stem models).
+    only for single-target models (None for the multi-stem SW model).
     """
 
     model: torch.nn.Module
@@ -61,20 +54,19 @@ def load_model(
     device: str | torch.device = "cpu",
 ) -> LoadedModel:
     model_data = load_yaml(yaml_path)
-    kind = _detect_kind(str(yaml_path), str(ckpt_path), model_data)
-    if kind == "bs_roformer":
-        return _load_bs_roformer(ckpt_path, model_data, device)
-    return _load_mdx23c(ckpt_path, model_data, device)
+    if not _is_bs_roformer(str(yaml_path), str(ckpt_path), model_data):
+        raise ValueError(
+            f"unsupported separation model {Path(ckpt_path).name!r}: only BS-Roformer "
+            "is supported (config must carry a roformer name or `freqs_per_bands`)"
+        )
+    return _load_bs_roformer(ckpt_path, model_data, device)
 
 
-def _detect_kind(yaml_path: str, ckpt_path: str, model_data: dict) -> str:
+def _is_bs_roformer(yaml_path: str, ckpt_path: str, model_data: dict) -> bool:
     haystack = (yaml_path + " " + ckpt_path).lower()
     if "roformer" in haystack:
-        return "bs_roformer"
-    # MDX23C configs carry a model section without freqs_per_bands.
-    if "freqs_per_bands" in model_data.get("model", {}):
-        return "bs_roformer"
-    return "mdx23c"
+        return True
+    return "freqs_per_bands" in model_data.get("model", {})
 
 
 # ---- BS-Roformer -------------------------------------------------------
@@ -157,30 +149,6 @@ def _flatten_model_section(config: dict) -> dict:
         elif key not in ("training", "inference", "audio", "augmentations", "loss_multistft"):
             flat[key] = value
     return flat
-
-
-# ---- MDX23C ------------------------------------------------------------
-
-
-def _load_mdx23c(
-    ckpt_path: str | Path, model_data: dict, device: str | torch.device
-) -> LoadedModel:
-    config = ConfigDict(model_data)
-    model = TFC_TDF_net(config, device=torch.device(device) if isinstance(device, str) else device)
-    state = torch.load(str(ckpt_path), map_location="cpu")
-    state = _unwrap_state_dict(state)
-    model.load_state_dict(state, strict=True)
-    model.to(device).eval()
-
-    instruments = list(config.training.instruments)
-    target = config.training.target_instrument
-    return LoadedModel(
-        model=model,
-        kind="mdx23c",
-        config=config,
-        instruments=instruments,
-        target_instrument=target,
-    )
 
 
 def _unwrap_state_dict(state: dict) -> dict:

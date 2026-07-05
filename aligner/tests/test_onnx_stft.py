@@ -11,8 +11,6 @@ from app.pipeline.separation.np_inference import (
     bs_apply_mask,
     bs_pack,
     bs_unpack,
-    mdx_pack,
-    mdx_unpack,
 )
 
 N_FFT, HOP = 2048, 512
@@ -20,7 +18,6 @@ N_FREQ = N_FFT // 2 + 1
 S, N, T = 2, 3, 40  # channels, stems, frames (small)
 FS = N_FREQ * S
 CHUNK = HOP * (T - 1)
-DIM_F = N_FREQ - 1  # mdx crops the Nyquist bin, like the shipped drumsep (1024 vs 1025)
 WINDOW = np_stft.hann_window(N_FFT)
 
 
@@ -58,22 +55,6 @@ def test_inverse_frames_plus_overlap_add_matches_numpy():
     frames = _run(onnx_stft.build_inverse_frames(N_FFT, N_FREQ, T, N, S, WINDOW),
                   {"stft_repr": stft_repr, "mask": mask})
     got = np_stft.overlap_add(frames, N_FFT, HOP, WINDOW).reshape(1, N, S, -1)
-    assert got.shape == ref.shape
-    assert np.allclose(got, ref, atol=1e-3), np.abs(got - ref).max()
-
-
-def test_forward_mdx_matches_mdx_pack():
-    audio = (np.random.default_rng(3).standard_normal((1, S, CHUNK)) * 0.1).astype(np.float32)
-    ref = mdx_pack(audio, N_FFT, HOP, DIM_F, WINDOW)
-    got = _run(onnx_stft.build_forward_mdx(N_FFT, HOP, DIM_F, T, S, WINDOW), {"audio": audio})
-    assert got.shape == ref.shape
-    assert np.allclose(got, ref, atol=1e-3), np.abs(got - ref).max()
-
-
-def test_inverse_mdx_matches_mdx_unpack():
-    spec = (np.random.default_rng(4).standard_normal((1, N, S * 2, DIM_F, T)) * 0.1).astype(np.float32)
-    ref = mdx_unpack(spec, N_FFT, HOP, WINDOW)
-    got = _run(onnx_stft.build_inverse_mdx(N_FFT, HOP, DIM_F, T, N, S, WINDOW), {"spec": spec})
     assert got.shape == ref.shape
     assert np.allclose(got, ref, atol=1e-3), np.abs(got - ref).max()
 

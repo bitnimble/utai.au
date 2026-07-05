@@ -6,7 +6,7 @@ BOTH paths on the same input and asserts the stems agree, so a future re-export
 or an onnxruntime bump can't silently shift the separated stems.
 
   * torch reference: `separation/loader.load_model` + `runner.SeparationRunner`
-    (fp32, no bf16 -- the plain runner path, not the bf16-patched app path).
+    (fp32 -- the plain runner path).
   * ONNX path:       `separation/np_inference.NumpySeparator` over the shipped
     fp16 `.onnx` body (numpy STFT/chunking + onnxruntime).
 
@@ -34,10 +34,8 @@ import pytest
 from app.config import settings
 from app.pipeline.provision import yaml_for_ckpt
 
-# (torch ckpt filename, expected kind) for the shipped vocals separator.
-_MODELS = [
-    (settings.demucs_model, "bs_roformer"),  # model_bs_roformer_sw.ckpt
-]
+# The shipped vocals separator ckpt filename(s).
+_MODELS = [settings.demucs_model]  # model_bs_roformer_sw.ckpt
 
 _DEFAULT_CKPT_DIR = "/codebox-workspace/utai/models-cache"
 _DEFAULT_ONNX_DIR = "/codebox-workspace/utai/onnx-export"
@@ -61,7 +59,7 @@ def _paths(ckpt_filename: str) -> tuple[Path, Path, Path]:
 
 
 def _all_present() -> bool:
-    for ckpt_filename, _ in _MODELS:
+    for ckpt_filename in _MODELS:
         for p in _paths(ckpt_filename):
             if not (p.exists() and p.stat().st_size > 0):
                 return False
@@ -124,8 +122,8 @@ def _correlation(a: np.ndarray, b: np.ndarray) -> float:
     return float((a * b).sum() / denom)
 
 
-@pytest.mark.parametrize("ckpt_filename, expected_kind", _MODELS, ids=[m[0] for m in _MODELS])
-def test_onnx_separation_matches_torch(ckpt_filename, expected_kind):
+@pytest.mark.parametrize("ckpt_filename", _MODELS, ids=_MODELS)
+def test_onnx_separation_matches_torch(ckpt_filename):
     pytest.importorskip("torch")
 
     from app.pipeline.separation.loader import load_model
@@ -136,14 +134,12 @@ def test_onnx_separation_matches_torch(ckpt_filename, expected_kind):
     mix = _stereo_noise()
 
     # torch reference on CPU: it's the fp32 ground truth (numerically
-    # device-independent, no bf16/TF32), and it leaves the whole GPU for the fp16
+    # device-independent, no TF32), and it leaves the whole GPU for the fp16
     # onnx session, which MUST run on the CUDA EP.
     loaded = load_model(ckpt, yaml, device="cpu")
-    assert loaded.kind == expected_kind
     torch_stems = SeparationRunner(loaded, device="cpu").separate(mix)
 
     onnx_sep = NumpySeparator(onnx, yaml)
-    assert onnx_sep.kind == expected_kind
     assert "CUDAExecutionProvider" in onnx_sep.session.get_providers()
     onnx_stems = onnx_sep.separate(mix)
 

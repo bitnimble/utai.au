@@ -31,74 +31,6 @@ from app.pipeline.separation.runner import SAMPLE_RATE, ProgressCallback, Separa
 
 log = logging.getLogger(__name__)
 
-_BF16_SEP_PATCHED = False
-
-
-def _bf16_separation_enabled() -> bool:
-    """Default ON for native-bf16 Ampere+ GPUs (compute capability >= 8.0).
-
-    bf16 MDX23C separation was validated ~equivalent to fp32 for our purposes
-    (onset-position agreement F1 0.999 over 100 maps, 1/500 gate-decision flips)
-    at ~1.9x; see RESULTS/commit history. Opt OUT with `UTAI_SEP_BF16=0` (to
-    reproduce fp32 byte-for-byte). Always off on pre-Ampere / CPU (no fast native
-    bf16). NB this is the SHARED separator, so the default also applies to the
-    transcriber API (RoFormer Stage 1 stays fp32 regardless; only MDX23C is bf16)."""
-    if os.environ.get("UTAI_SEP_BF16", "").strip().lower() in ("0", "false", "no", "off"):
-        return False
-    import torch
-
-    return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
-
-
-def _enable_bf16_separation() -> None:
-    """Run the separators' matmul-heavy layers in bf16 (~1.9x on the MDX23C path,
-    measured on a 3080) while keeping STFT/iSTFT + complex ops in fp32.
-
-    Default ON for Ampere+ (opt out with `UTAI_SEP_BF16=0`). bf16 perturbs the
-    spectrally-rich stems (cymbals/hat/toms ~25-40 dB from the fp32 output; kick/
-    snare >40 dB; no NaNs, since bf16 keeps fp32's exponent range) but was validated
-    not to move onsets or gate decisions (F1 0.999, 1/500 flips). Idempotent, and
-    patches the model CLASSES so it also affects already-loaded instances.
-
-    Scope: **MDX23C (Stage 2) only.** BS-/Mel-Band-RoFormer (Stage 1) is left fp32
-    on purpose -- measured on a 3080, bf16 makes its drum-stem output deviate from
-    fp32 by ~the signal's own energy (~0 to -2 dB, effectively broken, though it
-    neither errors nor NaNs): the band-split rotary transformer's deep complex/
-    spectral path is too precision-sensitive for bf16's 7-bit mantissa. MDX23C's
-    complex STFT primitives have no bf16 kernel either, so we keep STFT fp32 and
-    bf16-autocast only the conv body: fp32-guard `STFT.__call__`/`inverse`, autocast
-    `TFC_TDF_net.forward`.
-    """
-    global _BF16_SEP_PATCHED
-    if _BF16_SEP_PATCHED:
-        return
-    import torch
-
-    # --- MDX23C (vendored model classes) ---
-    from app.pipeline.separation.architectures import tfc_tdf as _mdx
-
-    _call, _inv, _fwd = _mdx.STFT.__call__, _mdx.STFT.inverse, _mdx.TFC_TDF_net.forward
-
-    def _mdx_call(self, x):
-        with torch.autocast("cuda", enabled=False):
-            return _call(self, x.float())
-
-    def _mdx_inv(self, x):
-        with torch.autocast("cuda", enabled=False):
-            return _inv(self, x.float())
-
-    def _mdx_fwd(self, x):
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            return _fwd(self, x)
-
-    _mdx.STFT.__call__, _mdx.STFT.inverse, _mdx.TFC_TDF_net.forward = _mdx_call, _mdx_inv, _mdx_fwd
-
-    # BS-/Mel-Band-RoFormer (Stage 1) intentionally left fp32 -- bf16 breaks its
-    # output (see docstring); only the MDX23C Stage-2 split runs bf16.
-
-    _BF16_SEP_PATCHED = True
-    log.info("bf16 separation ENABLED (UTAI_SEP_BF16): MDX23C matmul=bf16, STFT=fp32; RoFormer stays fp32")
-
 
 class Separator:
     """Vocals separator (BS-Roformer SW). The model is loaded eagerly by
@@ -136,9 +68,6 @@ class Separator:
         if _onnx_separation_enabled():
             device = "cpu"
         else:
-            if _bf16_separation_enabled():  # default-on bf16 (Ampere); opt out UTAI_SEP_BF16=0
-                _enable_bf16_separation()
-
             # Local import: pulls in heavy ML deps; only needed in worker processes.
             import torch
 

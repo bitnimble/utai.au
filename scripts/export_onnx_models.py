@@ -53,12 +53,12 @@ def main():
         from app.pipeline.separation.export import export_body
         from app.pipeline.separation.loader import load_model
 
-        for ckpt in ("drumsep_5stems_mdx23c_jarredou.ckpt", "model_bs_roformer_sw.ckpt"):
-            loaded = load_model(SEP_CACHE / ckpt, SEP_CACHE / yaml_for_ckpt(ckpt), device="cpu")
-            path = export_body(loaded, out / f"{Path(ckpt).stem}.{tag}.onnx", fp16=fp16)
-            _report(path)
-            del loaded
-            gc.collect()
+        ckpt = "model_bs_roformer_sw.ckpt"
+        loaded = load_model(SEP_CACHE / ckpt, SEP_CACHE / yaml_for_ckpt(ckpt), device="cpu")
+        path = export_body(loaded, out / f"{Path(ckpt).stem}.{tag}.onnx", fp16=fp16)
+        _report(path)
+        del loaded
+        gc.collect()
 
     if want("lyrics"):
         print("[lyrics]", flush=True)

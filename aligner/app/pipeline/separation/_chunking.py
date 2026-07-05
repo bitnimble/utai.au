@@ -2,11 +2,11 @@
 numpy/ONNX (`np_inference.py`) separation paths.
 
 Only the genuinely-identical pieces live here: peak normalization
-(`spec_utils.normalize`) and the chunk-schedule arithmetic for both model
-families. Everything that differs between the two paths (torch-tensor vs numpy
-ops, config attribute vs dict access, the actual overlap-add / model calls, and
-`_prepare_mix`'s numpy-path `.astype`) stays in the caller. See the two callers'
-module docstrings for the audio-separator provenance.
+(`spec_utils.normalize`) and the chunk-schedule arithmetic. Everything that
+differs between the two paths (torch-tensor vs numpy ops, config attribute vs
+dict access, the actual overlap-add / model calls, and `_prepare_mix`'s
+numpy-path `.astype`) stays in the caller. See the two callers' module
+docstrings for the audio-separator provenance.
 """
 
 from __future__ import annotations
@@ -39,17 +39,6 @@ def normalize(wave: np.ndarray, max_peak: float = 1.0, min_peak: float | None = 
 def chunk_size_for(hop_length: int, segment: int) -> int:
     """chunk_size = hop_length * (segment - 1) (mdxc_separator.py)."""
     return hop_length * (segment - 1)
-
-
-def mdx23c_schedule(chunk_size: int, mix_len: int, overlap: int = MDXC_OVERLAP) -> tuple[int, int]:
-    """MDX23C hop/pad arithmetic (mdxc_separator.py:345-402). `overlap` is a hop
-    divider (`hop = chunk // overlap`): the model's own `inference.num_overlap`,
-    falling back to audio-separator's default of `MDXC_OVERLAP`. It sets how many
-    times each output sample is recomputed, so it's the dominant cost knob -- the
-    DrumSep config ships 4, half audio-separator's global 8."""
-    hop_size = chunk_size // overlap
-    pad_size = hop_size - (mix_len - chunk_size) % hop_size
-    return hop_size, pad_size
 
 
 def roformer_step(chunk_size: int, sample_rate: int) -> int:

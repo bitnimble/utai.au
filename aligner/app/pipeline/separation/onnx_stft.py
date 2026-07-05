@@ -19,9 +19,6 @@ a later optimisation).
 - `build_inverse_frames` is the Mac split: mask + iRFFT only (the matmuls the ANE
   runs), emitting windowed time-frames for `np_stft.overlap_add` to finish in numpy
   (the ANE won't run the index-heavy overlap-add).
-- `build_forward_mdx` / `build_inverse_mdx` are the MDX23C pair (`mdx_pack` /
-  `mdx_unpack`): channels-as-complex packing, and no mask multiply (the TFC_TDF
-  model already outputs the masked spectrogram). CUDA full-fold only.
 
 All fixed-shape (one chunk), fp32 (the model's I/O is fp32, so no casts).
 """
@@ -201,112 +198,6 @@ def build_forward(n_fft, hop, n_freq, n_frames, channels, window):
         N("Reshape", ["r5t", "out"], ["stft_repr"]),              # [1, fs, T, 2]
     ]
     return _model(nodes, inits, [("audio", [1, s, chunk])], [("stft_repr", [1, fs, t, 2])])
-
-
-# ---- MDX23C fold (channels-as-complex pack, model outputs the masked spec) ----
-#
-# Unlike BS-Roformer, the TFC_TDF model outputs the masked spectrogram directly
-# (no external complex-mask multiply), so the mdx inverse is just dim_f->n_freq
-# zero-pad + iRFFT + overlap-add. The packing is channels-as-complex
-# (`b (c*2) dim_f t`, mirroring np_inference.mdx_pack / mdx_unpack) rather than
-# roformer's freq-leading `b (f s) t c`.
-
-
-def build_forward_mdx(n_fft, hop, dim_f, n_frames, channels, window):
-    """audio [1,c,chunk] -> spec [1,c*2,dim_f,T], mirroring mdx_pack / np_stft.stft
-    (reflect center-pad, windowed rFFT-as-matmul, channels-as-complex pack, dim_f
-    crop). chunk = hop*(T-1)."""
-    c, t = channels, n_frames
-    n_freq = n_fft // 2 + 1
-    p = n_fft // 2
-    chunk = hop * (t - 1)
-    b_cos, b_sin = _forward_basis(n_fft, window)  # [n_fft, n_freq], window folded in
-    idx = (np.arange(n_fft)[None, :] + hop * np.arange(t)[:, None]).astype(np.int64)  # [T, n_fft]
-    N = helper.make_node
-    inits = [
-        _f("bcos", b_cos), _f("bsin", b_sin),
-        helper.make_tensor("idx", TensorProto.INT64, [t, n_fft], idx.flatten().tolist()),
-        _i("cc", [c, chunk]), _i("pad", [0, p, 0, p]),
-        _i("ax1", [1]),  # unsqueeze axis (re/im pair)
-        _i("p4", [1, c * 2, n_freq, t]),
-        _i("z", [0]), _i("df", [dim_f]), _i("ax2", [2]),
-    ]
-    nodes = [
-        N("Reshape", ["audio", "cc"], ["a2"]),                    # [c, chunk]
-        N("Pad", ["a2", "pad"], ["ap"], mode="reflect"),          # [c, chunk+n_fft]
-        N("Gather", ["ap", "idx"], ["fr"], axis=1),               # [c, T, n_fft]
-        N("MatMul", ["fr", "bcos"], ["re0"]),                     # [c, T, n_freq]
-        N("MatMul", ["fr", "bsin"], ["im0"]),
-        N("Transpose", ["re0"], ["re"], perm=[0, 2, 1]),          # [c, n_freq, T]
-        N("Transpose", ["im0"], ["im"], perm=[0, 2, 1]),
-        N("Unsqueeze", ["re", "ax1"], ["reu"]),                   # [c, 1, n_freq, T]
-        N("Unsqueeze", ["im", "ax1"], ["imu"]),
-        N("Concat", ["reu", "imu"], ["ri"], axis=1),              # [c, 2, n_freq, T]
-        N("Reshape", ["ri", "p4"], ["full"]),                     # [1, c*2, n_freq, T]
-        N("Slice", ["full", "z", "df", "ax2"], ["spec"]),         # [1, c*2, dim_f, T]
-    ]
-    return _model(nodes, inits, [("audio", [1, c, chunk])], [("spec", [1, c * 2, dim_f, t])])
-
-
-def build_inverse_mdx(n_fft, hop, dim_f, n_frames, n_stems, channels, window):
-    """spec [1,n,c*2,dim_f,T] -> stems [1,n,c,chunk], mirroring mdx_unpack /
-    np_stft.istft (dim_f->n_freq zero-pad, channels-as-complex unpack, iRFFT-as-
-    matmul, windowed Σw² overlap-add, center strip). chunk = hop*(T-1)."""
-    c, n, t = channels, n_stems, n_frames
-    n_freq = n_fft // 2 + 1
-    k = n_fft // hop
-    n_blocks = t + k - 1
-    out_len = n_fft + hop * (t - 1)
-    p = n_fft // 2
-    b = n * c
-    ib_re, ib_im = _inverse_basis(n_fft, window)
-    env = _window_envelope(n_fft, hop, t, window)
-    N = helper.make_node
-    inits = [
-        _f("ib_re", ib_re), _f("ib_im", ib_im), _f("env", env),
-        _f("fpad", np.zeros((1, n, c * 2, n_freq - dim_f, t), np.float32)),
-        helper.make_tensor("g0", TensorProto.INT64, [], [0]),
-        helper.make_tensor("g1", TensorProto.INT64, [], [1]),
-        _i("brit", [b, 2, n_freq, t]),
-        _i("olashp", [b, t, k, hop]),
-        _i("outshp", [b, out_len]),
-        _i("stems", [1, n, c, out_len - 2 * p]),
-        _i("ax2", [2]),
-    ]
-    nodes = [
-        N("Concat", ["spec", "fpad"], ["padded"], axis=3),        # [1,n,c*2,n_freq,T]
-        N("Reshape", ["padded", "brit"], ["x"]),                  # [b,2,n_freq,T]
-        N("Gather", ["x", "g0"], ["re"], axis=1),                 # [b,n_freq,T]
-        N("Gather", ["x", "g1"], ["im"], axis=1),
-        N("Transpose", ["re"], ["ret"], perm=[0, 2, 1]),          # [b,T,n_freq]
-        N("Transpose", ["im"], ["imt"], perm=[0, 2, 1]),
-        # iRFFT (synthesis window folded into the bases): frames = re@IB_RE + im@IB_IM
-        N("MatMul", ["ret", "ib_re"], ["f_re"]),                  # [b,T,n_fft]
-        N("MatMul", ["imt", "ib_im"], ["f_im"]),
-        N("Add", ["f_re", "f_im"], ["frames"]),
-        N("Reshape", ["frames", "olashp"], ["fb"]),               # [b,T,k,hop]
-    ]
-    # weighted overlap-add: block j of frame i -> output block i+j (Pad+Add)
-    for j in range(k):
-        inits += [_i(f"s{j}", [j]), _i(f"e{j}", [j + 1]),
-                  _i(f"pad{j}", [0, j, 0, 0, n_blocks - t - j, 0])]
-        nodes += [N("Slice", ["fb", f"s{j}", f"e{j}", "ax2"], [f"sl{j}"]),     # [b,T,1,hop]
-                  N("Reshape", [f"sl{j}", "bth"], [f"bt{j}"]),                 # [b,T,hop]
-                  N("Pad", [f"bt{j}", f"pad{j}"], [f"pd{j}"])]                 # [b,n_blocks,hop]
-    inits.append(_i("bth", [b, t, hop]))
-    acc = "pd0"
-    for j in range(1, k):
-        nodes.append(N("Add", [acc, f"pd{j}"], [f"oa{j}"]))
-        acc = f"oa{j}"
-    inits += [_i("sp", [p]), _i("ep", [out_len - p]), _i("ax1", [1])]
-    nodes += [
-        N("Reshape", [acc, "outshp"], ["ola"]),                   # [b,out_len]
-        N("Div", ["ola", "env"], ["norm"]),                       # /Σw²
-        N("Slice", ["norm", "sp", "ep", "ax1"], ["strip"]),       # center strip [b,chunk]
-        N("Reshape", ["strip", "stems"], ["out"]),                # [1,n,c,chunk]
-    ]
-    return _model(nodes, inits, [("spec", [1, n, c * 2, dim_f, t])],
-                  [("out", [1, n, c, out_len - 2 * p])])
 
 
 def build_inverse_frames(n_fft, n_freq, n_frames, n_stems, channels, window):

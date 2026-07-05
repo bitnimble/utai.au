@@ -9,10 +9,9 @@ fallback path).
 
 Output matches the torch ONNX runner to fp32 rounding (see the parity test).
 
-The spectrogram packing mirrors the vendored model classes:
-  - MDX23C (`TFC_TDF_net.STFT`): channels-as-complex `b (c*2) dim_f t`.
-  - BS-Roformer (`BSRoformer._stft_prep`/`_apply_mask`/`_istft_post`):
-    frequency-leading real-view `b (f s) t c`, plus the complex mask multiply.
+The spectrogram packing mirrors the vendored BS-Roformer
+(`BSRoformer._stft_prep`/`_apply_mask`/`_istft_post`): frequency-leading
+real-view `b (f s) t c`, plus the complex mask multiply.
 """
 
 from __future__ import annotations
@@ -29,12 +28,10 @@ from scipy import signal
 from . import np_stft
 from ._chunking import (
     AMPLIFICATION_THRESHOLD,
-    MDXC_OVERLAP,
     NORMALIZATION_THRESHOLD,
     SAMPLE_RATE,
     ProgressCallback,
     chunk_size_for,
-    mdx23c_schedule,
     normalize,
     roformer_step,
 )
@@ -50,33 +47,6 @@ def _prepare_mix(audio: str | Path | np.ndarray) -> np.ndarray:
     if mix.ndim == 1:
         mix = np.asfortranarray([mix, mix])
     return mix.astype(np.float32)
-
-
-# ---- MDX23C spectrogram packing (mirrors TFC_TDF_net.STFT) ----------------
-
-
-def mdx_pack(audio: np.ndarray, n_fft: int, hop: int, dim_f: int, window: np.ndarray) -> np.ndarray:
-    """`(b, c, t)` audio -> `(b, c*2, dim_f, T)` real spectrogram."""
-    b, c, t = audio.shape
-    spec = np_stft.stft(audio.reshape(b * c, t), n_fft, hop, window)  # (b*c, F, T) complex
-    real = np.stack([spec.real, spec.imag], axis=1)  # (b*c, 2, F, T)
-    real = real.reshape(b, c, 2, real.shape[-2], real.shape[-1]).reshape(
-        b, c * 2, real.shape[-2], real.shape[-1]
-    )
-    return real[..., :dim_f, :].astype(np.float32)
-
-
-def mdx_unpack(spec: np.ndarray, n_fft: int, hop: int, window: np.ndarray) -> np.ndarray:
-    """`(b, n, c*2, dim_f, T)` masked spectrogram -> `(b, n, c, samples)` audio."""
-    *batch, c, f, t = spec.shape
-    n_bins = n_fft // 2 + 1
-    pad = np.zeros((*batch, c, n_bins - f, t), dtype=np.float32)
-    x = np.concatenate([spec, pad], axis=-2).reshape(*batch, c // 2, 2, n_bins, t).reshape(
-        -1, 2, n_bins, t
-    )
-    cplx = (x[:, 0] + 1j * x[:, 1]).astype(np.complex64)
-    audio = np_stft.istft(cplx, n_fft, hop, window)
-    return audio.reshape(*batch, 2, -1).astype(np.float32)
 
 
 # ---- BS-Roformer spectrogram packing (mirrors BSRoformer prep/post) -------
@@ -282,45 +252,15 @@ class _RoformerFoldMac:
         return stems[0] if self._n == 1 else stems
 
 
-class _Mdx23cFold:
-    """Forward STFT + model + inverse iSTFT for one MDX23C chunk on the GPU: the
-    `build_forward_mdx` / `build_inverse_mdx` graphs run as their own CUDA sessions
-    chained around the model, replacing numpy `mdx_pack` / `mdx_unpack`. Unlike the
-    roformer fold there's no external mask multiply -- the TFC_TDF model outputs the
-    masked spectrogram directly, so the inverse is just zero-pad + iRFFT +
-    overlap-add. Moves the per-chunk O(N^2) DFT/iDFT matmuls + overlap-add off the
-    CPU (the mdx path runs ~8x more chunks than roformer, so the numpy pre/post is
-    what starves the GPU)."""
-
-    def __init__(self, model_session, model_in, providers, n_fft, hop, dim_f,
-                 n_frames, n_stems, channels, window) -> None:
-        import onnxruntime as ort
-
-        from app.pipeline.separation import onnx_stft
-
-        fwd = onnx_stft.build_forward_mdx(n_fft, hop, dim_f, n_frames, channels, window)
-        inv = onnx_stft.build_inverse_mdx(n_fft, hop, dim_f, n_frames, n_stems, channels, window)
-        self._fwd = ort.InferenceSession(fwd.SerializeToString(), providers=providers)
-        self._inv = ort.InferenceSession(inv.SerializeToString(), providers=providers)
-        self._model = model_session
-        self._model_in = model_in
-
-    def run(self, part: np.ndarray) -> np.ndarray:
-        """part [c, chunk] -> stems [n, c, chunk], matching mdx_unpack(...)[0]."""
-        spec = self._fwd.run(None, {"audio": part[None].astype(np.float32)})[0]
-        out = self._model.run(None, {self._model_in: spec})[0]
-        audio = self._inv.run(None, {"spec": out})[0]  # [1, n, c, chunk]
-        return audio[0]
-
-
 class NumpySeparator:
     """Torch-free numpy + onnxruntime separator for one model's `.onnx` body."""
 
-    def __init__(self, onnx_path, yaml_path, kind: str | None = None, providers=None) -> None:
+    def __init__(self, onnx_path, yaml_path, providers=None) -> None:
         with open(yaml_path, encoding="utf-8") as fh:
             cfg = yaml.load(fh, Loader=yaml.FullLoader)
-        # Mirrors loader._detect_kind: roformer configs carry freqs_per_bands.
-        self.kind = kind or ("bs_roformer" if "freqs_per_bands" in cfg.get("model", {}) else "mdx23c")
+        # Only BS-Roformer is supported; its config carries freqs_per_bands.
+        if "freqs_per_bands" not in cfg.get("model", {}):
+            raise ValueError("NumpySeparator only supports BS-Roformer configs (freqs_per_bands)")
         self.cfg = cfg
         self.instruments = list(cfg["training"]["instruments"])
         self.target = cfg["training"].get("target_instrument")
@@ -355,98 +295,15 @@ class NumpySeparator:
             log.exception("could not build the folded STFT path; using numpy")
         return None
 
-    def _numpy_chunk_mdx(self, part, n_fft, hop, dim_f, window) -> np.ndarray:
-        """The numpy pre/post for one MDX23C chunk (the fold's fallback + parity
-        reference). part [c, chunk] -> stems [n, c, chunk]."""
-        spec = mdx_pack(part[None], n_fft, hop, dim_f, window)
-        out = self._run(spec)
-        return mdx_unpack(out, n_fft, hop, window)[0]
-
-    def _build_fold_mdx(self, n_fft, hop, dim_f, n_frames, n_stems, channels, window):
-        """CUDA-only STFT/iSTFT fold for MDX23C (mirrors `_build_fold`). CoreML stays
-        on numpy -- the channels-as-complex Mac split isn't wired yet, and the mdx
-        model is small enough that the CPU numpy pre/post, not the model, dominates
-        on CUDA."""
-        provs = self.session.get_providers()
-        args = (self.session, self._in, self._providers, n_fft, hop, dim_f, n_frames,
-                n_stems, channels, window)
-        try:
-            if "CUDAExecutionProvider" in provs and _fold_stft_enabled(default=True):
-                return _Mdx23cFold(*args)
-        except Exception:
-            log.exception("could not build the folded MDX23C STFT path; using numpy")
-        return None
-
     def separate(self, audio, *, progress_callback: ProgressCallback | None = None) -> dict[str, np.ndarray]:
         mix = normalize(
             _prepare_mix(audio), max_peak=NORMALIZATION_THRESHOLD, min_peak=AMPLIFICATION_THRESHOLD
         )
-        sources = (
-            self._demix_roformer(mix, progress_callback)
-            if self.kind == "bs_roformer"
-            else self._demix_mdx23c(mix, progress_callback)
-        )
+        sources = self._demix_roformer(mix, progress_callback)
         return {
             name: normalize(w, max_peak=NORMALIZATION_THRESHOLD, min_peak=AMPLIFICATION_THRESHOLD)
             for name, w in sources.items()
         }
-
-    def _demix_mdx23c(self, mix, progress_callback):
-        cfg = self.cfg
-        n_fft = cfg["audio"]["n_fft"]
-        hop = cfg["audio"]["hop_length"]
-        dim_f = cfg["audio"]["dim_f"]
-        segment = cfg["inference"]["dim_t"]
-        channels = mix.shape[0]
-        overlap = int(cfg["inference"].get("num_overlap") or MDXC_OVERLAP)
-        num_stems = len(self.instruments)
-        window = np_stft.hann_window(n_fft)
-        _wl = cfg["audio"].get("win_length")  # np_stft assumes a full n_fft window; torch centre-pads a shorter one
-        assert _wl in (None, n_fft), f"win_length {_wl} != n_fft {n_fft}: np_stft would silently degrade this model"
-
-        chunk_size = chunk_size_for(hop, segment)
-        hop_size, pad_size = mdx23c_schedule(chunk_size, mix.shape[1], overlap)
-        mix_p = np.concatenate(
-            [
-                np.zeros((channels, chunk_size - hop_size), np.float32),
-                mix,
-                np.zeros((channels, pad_size + chunk_size - hop_size), np.float32),
-            ],
-            axis=1,
-        )
-        n_chunks = (mix_p.shape[1] - chunk_size) // hop_size + 1
-        accumulated = np.zeros((num_stems, *mix_p.shape), np.float32)
-        # Run the STFT/iSTFT on the GPU (chained around the model) instead of numpy
-        # -- the mdx path runs ~8x more chunks than roformer, so the CPU pre/post is
-        # what pins GPU util low. Verified vs numpy on the first chunk; reverts on
-        # error or divergence. STFT frame count == dim_t (center pad cancels n_fft).
-        fold = self._build_fold_mdx(n_fft, hop, dim_f, segment, num_stems, channels, window)
-        fold_verified = False
-        for c in range(n_chunks):
-            part = mix_p[:, c * hop_size : c * hop_size + chunk_size]  # (channels, chunk)
-            if fold is None:
-                audio = self._numpy_chunk_mdx(part, n_fft, hop, dim_f, window)
-            else:
-                try:
-                    audio = fold.run(part)  # (n, c, chunk)
-                except Exception:
-                    log.exception("folded MDX23C STFT/iSTFT failed; reverting to the numpy path")
-                    fold, audio = None, self._numpy_chunk_mdx(part, n_fft, hop, dim_f, window)
-                else:
-                    if not fold_verified:  # first-chunk parity self-check vs numpy
-                        ref = self._numpy_chunk_mdx(part, n_fft, hop, dim_f, window)
-                        d = float(np.abs(audio - ref).max())
-                        if d <= 3e-2 * (float(np.abs(ref).max()) + 1e-6):
-                            fold_verified = True
-                            log.info("folded MDX23C STFT/iSTFT verified vs numpy (max|d|=%.3g); GPU pre/post active", d)
-                        else:
-                            log.warning("folded MDX23C STFT/iSTFT diverged from numpy (max|d|=%.3g); reverting to numpy", d)
-                            fold, audio = None, ref
-            accumulated[..., c * hop_size : c * hop_size + chunk_size] += audio
-            if progress_callback is not None:
-                progress_callback(c + 1, n_chunks)
-        inferenced = accumulated[..., chunk_size - hop_size : -(pad_size + chunk_size - hop_size)] / overlap
-        return dict(zip(self.instruments, inferenced, strict=True))
 
     def _demix_roformer(self, mix, progress_callback):
         cfg = self.cfg

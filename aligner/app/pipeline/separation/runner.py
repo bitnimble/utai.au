@@ -3,19 +3,12 @@ audio-separator's `architectures/mdxc_separator.py` so it runs the vendored
 models without importing `audio-separator`.
 
 The chunking + overlap-add + peak-normalization all happen *outside* the
-model, exactly as audio-separator does it. Two model families, two schemes:
-
-  * **BS-Roformer** (`mdxc_separator.py:272-343`, the `is_roformer` branch):
-    an explicit `for i in range(0, n, step)` loop with a Hamming-window
-    overlap-add (`signal.windows.hamming(chunk_size)`) and a per-sample
-    `counter` accumulator; final result is `result / counter.clamp(min=1e-10)`.
-    `overlap` is in *seconds* -> `step = min(overlap*sr, chunk_size)`. The tail
-    chunk re-anchors to `mix[:, -chunk_size:]` and is overlap-added at the end.
-
-  * **MDX23C** (`mdxc_separator.py:345-402`, the else branch): pad, then
-    `mix.unfold(1, chunk_size, hop_size)` into fixed chunks, accumulate model
-    outputs in place, slice off the pad, divide by `overlap`. `overlap` is a
-    *divider* -> `hop_size = chunk_size // overlap`.
+model, exactly as audio-separator does it (BS-Roformer, `mdxc_separator.py:272-343`,
+the `is_roformer` branch): an explicit `for i in range(0, n, step)` loop with a
+Hamming-window overlap-add (`signal.windows.hamming(chunk_size)`) and a per-sample
+`counter` accumulator; final result is `result / counter.clamp(min=1e-10)`.
+`overlap` is in *seconds* -> `step = min(overlap*sr, chunk_size)`. The tail chunk
+re-anchors to `mix[:, -chunk_size:]` and is overlap-added at the end.
 
 Peak normalization before demix and per-stem after demix mirrors
 `spec_utils.normalize` (audio-separator default `normalization_threshold=0.9`,
@@ -35,19 +28,14 @@ from scipy import signal
 
 from ._chunking import (
     AMPLIFICATION_THRESHOLD,
-    MDXC_OVERLAP,
     NORMALIZATION_THRESHOLD,
     SAMPLE_RATE,
     ProgressCallback,
     chunk_size_for,
-    mdx23c_schedule,
     normalize,
     roformer_step,
 )
 from .loader import LoadedModel
-
-# mdxc_params default (separator.py:128).
-MDXC_OVERRIDE_SEGMENT_SIZE = False
 
 
 def _prepare_mix(audio: str | Path | np.ndarray) -> np.ndarray:
@@ -83,10 +71,7 @@ class SeparationRunner:
         mix = _prepare_mix(audio)
         mix = normalize(mix, max_peak=NORMALIZATION_THRESHOLD, min_peak=AMPLIFICATION_THRESHOLD)
 
-        if self.loaded.kind == "bs_roformer":
-            sources = self._demix_roformer(mix, progress_callback)
-        else:
-            sources = self._demix_mdx23c(mix, progress_callback)
+        sources = self._demix_roformer(mix, progress_callback)
 
         out: dict[str, np.ndarray] = {}
         for name, wave in sources.items():
@@ -179,64 +164,3 @@ class SeparationRunner:
         if safe_len > 0:
             result[..., start : start + safe_len] += x[..., :safe_len] * weights[:safe_len]
         return result
-
-    # ---- MDX23C demix (mdxc_separator.py:345-402) ----------------------
-
-    def _demix_mdx23c(
-        self, mix: np.ndarray, progress_callback: ProgressCallback | None
-    ) -> dict[str, np.ndarray]:
-        cfg = self.loaded.config
-        instruments = self.loaded.instruments
-
-        mix_t = torch.tensor(mix, dtype=torch.float32)
-        num_stems = self.model.num_target_instruments
-
-        mdx_segment_size = cfg.inference.dim_t
-        overlap = int(cfg.inference.num_overlap) if "num_overlap" in cfg.inference else MDXC_OVERLAP
-        chunk_size = chunk_size_for(cfg.audio.hop_length, mdx_segment_size)
-        hop_size, pad_size = mdx23c_schedule(chunk_size, mix_t.shape[1], overlap)
-
-        mix_t = torch.cat(
-            [
-                torch.zeros(2, chunk_size - hop_size),
-                mix_t,
-                torch.zeros(2, pad_size + chunk_size - hop_size),
-            ],
-            1,
-        )
-
-        chunks = mix_t.unfold(1, chunk_size, hop_size).transpose(0, 1)
-
-        # batch_size default is 1 (mdxc_params); one chunk per batch.
-        batches = [chunks[i : i + 1] for i in range(0, len(chunks), 1)]
-        total = len(batches)
-
-        accumulated = (
-            torch.zeros(num_stems, *mix_t.shape) if num_stems > 1 else torch.zeros_like(mix_t)
-        )
-
-        with torch.no_grad():
-            count = 0
-            for done, batch in enumerate(batches):
-                single_batch_result = self.model(batch.to(self.device))
-                for individual_output in single_batch_result:
-                    individual_output_cpu = individual_output.cpu()
-                    accumulated[..., count * hop_size : count * hop_size + chunk_size] += (
-                        individual_output_cpu
-                    )
-                    count += 1
-                if progress_callback is not None:
-                    progress_callback(done + 1, total)
-
-        inferenced = (
-            accumulated[..., chunk_size - hop_size : -(pad_size + chunk_size - hop_size)]
-            / overlap
-        )
-        del accumulated
-
-        if num_stems > 1:
-            return {
-                key: value
-                for key, value in zip(instruments, inferenced.cpu().detach().numpy(), strict=True)
-            }
-        return {instruments[0]: inferenced.cpu().detach().numpy()}

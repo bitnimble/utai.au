@@ -53,10 +53,6 @@ and align on the vocals stem only.
   is either folded into the ONNX graph (CUDA) or done in numpy
   (matmul-only, macOS). See `separation/np_stft.py`, `onnx_stft.py`.
 
-Drumjot also ships a second-stage MDX23C drum separator, **that is
-drum-only and irrelevant to karaoke**. utai.au keeps only the vocals
-path (`Separator.run_vocals`).
-
 ## [2] Language detection + Japanese romaji pre-pass
 
 The acoustic model aligns a **romanized/Latin token sequence** to audio.

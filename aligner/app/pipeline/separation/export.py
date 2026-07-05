@@ -7,10 +7,9 @@ feeds exactly one `chunk_size` window per call, so a fixed time axis is correct
 and sidesteps the rotary-embedding cache's trace-time specialisation that a
 dynamic axis would risk.
 
-  * MDX23C: exports `forward_spec` (spectrogram -> spectrogram, all-real conv).
-  * BS-Roformer: exports `forward_mask` (spectrogram -> real mask); the numpy
-    inference path applies the complex mask + iSTFT around it
-    (np_inference.bs_apply_mask / bs_unpack).
+BS-Roformer exports `forward_mask` (spectrogram -> real mask); the numpy
+inference path applies the complex mask + iSTFT around it
+(np_inference.bs_apply_mask / bs_unpack).
 """
 
 from __future__ import annotations
@@ -35,15 +34,6 @@ def _target_variant() -> str:
     return "coreml" if sys.platform == "darwin" else "mha"
 
 
-class _MdxBody(torch.nn.Module):
-    def __init__(self, model: torch.nn.Module) -> None:
-        super().__init__()
-        self.model = model
-
-    def forward(self, x):
-        return self.model.forward_spec(x)
-
-
 class _BsBody(torch.nn.Module):
     def __init__(self, model: torch.nn.Module) -> None:
         super().__init__()
@@ -51,14 +41,6 @@ class _BsBody(torch.nn.Module):
 
     def forward(self, x):
         return self.model.forward_mask(x)
-
-
-def _mdx_example(loaded: LoadedModel) -> torch.Tensor:
-    cfg = loaded.config
-    chunk = cfg.audio.hop_length * (cfg.inference.dim_t - 1)
-    dummy = torch.randn(1, cfg.audio.num_channels, chunk)
-    with torch.no_grad():
-        return loaded.model.stft(dummy)
 
 
 def _bs_example(loaded: LoadedModel) -> torch.Tensor:
@@ -92,10 +74,7 @@ def export_body(
     orig_device = next(model.parameters()).device
     model.cpu().eval()
     try:
-        if loaded.kind == "mdx23c":
-            body, example, in_name, out_name = _MdxBody(model), _mdx_example(loaded), "spec", "out"
-        else:
-            body, example, in_name, out_name = _BsBody(model), _bs_example(loaded), "stft_repr", "mask"
+        body, example, in_name, out_name = _BsBody(model), _bs_example(loaded), "stft_repr", "mask"
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with torch.no_grad():
@@ -109,9 +88,8 @@ def export_body(
                 dynamo=False,
             )
         # BS-Roformer needs a platform-specific rewrite of its attention-heavy
-        # graph; MDX23C (conv/instance-norm/gelu) is fully covered on every EP, so
-        # it's left untouched. Both rewrites are numerically exact and run on the
-        # fp32 graph, before the fp16 conversion below.
+        # graph. Both rewrites are numerically exact and run on the fp32 graph,
+        # before the fp16 conversion below.
         #   - macOS (CoreML EP): the exported ReduceL2/Einsum/Neg/Expand/rotary ops
         #     have no CoreML builder -- each a partition cut that shreds the model
         #     into CPU-bridged islands. `coreml_optimize` rewrites them CoreML-native.
@@ -119,16 +97,15 @@ def export_body(
         #     O(seq^2) score matrix (multi-GB fp16 peak -> WDDM paging). `mha_optimize`
         #     fuses it into `MultiHeadAttention` (flash/CUTLASS, O(seq) memory). MHA
         #     has no CoreML kernel, so the two variants are mutually exclusive.
-        if loaded.kind == "bs_roformer":
-            shapes = {in_name: list(example.shape)}
-            if _target_variant() == "coreml":
-                from app.pipeline.separation.coreml_optimize import coreml_optimize
+        shapes = {in_name: list(example.shape)}
+        if _target_variant() == "coreml":
+            from app.pipeline.separation.coreml_optimize import coreml_optimize
 
-                coreml_optimize(out_path, shapes)
-            else:
-                from app.pipeline.separation.mha_fusion import mha_optimize
+            coreml_optimize(out_path, shapes)
+        else:
+            from app.pipeline.separation.mha_fusion import mha_optimize
 
-                mha_optimize(out_path, shapes)
+            mha_optimize(out_path, shapes)
     finally:
         # Restore device AND eval: torch.onnx.export can leave the module in
         # train mode, which would re-enable BS-Roformer's attn/ff dropout on any
