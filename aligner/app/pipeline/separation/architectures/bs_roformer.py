@@ -64,7 +64,11 @@ class RMSNorm(Module):
 
     def forward(self, x):
         x = x.to(self.gamma.device)
-        return F.normalize(x, dim=-1) * self.scale * self.gamma
+        # Equivalent to F.normalize(x, dim=-1) * self.scale * self.gamma (scale = dim**0.5), but
+        # fp16-safe: F.normalize's default eps 1e-12 underflows to 0 in fp16, so a silent frame
+        # (zero norm) becomes 0/0 = NaN; and ReduceMean avoids TensorRT's ReduceL2 mis-parse
+        # (which computes sqrt-of-mean, scaling the output by 1/sqrt(dim)).
+        return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + 1e-4) * self.gamma
 
 
 # attention
