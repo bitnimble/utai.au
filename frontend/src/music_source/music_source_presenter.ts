@@ -180,6 +180,10 @@ export class MusicSourcePresenter {
         },
       });
     } catch (err) {
+      // A newer fetch superseded this one (it aborted this controller and now
+      // owns `fetchState`); its rejection must not clobber the new state.
+      if (this.fetchController !== controller) return;
+      this.fetchController = undefined;
       if (controller.signal.aborted) {
         runInAction(() => {
           this.store.fetchState = { kind: 'idle' };
@@ -193,10 +197,12 @@ export class MusicSourcePresenter {
         toastStore.showError(`Could not fetch ${track.title}: ${message(err)}`);
       }
       return;
-    } finally {
-      if (this.fetchController === controller) this.fetchController = undefined;
     }
 
+    // Success. If a newer fetch took over while this one was finishing, leave
+    // its state (and audio) alone rather than loading this stale track.
+    if (this.fetchController !== controller) return;
+    this.fetchController = undefined;
     runInAction(() => {
       this.store.fetchState = { kind: 'idle' };
       this.store.searchOpen = false;
