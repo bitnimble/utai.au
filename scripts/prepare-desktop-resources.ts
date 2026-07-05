@@ -161,6 +161,18 @@ if (gitSpecs.length === 0) {
     '[tool.uv]\nfind-links = ["wheels"]\n',
     'find-links',
   );
+  // Torch-free shipped install: the desktop sidecar runs the provisioned fp16
+  // ONNX on onnxruntime (no torch). The only runtime dep that still declares
+  // torch is `ctc-forced-aligner`; the vendored path (lyrics_onnx.py) uses only
+  // its compiled kernel + text_utils, not torch. Null torch/torchaudio out of the
+  // resolved graph here (build artifact only -- the dev pyproject keeps torch for
+  // ONNX export + the UTAI_*_ONNX=0 fallbacks) so the re-lock below is torch-free.
+  pyproject = mustReplace(
+    pyproject,
+    `override-dependencies = ["torchvision; sys_platform == 'never'"]`,
+    `override-dependencies = ["torchvision; sys_platform == 'never'", "torch; sys_platform == 'never'", "torchaudio; sys_platform == 'never'"]`,
+    'torch-free override',
+  );
   await writeFile(pyprojectPath, pyproject);
 
   // Re-lock so the runtime install pulls the git deps from the wheelhouse (no git).

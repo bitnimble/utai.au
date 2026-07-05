@@ -26,8 +26,12 @@ import soundfile as sf
 
 from app.config import settings
 from app.pipeline.provision import provision_custom_models, yaml_for_ckpt
-from app.pipeline.separation.loader import load_model
-from app.pipeline.separation.runner import SAMPLE_RATE, ProgressCallback, SeparationRunner
+
+# NOTE: `loader` / `runner` / `export` all `import torch` at module top, so they
+# are imported lazily (inside the torch fallback + dev-export branches only). The
+# default ONNX path must stay import-torch-free -- the shipped sidecar has no
+# torch. `SAMPLE_RATE` / `ProgressCallback` come from the torch-free `_chunking`.
+from app.pipeline.separation._chunking import SAMPLE_RATE, ProgressCallback
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +110,10 @@ class Separator:
         yaml = models_dir / yaml_for_ckpt(ckpt_filename)
         if _onnx_separation_enabled():
             return _load_numpy_separator(ckpt, yaml, models_dir)
+        # Torch fallback (UTAI_SEP_ONNX=0): lazy import so the ONNX path is torch-free.
+        from app.pipeline.separation.loader import load_model
+        from app.pipeline.separation.runner import SeparationRunner
+
         loaded = load_model(ckpt, yaml, device=device)
         _maybe_compile_model(loaded)
         return SeparationRunner(loaded, device=device)
@@ -125,14 +133,15 @@ class Separator:
 
     @staticmethod
     def _inner_module(separator: object) -> object | None:
-        # The torch SeparationRunner exposes an nn.Module to park CPU-side; the
-        # ONNX NumpySeparator keeps its weights in the onnxruntime session (GPU
-        # memory torch can't move), so there is nothing to park for it. NOTE:
-        # this means the ONNX session's VRAM is NOT freed by the /lyrics GPU
-        # swap -- releasing the ORT session is a follow-up if that OOMs.
-        if isinstance(separator, SeparationRunner):
-            return separator.model
-        return None
+        # The torch SeparationRunner exposes an nn.Module (`.model`) to park
+        # CPU-side; the ONNX NumpySeparator keeps its weights in the onnxruntime
+        # session (GPU memory torch can't move) and has no `.model`, so there is
+        # nothing to park for it. Duck-typed on `.model` rather than an
+        # `isinstance(SeparationRunner)` check so this stays torch-free (importing
+        # `runner` would pull torch into the default ONNX path). NOTE: the ONNX
+        # session's VRAM is NOT freed by the /lyrics GPU swap -- releasing the ORT
+        # session is a follow-up if that OOMs.
+        return getattr(separator, "model", None)
 
     def park_vocals(self) -> None:
         """Park the vocals separator's VRAM before the CTC aligner loads.
@@ -286,6 +295,7 @@ def _load_numpy_separator(ckpt_path: Path, yaml_path: Path, models_dir: Path):
         onnx_path = models_dir / (ckpt_path.stem + (".fp16.onnx" if fp16 else ".onnx"))
         if not onnx_path.exists():
             from app.pipeline.separation.export import export_body
+            from app.pipeline.separation.loader import load_model
 
             log.info(
                 "Exporting %s body to ONNX%s (one-time, cached) ...",

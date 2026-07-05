@@ -24,28 +24,26 @@ dependencies = [
 
 # Capability dependency-groups (PEP 735).
 [dependency-groups]
-# Shared torch base for every ML capability.
-ml = [
-    "torch>=2.8,<2.12",
-    "torchaudio>=2.8,<2.12",
-    # The forced aligner rides transformers.
-    "transformers>=4.40",
+# Torch-free runtime base: audio IO + numeric libs the ONNX inference path uses
+# (librosa loads/resamples, soundfile writes stems, scipy windows, numpy math).
+runtime = [
     "librosa>=0.10.2",
     "soundfile>=0.12",
     "scipy>=1.11",
     "numpy>=1.26",
 ]
 
-# Stem separation: BS-Roformer (the /lyrics vocals stem), run through our
-# vendored torch wrapper (pipeline/separation/). Its own capability so a user
-# can stem-split without the lyrics stack.
+# Stem separation runtime: BS-Roformer vocals stem via the torch-free ONNX path
+# (NumpySeparator + onnxruntime). Its own capability so a user can stem-split
+# without the lyrics stack. NO torch -- the shipped inference path is onnxruntime
+# only; torch is opt-in via the `torch` group (export + UTAI_SEP_ONNX=0 fallback).
 separation = [
-    { include-group = "ml" },
+    { include-group = "runtime" },
     # Cross-platform ONNX inference path (UTAI_SEP_ONNX). `onnxruntime-gpu`
     # (CUDA / DirectML) ships Linux + Windows wheels only; on macOS the standard
     # `onnxruntime` arm64 wheel carries the CoreML EP (Apple GPU/ANE). Pin the
-    # CUDA-12 line: 1.26 moved to a CUDA-13 build (libcudart.so.13); the image is
-    # CUDA 12 + torch cu128, so <=1.25.x matches. Bump only alongside a CUDA-13 base.
+    # CUDA-12 line: 1.26 moved to a CUDA-13 build (libcudart.so.13); the CUDA libs
+    # below are CUDA 12, so <=1.25.x matches. Bump only alongside a CUDA-13 base.
     "onnxruntime-gpu>=1.19,<1.26; sys_platform != 'darwin'",
     "onnxruntime>=1.19,<1.26; sys_platform == 'darwin'",
     # `onnx` (distinct from onnxruntime): the folded STFT/iSTFT path builds its
@@ -53,19 +51,31 @@ separation = [
     # separation runtime dep, not just export tooling. Without it the fold's import
     # fails and separation silently falls back to the (2x slower) numpy pre/post.
     "onnx>=1.16",
-    # Runtime deps of the vendored BS-Roformer model classes (formerly pulled in
-    # transitively via audio-separator, which we've now dropped).
-    "einops>=0.8",
-    "rotary-embedding-torch>=0.6",
-    "ml-collections>=1.1",
+    # CUDA 12 runtime libs for the onnxruntime-gpu CUDA EP (Linux/Windows). These
+    # used to arrive transitively via torch's nvidia-* wheels; with torch out of
+    # the runtime we depend on them directly. `onnx_cuda.preload_cuda_libs` globs
+    # site-packages/nvidia/*/lib/*.so and RTLD_GLOBAL-preloads them so the CUDA EP
+    # can dlopen its provider. cuDNN 9.x matches onnxruntime-gpu 1.19-1.25; macOS
+    # uses the CoreML EP (no CUDA).
+    "nvidia-cudnn-cu12>=9,<10; sys_platform != 'darwin'",
+    "nvidia-cublas-cu12; sys_platform != 'darwin'",
 ]
 
-# Lyrics alignment: MahmoudAshraf97's pure-PyTorch long-form CTC forced aligner
-# (MMS-300m under the hood). Pinned by commit SHA. NOT the deskpai PyPI port,
-# which hard-pins the CPU onnxruntime wheel and shadows onnxruntime-gpu. Includes
-# separation: the mix flow runs BS-Roformer SW to extract a vocals stem before aligning.
+# Lyrics alignment: MahmoudAshraf97's long-form CTC forced aligner (MMS-300m).
+# Pinned by commit SHA. NOT the deskpai PyPI port, which hard-pins the CPU
+# onnxruntime wheel and shadows onnxruntime-gpu. Includes separation: the mix flow
+# runs BS-Roformer SW to extract a vocals stem before aligning. `transformers` is
+# used tokenizer-only here (torch-free); the CTC maths run through the vendored
+# torch-free path (lyrics_onnx.py).
+#
+# NB torch caveat: `ctc-forced-aligner` declares torch as a dependency, so a plain
+# `uv sync --group lyrics` still pulls torch transitively. The shipped torch-free
+# install drops it with an install-time override (see the desktop installer /
+# `overrides-torch-free.txt`); the vendored path only needs the package's C++
+# `forced_align` kernel + text_utils, not torch.
 lyrics = [
     { include-group = "separation" },
+    "transformers>=4.40",
     "ctc-forced-aligner @ git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git@264e7a1f81bff9ff5e787a5537020c2ad0b0df02",
 ]
 
@@ -78,13 +88,32 @@ lyrics-ja = [
     "unidic-lite>=1.0.8",
 ]
 
-# Dev-only: linters, tests, and the ONNX export/fp16-convert toolchain. Not
-# shipped in the desktop install (the shipped runtime downloads pre-built fp16
-# onnx via provision and never exports; see allow_local_export). `onnxsim`
-# (onnx-simplifier) is export-only: coreml_optimize / mha_fusion use it to fold
-# the BS-Roformer graph to CoreML-native / MultiHeadAttention ops. (`onnx`
-# itself is now a `separation` runtime dep -- see the fold note there.)
-dev = ["ruff>=0.6", "pytest>=8", "onnxsim>=0.4"]
+# Torch: NOT shipped in the desktop capability install (which runs provisioned
+# fp16 ONNX, torch-free). Needed only for (1) the one-time ONNX export
+# (export_onnx_models.py / separation/export.py + lyrics_onnx.export_ctc_model),
+# (2) the UTAI_SEP_ONNX=0 / UTAI_LYRICS_ONNX=0 torch fallback + A-B paths, and
+# (3) the vendored BS-Roformer model classes (einops / rotary-embedding-torch /
+# ml-collections are imported only on that torch path).
+torch = [
+    "torch>=2.8,<2.12",
+    "torchaudio>=2.8,<2.12",
+    "einops>=0.8",
+    "rotary-embedding-torch>=0.6",
+    "ml-collections>=1.1",
+]
+
+# Dev-only: linters, tests, and the ONNX export/fp16-convert toolchain (needs
+# torch, so this pulls the `torch` group -- dev / Docker keep full parity: both
+# runtime paths + export). Not shipped in the desktop install (the shipped runtime
+# downloads pre-built fp16 onnx via provision and never exports; see
+# allow_local_export). `onnxsim` (onnx-simplifier) is export-only: coreml_optimize
+# / mha_fusion use it to fold the BS-Roformer graph.
+dev = [
+    { include-group = "torch" },
+    "ruff>=0.6",
+    "pytest>=8",
+    "onnxsim>=0.4",
+]
 
 # PyTorch lives on a dedicated wheel index because the default PyPI wheels now
 # target CUDA 13 (driver 580+); cu128 = CUDA 12.8 = highest CUDA most consumer

@@ -1146,6 +1146,7 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/29/99/db44d685f0e257ff0e213ade1964fc459b4a690a73293220e98feb3307cf/nvidia_cublas_cu12-12.8.4.1-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:b86f6dd8935884615a0683b663891d43781b819ac4f2ba2b0c9604676af346d0", size = 590537124, upload-time = "2025-03-07T01:43:53.556Z" },
     { url = "https://files.pythonhosted.org/packages/dc/61/e24b560ab2e2eaeb3c839129175fb330dfcfc29e5203196e5541a4c44682/nvidia_cublas_cu12-12.8.4.1-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:8ac4e771d5a348c551b2a426eda6193c19aa630236b418086020df5ba9667142", size = 594346921, upload-time = "2025-03-07T01:44:31.254Z" },
+    { url = "https://files.pythonhosted.org/packages/70/61/7d7b3c70186fb651d0fbd35b01dbfc8e755f69fd58f817f3d0f642df20c3/nvidia_cublas_cu12-12.8.4.1-py3-none-win_amd64.whl", hash = "sha256:47e9b82132fa8d2b4944e708049229601448aaad7e6f296f630f2d1a32de35af", size = 567544208, upload-time = "2025-03-07T01:53:30.535Z" },
 ]
 
 [[package]]
@@ -1185,6 +1186,7 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/09/b8/277c51962ee46fa3e5b203ac5f76107c650f781d6891e681e28e6f3e9fe6/nvidia_cudnn_cu12-9.19.0.56-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:08caaf27fe556aca82a3ee3b5aa49a77e7de0cfcb7ff4e5c29da426387a8267e", size = 656910700, upload-time = "2026-02-03T20:40:25.508Z" },
     { url = "https://files.pythonhosted.org/packages/c5/41/65225d42fba06fb3dd3972485ea258e7dd07a40d6e01c95da6766ad87354/nvidia_cudnn_cu12-9.19.0.56-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:ac6ad90a075bb33a94f2b4cf4622eac13dd4dc65cf6dd9c7572a318516a36625", size = 657906812, upload-time = "2026-02-03T20:44:12.638Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/a5/48f07449fc9c6cc146dcafe6149fa5d69630137d2ec5b7d9e09f255fadd7/nvidia_cudnn_cu12-9.19.0.56-py3-none-win_amd64.whl", hash = "sha256:cec70596b9ce878fab83810c3f5a2e606d35f510e5fee579759e4cbc68a23750", size = 644003014, upload-time = "2026-02-03T20:46:25.768Z" },
 ]
 
 [[package]]
@@ -2493,80 +2495,75 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "einops" },
+    { name = "ml-collections" },
     { name = "onnxsim" },
     { name = "pytest" },
-    { name = "ruff" },
-]
-lyrics = [
-    { name = "ctc-forced-aligner" },
-    { name = "einops" },
-    { name = "librosa" },
-    { name = "ml-collections" },
-    { name = "numpy" },
-    { name = "onnx" },
-    { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
-    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'" },
     { name = "rotary-embedding-torch" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "soundfile" },
+    { name = "ruff" },
     { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform != 'darwin'" },
     { name = "torchaudio", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
     { name = "torchaudio", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform != 'darwin'" },
+]
+lyrics = [
+    { name = "ctc-forced-aligner" },
+    { name = "librosa" },
+    { name = "numpy" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "onnx" },
+    { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
+    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "soundfile" },
     { name = "transformers" },
 ]
 lyrics-ja = [
     { name = "ctc-forced-aligner" },
     { name = "cutlet" },
-    { name = "einops" },
     { name = "fugashi" },
     { name = "librosa" },
-    { name = "ml-collections" },
     { name = "numpy" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'" },
     { name = "onnx" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
     { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'" },
-    { name = "rotary-embedding-torch" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "soundfile" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
-    { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform != 'darwin'" },
-    { name = "torchaudio", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
-    { name = "torchaudio", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform != 'darwin'" },
     { name = "transformers" },
     { name = "unidic-lite" },
 ]
-ml = [
+runtime = [
     { name = "librosa" },
     { name = "numpy" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "soundfile" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
-    { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform != 'darwin'" },
-    { name = "torchaudio", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
-    { name = "torchaudio", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform != 'darwin'" },
-    { name = "transformers" },
 ]
 separation = [
-    { name = "einops" },
     { name = "librosa" },
-    { name = "ml-collections" },
     { name = "numpy" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'" },
     { name = "onnx" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
     { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'" },
-    { name = "rotary-embedding-torch" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "soundfile" },
+]
+torch = [
+    { name = "einops" },
+    { name = "ml-collections" },
+    { name = "rotary-embedding-torch" },
     { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform != 'darwin'" },
     { name = "torchaudio", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
     { name = "torchaudio", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform != 'darwin'" },
-    { name = "transformers" },
 ]
 
 [package.metadata]
@@ -2581,76 +2578,71 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "einops", specifier = ">=0.8" },
+    { name = "ml-collections", specifier = ">=1.1" },
     { name = "onnxsim", specifier = ">=0.4" },
     { name = "pytest", specifier = ">=8" },
-    { name = "ruff", specifier = ">=0.6" },
-]
-lyrics = [
-    { name = "ctc-forced-aligner", git = "https://github.com/MahmoudAshraf97/ctc-forced-aligner.git?rev=264e7a1f81bff9ff5e787a5537020c2ad0b0df02" },
-    { name = "einops", specifier = ">=0.8" },
-    { name = "librosa", specifier = ">=0.10.2" },
-    { name = "ml-collections", specifier = ">=1.1" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "onnx", specifier = ">=1.16" },
-    { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.19,<1.26" },
-    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'", specifier = ">=1.19,<1.26" },
     { name = "rotary-embedding-torch", specifier = ">=0.6" },
-    { name = "scipy", specifier = ">=1.11" },
-    { name = "soundfile", specifier = ">=0.12" },
+    { name = "ruff", specifier = ">=0.6" },
     { name = "torch", marker = "sys_platform != 'darwin'", specifier = ">=2.8,<2.12", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torch", marker = "sys_platform == 'darwin'", specifier = ">=2.8,<2.12" },
     { name = "torchaudio", marker = "sys_platform != 'darwin'", specifier = ">=2.8,<2.12", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchaudio", marker = "sys_platform == 'darwin'", specifier = ">=2.8,<2.12" },
+]
+lyrics = [
+    { name = "ctc-forced-aligner", git = "https://github.com/MahmoudAshraf97/ctc-forced-aligner.git?rev=264e7a1f81bff9ff5e787a5537020c2ad0b0df02" },
+    { name = "librosa", specifier = ">=0.10.2" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'", specifier = ">=9,<10" },
+    { name = "onnx", specifier = ">=1.16" },
+    { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.19,<1.26" },
+    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'", specifier = ">=1.19,<1.26" },
+    { name = "scipy", specifier = ">=1.11" },
+    { name = "soundfile", specifier = ">=0.12" },
     { name = "transformers", specifier = ">=4.40" },
 ]
 lyrics-ja = [
     { name = "ctc-forced-aligner", git = "https://github.com/MahmoudAshraf97/ctc-forced-aligner.git?rev=264e7a1f81bff9ff5e787a5537020c2ad0b0df02" },
     { name = "cutlet", specifier = ">=0.4" },
-    { name = "einops", specifier = ">=0.8" },
     { name = "fugashi", specifier = ">=1.3" },
     { name = "librosa", specifier = ">=0.10.2" },
-    { name = "ml-collections", specifier = ">=1.1" },
     { name = "numpy", specifier = ">=1.26" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'", specifier = ">=9,<10" },
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.19,<1.26" },
     { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'", specifier = ">=1.19,<1.26" },
-    { name = "rotary-embedding-torch", specifier = ">=0.6" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
-    { name = "torch", marker = "sys_platform != 'darwin'", specifier = ">=2.8,<2.12", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torch", marker = "sys_platform == 'darwin'", specifier = ">=2.8,<2.12" },
-    { name = "torchaudio", marker = "sys_platform != 'darwin'", specifier = ">=2.8,<2.12", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchaudio", marker = "sys_platform == 'darwin'", specifier = ">=2.8,<2.12" },
     { name = "transformers", specifier = ">=4.40" },
     { name = "unidic-lite", specifier = ">=1.0.8" },
 ]
-ml = [
+runtime = [
     { name = "librosa", specifier = ">=0.10.2" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
-    { name = "torch", marker = "sys_platform != 'darwin'", specifier = ">=2.8,<2.12", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torch", marker = "sys_platform == 'darwin'", specifier = ">=2.8,<2.12" },
-    { name = "torchaudio", marker = "sys_platform != 'darwin'", specifier = ">=2.8,<2.12", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchaudio", marker = "sys_platform == 'darwin'", specifier = ">=2.8,<2.12" },
-    { name = "transformers", specifier = ">=4.40" },
 ]
 separation = [
-    { name = "einops", specifier = ">=0.8" },
     { name = "librosa", specifier = ">=0.10.2" },
-    { name = "ml-collections", specifier = ">=1.1" },
     { name = "numpy", specifier = ">=1.26" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'", specifier = ">=9,<10" },
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.19,<1.26" },
     { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'", specifier = ">=1.19,<1.26" },
-    { name = "rotary-embedding-torch", specifier = ">=0.6" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
+]
+torch = [
+    { name = "einops", specifier = ">=0.8" },
+    { name = "ml-collections", specifier = ">=1.1" },
+    { name = "rotary-embedding-torch", specifier = ">=0.6" },
     { name = "torch", marker = "sys_platform != 'darwin'", specifier = ">=2.8,<2.12", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torch", marker = "sys_platform == 'darwin'", specifier = ">=2.8,<2.12" },
     { name = "torchaudio", marker = "sys_platform != 'darwin'", specifier = ">=2.8,<2.12", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchaudio", marker = "sys_platform == 'darwin'", specifier = ">=2.8,<2.12" },
-    { name = "transformers", specifier = ">=4.40" },
 ]
 
 [[package]]
