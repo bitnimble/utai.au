@@ -21,7 +21,12 @@
 	}
 
 	# Everything else: the Vite dev server (HMR websocket proxied transparently).
+	# Rewrite the upstream Host to one Vite's allowedHosts accepts (localhost), so
+	# the app loads no matter what host the browser used to reach Caddy (localhost,
+	# host.docker.internal, a LAN IP, a domain, ...).
 	handle {
-		reverse_proxy web:5174
+		reverse_proxy web:5174 {
+			header_up Host localhost
+		}
 	}
 }
