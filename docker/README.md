@@ -6,7 +6,14 @@ your streaming services and pull a track's audio into utai.au, via OnTheSpot.
 
 ## Run
 
+The `web` + `backend` services bind-mount the repo (for hot reload). Set `REPO_PATH`
+to the repo path **as the Docker daemon sees it**, normally the repo root, but it
+must be explicit when the daemon has a different filesystem view (rootless / remote
+/ sandboxed daemon), where a plain `.` mounts empty. Put it in a `.env` beside this
+compose file (Compose auto-reads it) or export it; it defaults to `.`.
+
 ```sh
+echo "REPO_PATH=$(pwd)" >> .env   # or the daemon-visible path
 docker compose -f docker-compose.dev.yml up --build
 ```
 

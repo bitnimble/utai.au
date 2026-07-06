@@ -56,7 +56,7 @@ services:
       ONTHESPOT_CONFIG_PATH: /config/otsconfig.json
       MUSIC_CONFIG_PATH: /config/music_config.json
     volumes:
-      - .:/repo
+      - ${REPO_PATH:-.}:/repo
       - otsconfig:/config
     expose:
       - "8000"
@@ -83,7 +83,7 @@ services:
       # Keep Vite's dep-optimizer cache off the (possibly read-only-ish) mount.
       VITE_CACHE_DIR: /tmp/utai-vite
     volumes:
-      - .:/repo
+      - ${REPO_PATH:-.}:/repo
     # Reachable by Caddy over the compose network only; NOT published to the host
     # (the host's 5174 is typically taken by a hand-run `bun run dev`). Browse the
     # app through Caddy on :8080.
