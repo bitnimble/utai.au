@@ -1,0 +1,110 @@
+# utai.au dev harness for the music-source (OnTheSpot) feature. NOT for production.
+#
+# Brings up four services tied into one origin by Caddy:
+#   - onthespot : OnTheSpot's headless web API (the thing we wrap)
+#   - backend   : the aligner (music facade), reusing the CUDA sandbox image so
+#                 stem separation can run here later; music runs in the light
+#                 `api` worker role (no model load, no GPU needed)
+#   - web       : the Vite dev server over a repo bind-mount (edit -> refresh)
+#   - caddy     : edge proxy; /api -> backend, /onthespot -> onthespot, / -> web
+#
+# Run:   docker compose -f docker-compose.dev.yml up --build
+# Then:  open http://localhost:8080  (refresh to pick up code changes)
+#
+# First run is heavy: the backend reuses `utai-sandbox` (sandbox/Dockerfile), a
+# multi-GB CUDA/torch build - the same image `scripts/sandbox-*` already use, so
+# it's likely cached. Accounts/credentials live only in the `otsconfig` volume.
+
+services:
+  onthespot:
+    build:
+      context: .
+      dockerfile: docker/onthespot.Dockerfile
+    image: utai-onthespot
+    restart: unless-stopped
+    environment:
+      ONTHESPOTDIR: /config
+    volumes:
+      - otsconfig:/config
+      - otsdownloads:/root/Music
+    expose:
+      - "5000"
+
+  backend:
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    image: utai-sandbox
+    restart: unless-stopped
+    working_dir: /repo/aligner
+    # Run as root (the sandbox image defaults to uid 1000): the `otsconfig`
+    # volume is shared with the root `onthespot` container, and the facade must
+    # write music_config.json + seed the YouTube Music account into it. Same-uid
+    # avoids a permission clash. The image sets PYTHONDONTWRITEBYTECODE=1, so no
+    # root-owned __pycache__ leaks onto the bind-mounted source.
+    user: "0:0"
+    # Mount the whole repo (a subdir bind of ./aligner came up EMPTY on this
+    # Docker) and run uvicorn as a module from /repo/aligner so cwd + PYTHONPATH
+    # put the app source on sys.path; the sandbox image installs the deps only.
+    # --reload-dir app: watch ONLY the source, not the huge mounted .venv/ or
+    # tests/ (watching those thrashes watchfiles into an OOM).
+    command: sh -c "cd /repo/aligner && exec /opt/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /repo/aligner/app"
+    environment:
+      PYTHONPATH: /repo/aligner
+      # Music needs no GPU/model load; `api` skips the eager separation-model
+      # load. Switch to `pipeline` (and add GPU access below) to run separation.
+      WORKER_ROLE: api
+      ONTHESPOT_BASE_URL: http://onthespot:5000
+      ONTHESPOT_CONFIG_PATH: /config/otsconfig.json
+      MUSIC_CONFIG_PATH: /config/music_config.json
+    volumes:
+      - ${REPO_PATH:-.}:/repo
+      - otsconfig:/config
+    expose:
+      - "8000"
+    depends_on:
+      - onthespot
+    # To run stem separation here later: set WORKER_ROLE=pipeline above and give
+    # the container GPU access, e.g.:
+    #   gpus: all
+    # (or, on older Compose: deploy.resources.reservations.devices with nvidia)
+
+  web:
+    image: oven/bun:1.3.14
+    restart: unless-stopped
+    working_dir: /repo
+    # Run the project's Vite (bunx resolves the local pinned v6 from the mounted
+    # node_modules). Runs as the host uid so writes over the bind-mount aren't
+    # root-owned; VITE_CACHE_DIR keeps the dep-optimizer cache off the mount.
+    command: sh -c "cd /repo && exec bunx vite --host 0.0.0.0 --port 5174"
+    user: "1000:1000"
+    environment:
+      HOME: /tmp
+      # Origin-relative /api (Caddy serves it on this same origin).
+      VITE_ALIGNER_URL: ""
+      # Keep Vite's dep-optimizer cache off the (possibly read-only-ish) mount.
+      VITE_CACHE_DIR: /tmp/utai-vite
+    volumes:
+      - ${REPO_PATH:-.}:/repo
+    # Reachable by Caddy over the compose network only; NOT published to the host
+    # (the host's 5174 is typically taken by a hand-run `bun run dev`). Browse the
+    # app through Caddy on :8080.
+    expose:
+      - "5174"
+
+  caddy:
+    build:
+      context: .
+      dockerfile: docker/caddy.Dockerfile
+    image: utai-caddy
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - web
+      - backend
+      - onthespot
+
+volumes:
+  otsconfig:
+  otsdownloads:

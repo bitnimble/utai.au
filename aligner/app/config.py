@@ -97,5 +97,29 @@ class Settings(BaseSettings):
     # otherwise guess).
     align_language: str = ""
 
+    # --- Music source (OnTheSpot) ---
+    # Base URL of the OnTheSpot headless web API (its Flask server). The music
+    # facade (app/music/) proxies search / download / account ops to it. In the
+    # dev compose this is the `onthespot` service; override per deployment.
+    onthespot_base_url: str = "http://onthespot:5000"
+    # Per-request timeout (seconds) for calls to the OnTheSpot API. A track
+    # download can take a while, but the facade polls the queue in short GETs
+    # rather than holding one long request, so this stays modest.
+    onthespot_timeout_sec: float = 30.0
+    # How long the facade polls OnTheSpot's download queue before giving up on a
+    # fetch (seconds), and the poll interval. A fetch that outlives this yields a
+    # timeout error rather than streaming forever.
+    music_fetch_timeout_sec: float = 20 * 60.0
+    music_poll_interval_sec: float = 1.0
+    # Facade-owned, NON-secret prefs: service priority order, per-service enabled
+    # flags, and quality. Credentials themselves live only in OnTheSpot's own
+    # config, never here.
+    music_config_path: Path = Path("/config/music_config.json")
+    # OnTheSpot's own config file (its account pool + credentials), shared with
+    # the OnTheSpot container via a volume so the facade can read the account
+    # list (service -> active-account index) and seed the anonymous YouTube Music
+    # account. This is OnTheSpot's `ONTHESPOTDIR/otsconfig.json`.
+    onthespot_config_path: Path = Path("/config/otsconfig.json")
+
 
 settings = Settings()

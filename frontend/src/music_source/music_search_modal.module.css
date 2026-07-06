@@ -1,0 +1,164 @@
+/* Music-source search modal. Backdrop / panel / header come from the shared
+   <Modal> primitive; the search form, results list, and fetch footer are
+   bespoke and live here (mirrors the LRCLIB search modal's structure). */
+
+.setupNote {
+    composes: reset from '../ui/button/button.module.css';
+    composes: bodySm from '../typography.module.css';
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    border: 0;
+    padding: 8px 16px;
+    background: var(--color-bg-cream);
+    color: var(--color-text-muted-alt);
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.setupNote:hover {
+    color: var(--color-text-strong);
+}
+
+.form {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 8px;
+    padding: 14px 16px;
+}
+
+.field {
+    composes: field from '../ui/form/form.module.css';
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.searchButton {
+    composes: primary from '../ui/button/button.module.css';
+    flex: 0 0 auto;
+    padding: 0 10px;
+    border-radius: var(--radius-sm);
+}
+
+.searchButton:disabled {
+    opacity: 0.6;
+}
+
+.results {
+    border-top: 1px solid var(--color-border);
+    min-height: 160px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--color-bg-base);
+}
+
+.placeholder {
+    composes: bodyMd from '../typography.module.css';
+    min-height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    text-align: center;
+    color: var(--color-text-muted-alt);
+}
+
+.placeholderError {
+    color: var(--color-error);
+}
+
+.resultsList {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.resultItem {
+    composes: reset from '../ui/button/button.module.css';
+    width: 100%;
+    border: 0;
+    border-left: 3px solid transparent;
+    border-bottom: 1px solid var(--color-border);
+    background: transparent;
+    padding: 10px 16px 10px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    text-align: left;
+    color: var(--color-text-strong);
+}
+
+.resultItem:hover {
+    background: var(--color-bg-cream);
+}
+
+.resultItemSelected,
+.resultItemSelected:hover {
+    background: var(--color-bg-cream);
+    border-left-color: var(--color-accent);
+}
+
+.resultPrimary {
+    composes: bodyMd from '../typography.module.css';
+}
+
+.resultSecondary {
+    composes: bodySm from '../typography.module.css';
+    color: var(--color-text-muted-alt);
+}
+
+.footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-bg-cream);
+}
+
+.footerHint {
+    composes: bodySm from '../typography.module.css';
+    flex: 1 1 auto;
+    color: var(--color-text-muted-alt);
+}
+
+.progress {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.progressLabel {
+    composes: bodySm from '../typography.module.css';
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-text-strong);
+}
+
+.progressTrack {
+    height: 4px;
+    border-radius: var(--radius-sm);
+    background: var(--color-border);
+    overflow: hidden;
+}
+
+.progressFill {
+    height: 100%;
+    background: var(--color-accent);
+    transition: width 120ms linear;
+}
+
+.fetchButton {
+    composes: primary from '../ui/button/button.module.css';
+    flex: 0 0 auto;
+    border-radius: var(--radius-sm);
+}
+
+.fetchButton:disabled {
+    opacity: 0.6;
+}

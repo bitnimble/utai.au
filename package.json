@@ -16,6 +16,7 @@
     "e2e": "bun --env-file=.env run e2e:run",
     "e2e:run": "playwright test",
     "e2e:perf": "bun --env-file=.env run playwright test --project=perf --no-deps",
+    "e2e:live": "bun --env-file=.env run playwright test -c playwright.live.config.ts",
     "e2e:report": "playwright show-report --host 0.0.0.0",
     "e2e:tauri:build": "bun run scripts/build-wdio-app.ts",
     "e2e:tauri": "bun run e2e:tauri:build && wdio run wdio.conf.ts",

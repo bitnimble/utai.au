@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
-import { Pause, Play, Search, Square } from 'lucide-react';
+import { Music, Pause, Play, Search, Settings, Square } from 'lucide-react';
 import React from 'react';
 import { jotPlayer } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
@@ -21,6 +21,14 @@ import { ViewportStore } from 'src/editing/viewport/viewport_store';
 import { ViewportStoreContext } from 'src/editing/viewport/viewport_contexts';
 import { ViewConfig } from 'src/editing/viewport/view_config';
 import { ToastContainer } from 'src/ui/toasts/toast_container';
+import { MusicSearchModal } from 'src/music_source/music_search_modal';
+import { MusicSettingsModal } from 'src/music_source/music_settings_modal';
+import {
+  MusicSourcePresenterContext,
+  MusicSourceStoreContext,
+} from 'src/music_source/music_source_contexts';
+import { MusicSourcePresenter } from 'src/music_source/music_source_presenter';
+import { MusicSourceStore } from 'src/music_source/music_source_store';
 import { KaraokePresenter } from './karaoke_presenter';
 import { KaraokePresenterContext, SongStoreContext } from './karaoke_contexts';
 import { SongStore } from './song_store';
@@ -35,6 +43,8 @@ type Session = {
   lyricsAlign: LyricsAlignStore;
   lyricsPresenter: LyricsPresenter;
   presenter: KaraokePresenter;
+  musicSource: MusicSourceStore;
+  musicPresenter: MusicSourcePresenter;
 };
 
 function buildSession(): Session {
@@ -45,12 +55,34 @@ function buildSession(): Session {
   const lyricsAlign = new LyricsAlignStore();
   const lyricsPresenter = new LyricsPresenter(lyricsAlign);
   const presenter = new KaraokePresenter(song, viewport);
-  return { song, viewport, structural, lyricsAlign, lyricsPresenter, presenter };
+  const musicSource = new MusicSourceStore();
+  const musicPresenter = new MusicSourcePresenter(musicSource, (file) =>
+    presenter.loadAudioFile(file),
+  );
+  return {
+    song,
+    viewport,
+    structural,
+    lyricsAlign,
+    lyricsPresenter,
+    presenter,
+    musicSource,
+    musicPresenter,
+  };
 }
 
 export const KaraokePage = observer(function KaraokePage() {
   const [session] = React.useState(buildSession);
-  const { song, viewport, structural, lyricsAlign, lyricsPresenter, presenter } = session;
+  const {
+    song,
+    viewport,
+    structural,
+    lyricsAlign,
+    lyricsPresenter,
+    presenter,
+    musicSource,
+    musicPresenter,
+  } = session;
 
   // Expose the live session on `window.utai` for e2e specs + debugging.
   React.useEffect(() => {
@@ -61,13 +93,26 @@ export const KaraokePage = observer(function KaraokePage() {
       lyricsAlign,
       lyricsPresenter,
       presenter,
+      musicSource,
+      musicPresenter,
       lyricsStore,
       jotPlayer,
     };
-  }, [song, viewport, structural, lyricsAlign, lyricsPresenter, presenter]);
+  }, [
+    song,
+    viewport,
+    structural,
+    lyricsAlign,
+    lyricsPresenter,
+    presenter,
+    musicSource,
+    musicPresenter,
+  ]);
 
   return (
     <KaraokePresenterContext.Provider value={presenter}>
+      <MusicSourceStoreContext.Provider value={musicSource}>
+      <MusicSourcePresenterContext.Provider value={musicPresenter}>
       <SongStoreContext.Provider value={song}>
         <StructuralContext.Provider value={structural}>
           <ViewportStoreContext.Provider value={viewport}>
@@ -85,6 +130,8 @@ export const KaraokePage = observer(function KaraokePage() {
           </ViewportStoreContext.Provider>
         </StructuralContext.Provider>
       </SongStoreContext.Provider>
+      </MusicSourcePresenterContext.Provider>
+      </MusicSourceStoreContext.Provider>
     </KaraokePresenterContext.Provider>
   );
 });
@@ -92,6 +139,7 @@ export const KaraokePage = observer(function KaraokePage() {
 const Toolbar = observer(function Toolbar() {
   const presenter = React.useContext(KaraokePresenterContext)!;
   const lyricsPresenter = React.useContext(LyricsPresenterContext)!;
+  const musicPresenter = React.useContext(MusicSourcePresenterContext)!;
   const viewport = React.useContext(ViewportStoreContext)!;
   const fileRef = React.useRef<HTMLInputElement>(null);
 
@@ -119,6 +167,14 @@ const Toolbar = observer(function Toolbar() {
       <button
         type="button"
         className={styles.toolButton}
+        onClick={() => musicPresenter.openSearch()}
+        data-testid="music-search-open"
+      >
+        <Music size={14} aria-hidden="true" /> Add from streaming
+      </button>
+      <button
+        type="button"
+        className={styles.toolButton}
         onClick={() => lyricsPresenter.setLyricsSearchOpen(true)}
         data-testid="import-lyrics"
       >
@@ -143,6 +199,16 @@ const Toolbar = observer(function Toolbar() {
         Align to vocals
       </button>
       <span className={styles.toolbarSpacer} />
+      <button
+        type="button"
+        className={styles.toolButton}
+        onClick={() => musicPresenter.openSettings()}
+        aria-label="Music source settings"
+        title="Music sources"
+        data-testid="music-settings-open"
+      >
+        <Settings size={14} aria-hidden="true" />
+      </button>
       <label className={styles.zoomControl}>
         Zoom
         <input
@@ -266,6 +332,8 @@ const Modals = observer(function Modals() {
         onClose={() => lyricsPresenter.setLyricsTextOpen(false)}
         presenter={lyricsPresenter}
       />
+      <MusicSearchModal />
+      <MusicSettingsModal />
     </>
   );
 });

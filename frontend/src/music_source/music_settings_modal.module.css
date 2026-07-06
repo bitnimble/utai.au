@@ -1,0 +1,159 @@
+/* Music-source settings modal. Panel/header from the shared <Modal>; the
+   service list, per-service account controls, and quality picker live here. */
+
+.body {
+    padding: 14px 16px 16px;
+    overflow-y: auto;
+}
+
+.intro {
+    composes: bodySm from '../typography.module.css';
+    margin: 0 0 12px;
+    color: var(--color-text-muted-alt);
+}
+
+.loading {
+    composes: bodyMd from '../typography.module.css';
+    padding: 24px 0;
+    text-align: center;
+    color: var(--color-text-muted-alt);
+}
+
+.serviceList {
+    margin: 0 0 16px;
+    padding: 0;
+    list-style: none;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.serviceRow {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg-base);
+}
+
+.serviceRow:last-child {
+    border-bottom: 0;
+}
+
+.rowMain {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.priorityArrows {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 0 0 auto;
+}
+
+.arrowButton {
+    composes: reset from '../ui/button/button.module.css';
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-base);
+    color: var(--color-text-muted-alt);
+    padding: 1px 3px;
+    line-height: 1;
+}
+
+.arrowButton:hover:not(:disabled) {
+    color: var(--color-text-strong);
+    background: var(--color-bg-hover);
+}
+
+.arrowButton:disabled {
+    opacity: 0.4;
+}
+
+.serviceName {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.serviceLabel {
+    composes: bodyMd from '../typography.module.css';
+    color: var(--color-text-strong);
+}
+
+.statusOn {
+    composes: bodySm from '../typography.module.css';
+    color: var(--color-accent);
+}
+
+.statusOff {
+    composes: bodySm from '../typography.module.css';
+    color: var(--color-text-muted-alt);
+}
+
+.enableLabel {
+    composes: bodySm from '../typography.module.css';
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    color: var(--color-text);
+    cursor: pointer;
+}
+
+.accountControls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    padding-left: 34px;
+}
+
+.credField {
+    composes: field from '../ui/form/form.module.css';
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.addButton {
+    composes: primary from '../ui/button/button.module.css';
+    flex: 0 0 auto;
+    border-radius: var(--radius-sm);
+}
+
+.addButton:disabled {
+    opacity: 0.6;
+}
+
+.removeButton {
+    composes: danger from '../ui/button/button.module.css';
+    flex: 0 0 auto;
+    border-radius: var(--radius-sm);
+}
+
+.quality {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border);
+}
+
+.qualityTitle {
+    composes: metaLabel from '../typography.module.css';
+    color: var(--color-text-muted-alt);
+    flex: 1 1 auto;
+}
+
+.qualityField {
+    composes: bodySm from '../typography.module.css';
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-text);
+}
