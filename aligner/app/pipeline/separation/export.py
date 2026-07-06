@@ -1,15 +1,16 @@
 """Export a loaded separation model's STFT-free body to ONNX, keeping the
-complex STFT/iSTFT (and, for BS-Roformer, the complex mask multiply) OUT of the
-graph so the body runs cleanly on any onnxruntime execution provider.
+complex STFT/iSTFT (and the complex mask multiply) OUT of the graph so the body
+runs cleanly on any onnxruntime execution provider.
 
 The graph is fixed-shape at the model's real chunk length: the runner always
 feeds exactly one `chunk_size` window per call, so a fixed time axis is correct
 and sidesteps the rotary-embedding cache's trace-time specialisation that a
 dynamic axis would risk.
 
-BS-Roformer exports `forward_mask` (spectrogram -> real mask); the numpy
-inference path applies the complex mask + iSTFT around it
-(np_inference.bs_apply_mask / bs_unpack).
+Mel-Band Roformer exports `forward_mask` (spectrogram -> real averaged mask); the
+numpy inference path applies the complex mask + iSTFT around it
+(np_inference.bs_apply_mask / bs_unpack). The CUDA/TensorRT body is mixed
+fp16/fp32 (RMSNorm reductions fp32 for quality); see `_to_mixed_fp16`.
 """
 
 from __future__ import annotations
@@ -60,6 +61,29 @@ def _to_fp16(out_path: Path) -> None:
     to_fp16(out_path)
 
 
+def _to_mixed_fp16(out_path: Path) -> None:
+    """Convert the fp32 body to a MIXED fp16 body in place: fp16 everywhere EXCEPT the RMSNorm
+    reductions (`Pow`, `ReduceMean`), which stay fp32. Those are the only fp16-lossy op in the model
+    -- the norm operates on the raw STFT's wide dynamic range, so a pure-fp16 sum-of-squares drops
+    ~30 dB on loud/dense content (a two-song ear/SDR check caught this); fp32 there recovers it at
+    ~1% speed cost. TensorRT (and the CUDA EP) obey the explicit per-op dtypes. A prior ORT
+    constant-fold turns the rotary cos/sin into fp16 constants so no fp16xfp32 Mul remains."""
+    import onnx
+    import onnxruntime as ort
+    from onnxconverter_common import float16
+
+    folded = str(out_path.with_suffix(".folded.onnx"))
+    so = ort.SessionOptions()
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC  # fold cos/sin; ALL adds FusedMatMul (TRT-incompatible)
+    so.optimized_model_filepath = folded
+    ort.InferenceSession(str(out_path), so, providers=["CPUExecutionProvider"])
+    m = onnx.load(folded)
+    m16 = float16.convert_float_to_float16(m, keep_io_types=True, op_block_list=["Pow", "ReduceMean"])
+    del m16.graph.value_info[:]  # stale type annotations conflict with strongly-typed TensorRT-RTX
+    onnx.save(m16, str(out_path))
+    os.remove(folded)
+
+
 def export_body(
     loaded: LoadedModel, out_path: str | Path, *, opset: int = 17, fp16: bool = False
 ) -> Path:
@@ -102,15 +126,16 @@ def export_body(
             from app.pipeline.separation.coreml_optimize import coreml_optimize
 
             coreml_optimize(out_path, shapes)
-        else:
-            from app.pipeline.separation.mha_fusion import mha_optimize
-
-            mha_optimize(out_path, shapes)
+        # CUDA / TensorRT: deliberately NO mha_optimize. TensorRT fuses attention itself, and its
+        # `com.microsoft.MultiHeadAttention` contrib op can't be consumed by the TRT EP; Mel-Band's
+        # attention (seq 801 / 60) is also small enough that the naive SDPA score matrix isn't the
+        # multi-GB blow-up it is for BS-Roformer. The fp16/fp32-norm precision is set by _to_mixed_fp16.
     finally:
         # Restore device AND eval: torch.onnx.export can leave the module in
         # train mode, which would re-enable BS-Roformer's attn/ff dropout on any
         # later torch forward (the separators are always eval / inference).
         model.to(orig_device).eval()
     if fp16:
-        _to_fp16(out_path)
+        # coreml keeps its plain fp16 (the ANE handles precision); CUDA/TRT gets the mixed body.
+        _to_fp16(out_path) if _target_variant() == "coreml" else _to_mixed_fp16(out_path)
     return out_path

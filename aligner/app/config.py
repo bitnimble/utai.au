@@ -25,10 +25,10 @@ class Settings(BaseSettings):
     # The vocals separator is NOT in audio-separator's registry;
     # `pipeline/provision.py` injects it and downloads its weights on startup.
     # This value is the *local* filename it writes into `models_dir`.
-    # `model_bs_roformer_sw.ckpt` = BS-Roformer SW (6-stem; the /lyrics path
+    # `model_mel_band_roformer.ckpt` = Mel-Band Roformer (MIT; the /lyrics path
     # consumes its `vocals` stem). The field name `demucs_model` is historical
     # (it's a Roformer now, not Demucs).
-    demucs_model: str = "model_bs_roformer_sw.ckpt"
+    demucs_model: str = "model_mel_band_roformer.ckpt"
 
     # --- Model asset sources (build/packaging) ---
     # Every model URL / HF id / repo that the packaged app has baked in lives

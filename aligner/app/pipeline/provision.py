@@ -36,7 +36,7 @@ _HTTP_TIMEOUT = httpx.Timeout(30.0, read=None)  # read=None: large weights
 
 # ckpt -> paired architecture yaml (a bare state_dict can't load without it).
 _CKPT_YAML: dict[str, str] = {
-    "model_bs_roformer_sw.ckpt": "config_bs_roformer_sw.yaml",
+    "model_mel_band_roformer.ckpt": "config_mel_band_roformer.yaml",
 }
 
 
@@ -61,7 +61,7 @@ def _onnx(name: str) -> _Asset:
 
 
 def _sep_onnx_asset(stem: str) -> _Asset:
-    """The fp16 onnx body for the BS-Roformer separator stem, saved under the
+    """The fp16 onnx body for the Mel-Band Roformer separator stem, saved under the
     canonical local name `{stem}.fp16.onnx` (what the loader looks up). Ships two
     platform-specific variants -- `.coreml.` (macOS ANE) and `.mha.` (CUDA/
     DirectML memory-efficient attention) -- that must never be cross-used, so the

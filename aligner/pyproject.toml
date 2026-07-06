@@ -33,7 +33,7 @@ runtime = [
     "numpy>=1.26",
 ]
 
-# Stem separation runtime: BS-Roformer vocals stem via the torch-free ONNX path
+# Stem separation runtime: Mel-Band Roformer vocals stem via the torch-free ONNX path
 # (NumpySeparator + onnxruntime). Its own capability so a user can stem-split
 # without the lyrics stack. NO torch -- the shipped inference path is onnxruntime
 # only; torch is opt-in via the `torch` group (export + UTAI_SEP_ONNX=0 fallback).
@@ -59,6 +59,12 @@ separation = [
     # uses the CoreML EP (no CUDA).
     "nvidia-cudnn-cu12>=9,<10; sys_platform != 'darwin'",
     "nvidia-cublas-cu12; sys_platform != 'darwin'",
+    # TensorRT runtime for the onnxruntime TensorRT EP. Separation runs a FIXED 8s chunk, so the
+    # per-shape engine rebuild that makes TRT a poor fit for variable-length audio is a one-time,
+    # cached cost -- and it's the ~100x-realtime path (vs ~8-18x on the CUDA EP). Opt out via
+    # UTAI_SEP_TRT=0; onnx_cuda.preload_tensorrt_libs RTLD_GLOBAL-preloads its libnvinfer so the EP
+    # can dlopen it. TRT 10.x matches onnxruntime-gpu 1.19-1.25 (CUDA 12); absent -> stays on CUDA.
+    "tensorrt-cu12>=10,<11; sys_platform != 'darwin'",
 ]
 
 # Lyrics alignment: MahmoudAshraf97's long-form CTC forced aligner (MMS-300m).

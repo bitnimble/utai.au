@@ -172,6 +172,47 @@ def _separation_providers():
     return [("CoreMLExecutionProvider", opts), "CPUExecutionProvider"]
 
 
+def _with_tensorrt(providers):
+    """Prepend the TensorRT EP for the heavy model body. `default_providers` drops TRT
+    because *variable-length* audio would rebuild an engine per shape; separation runs a
+    FIXED 8s chunk, so it's one cached engine build. Gated by UTAI_SEP_TRT (default: on when
+    usable) and by the TRT runtime libs actually loading (absent -> stay on CUDA, no crash).
+    NO trt_fp16_enable: the exported body is a mixed fp16/fp32 ONNX (RMSNorm reductions kept
+    fp32 for quality) and TensorRT obeys those explicit dtypes; enabling fp16 would override
+    them. CUDA stays behind TRT for the ops TRT can't take (e.g. the mel-overlap scatter)."""
+    import onnxruntime as ort
+
+    if os.environ.get("UTAI_SEP_TRT", "").strip().lower() in ("0", "false", "no", "off"):
+        return providers
+    names = {p if isinstance(p, str) else p[0] for p in providers}
+    if "CUDAExecutionProvider" not in names or "TensorrtExecutionProvider" in names:
+        return providers
+    if "TensorrtExecutionProvider" not in ort.get_available_providers():
+        return providers
+    from app.pipeline.onnx_cuda import preload_tensorrt_libs
+
+    if not preload_tensorrt_libs():  # TRT runtime not installed -> stay on CUDA
+        return providers
+    opts = {"trt_engine_cache_enable": True, "trt_timing_cache_enable": True}
+    cache = _trt_cache_dir()
+    if cache:
+        opts["trt_engine_cache_path"] = cache
+    return [("TensorrtExecutionProvider", opts), *providers]
+
+
+def _trt_cache_dir() -> str | None:
+    """Persistent dir for TensorRT's built engine + timing cache (keyed by model), so the
+    fixed-shape engine is built once and reloaded on later launches. None -> rebuild each run."""
+    try:
+        from app.config import settings
+
+        p = Path(settings.cache_dir) / "tensorrt"
+        p.mkdir(parents=True, exist_ok=True)
+        return str(p)
+    except Exception:
+        return None
+
+
 def _fold_stft_enabled(default: bool) -> bool:
     """Whether to run the BS-Roformer STFT/iSTFT on the accelerator (onnx_stft
     graphs chained around the model) instead of numpy. `UTAI_SEP_FOLD_STFT`
@@ -267,6 +308,58 @@ class _RoformerFold:
         return (out[:, 0] if self._n == 1 else out)[0]
 
 
+class _RoformerFoldFrames:
+    """Hop-agnostic CUDA fold for models whose hop does not divide n_fft (e.g.
+    Mel-Band Roformer, hop=441, n_fft=2048): forward STFT + model + iRFFT-to-frames
+    all on the GPU via IOBinding (same VRAM-resident chain as `_RoformerFold`), then
+    the overlap-add finishes in numpy. `_RoformerFold`'s GPU overlap-add reshapes each
+    frame into `n_fft // hop` blocks, which requires hop | n_fft; this variant instead
+    emits windowed frames (`build_inverse_frames`) and lets `np_stft.overlap_add` sum
+    them for any hop. The overlap-add is cheap (~a few ms per chunk) so this stays at
+    the fold's ~full speed while the heavy DFT/model/iDFT matmuls remain on the GPU."""
+
+    def __init__(self, model_session, model_in, providers, n_fft, hop, n_freq,
+                 n_frames, n_stems, channels, window) -> None:
+        import onnxruntime as ort
+
+        from app.pipeline.separation import onnx_stft
+
+        fwd = onnx_stft.build_forward(n_fft, hop, n_freq, n_frames, channels, window)
+        inv = onnx_stft.build_inverse_frames(n_fft, n_freq, n_frames, n_stems, channels, window)
+        providers = _no_tf32(providers)
+        self._fwd = ort.InferenceSession(fwd.SerializeToString(), providers=providers)
+        self._inv = ort.InferenceSession(inv.SerializeToString(), providers=providers)
+        self._model = model_session
+        self._model_in = model_in
+        self._model_out = model_session.get_outputs()[0].name
+        self._n_fft, self._hop, self._window = n_fft, hop, window
+        self._n, self._s = n_stems, channels
+        self._devid = 0
+
+    def run(self, part: np.ndarray) -> np.ndarray:
+        io_f = self._fwd.io_binding()
+        io_f.bind_cpu_input("audio", part[None].astype(np.float32))
+        io_f.bind_output("stft_repr", device_type="cuda", device_id=self._devid)
+        self._fwd.run_with_iobinding(io_f)
+        stft_repr = io_f.get_outputs()[0]  # resident in VRAM
+
+        io_m = self._model.io_binding()
+        io_m.bind_ortvalue_input(self._model_in, stft_repr)
+        io_m.bind_output(self._model_out, device_type="cuda", device_id=self._devid)
+        self._model.run_with_iobinding(io_m)
+        mask = io_m.get_outputs()[0]  # resident in VRAM
+
+        io_i = self._inv.io_binding()
+        io_i.bind_ortvalue_input("stft_repr", stft_repr)  # reuse the resident forward output
+        io_i.bind_ortvalue_input("mask", mask)
+        io_i.bind_output("frames", device_type="cpu")
+        self._inv.run_with_iobinding(io_i)
+        frames = io_i.get_outputs()[0].numpy()  # [n*s, T, n_fft] d->h
+        audio = np_stft.overlap_add(frames, self._n_fft, self._hop, self._window)
+        stems = audio.reshape(self._n, self._s, -1)
+        return stems[0] if self._n == 1 else stems
+
+
 class _RoformerFoldMac:
     """Mac fold: the complex mask multiply + iRFFT run on the ANE (an onnx_stft
     matmul graph), while framing (bs_pack) and the index-heavy overlap-add stay in
@@ -305,14 +398,17 @@ class NumpySeparator:
     def __init__(self, onnx_path, yaml_path, providers=None) -> None:
         with open(yaml_path, encoding="utf-8") as fh:
             cfg = yaml.load(fh, Loader=yaml.FullLoader)
-        # Only BS-Roformer is supported; its config carries freqs_per_bands.
-        if "freqs_per_bands" not in cfg.get("model", {}):
-            raise ValueError("NumpySeparator only supports BS-Roformer configs (freqs_per_bands)")
+        # Mel-Band Roformer configs carry `num_bands`. The spectrogram packing
+        # (bs_pack) is model-agnostic (full STFT, freq-leading); the model band-splits
+        # internally, so only the guard differs from the old BS-Roformer path.
+        if "num_bands" not in cfg.get("model", {}):
+            raise ValueError("NumpySeparator only supports Mel-Band Roformer configs (num_bands)")
         self.cfg = cfg
         self.instruments = list(cfg["training"]["instruments"])
         self.target = cfg["training"].get("target_instrument")
         self._onnx_path = str(onnx_path)
         self._providers = list(providers) if providers is not None else _separation_providers()
+        self._providers = _with_tensorrt(self._providers)
         self.session = _ort_session(onnx_path, self._providers)
         self._in = self.session.get_inputs()[0].name
         # Cached across separate() calls: the STFT-fold ORT sessions (~1.5s to
@@ -335,15 +431,20 @@ class NumpySeparator:
         return bs_unpack(bs_apply_mask(stft_repr, mask), n_fft, hop, window, channels, n_stems)[0]
 
     def _build_fold(self, n_fft, hop, n_frames, n_stems, channels, window):
-        """Pick the folded pre/post runner for the bound EP (CUDA: full fold;
-        CoreML: mask+iDFT on the ANE, framing/overlap-add in numpy), or None."""
+        """Pick the folded pre/post runner for the bound EP (CUDA: full or hop-agnostic
+        fold; CoreML: mask+iDFT on the ANE, framing/overlap-add in numpy), or None."""
         provs = self.session.get_providers()
         n_freq = n_fft // 2 + 1
-        args = (self.session, self._in, self._providers, n_fft, hop, n_freq, n_frames,
+        # The tiny STFT graphs run on CUDA (fp32/no-TF32 parity with numpy); TensorRT is
+        # only for the heavy model body (self.session). Strip it from the fold's providers.
+        stft_provs = [p for p in self._providers
+                      if (p if isinstance(p, str) else p[0]) != "TensorrtExecutionProvider"]
+        args = (self.session, self._in, stft_provs, n_fft, hop, n_freq, n_frames,
                 n_stems, channels, window)
         try:
             if "CUDAExecutionProvider" in provs and _fold_stft_enabled(default=True):
-                return _RoformerFold(*args)
+                # hop | n_fft -> GPU overlap-add (full fold); else emit frames + numpy overlap-add.
+                return (_RoformerFold if n_fft % hop == 0 else _RoformerFoldFrames)(*args)
             if "CoreMLExecutionProvider" in provs and _fold_stft_enabled(default=False):
                 return _RoformerFoldMac(*args)
         except Exception:

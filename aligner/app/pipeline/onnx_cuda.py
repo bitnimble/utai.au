@@ -123,3 +123,33 @@ def _preload_unix(base: str) -> None:
             break
         remaining = still
     log.info("preload_cuda_libs: loaded %d/%d nvidia libs", len(libs) - len(remaining), len(libs))
+
+
+_trt_loaded: bool | None = None
+
+
+def preload_tensorrt_libs() -> bool:
+    """Load the TensorRT runtime libs (libnvinfer / libnvonnxparser) so onnxruntime's
+    TensorRT EP can dlopen them, mirroring `preload_cuda_libs` for the CUDA runtime. The
+    `tensorrt-cu12` wheel ships the `.so` files under `site-packages/tensorrt_libs/`; they
+    depend on the CUDA runtime, so load that first. Returns True if the libs loaded (or were
+    already), False if the TensorRT runtime isn't installed (caller then stays on CUDA).
+    Idempotent + best-effort."""
+    global _trt_loaded
+    if _trt_loaded is not None:
+        return _trt_loaded
+    preload_cuda_libs()
+    try:
+        import tensorrt_libs  # the tensorrt-cu12 wheel's bundled .so dir
+
+        base = os.path.dirname(tensorrt_libs.__file__)
+    except Exception:
+        _trt_loaded = False
+        return False
+    sos = glob.glob(os.path.join(base, "libnvinfer*.so*")) + glob.glob(os.path.join(base, "libnvonnxparser*.so*"))
+    for _ in range(3):  # a couple of passes so plugin/parser resolve against libnvinfer
+        for so in sos:
+            _try_load(so)
+    _trt_loaded = any(_try_load(so) for so in sos)
+    log.info("preload_tensorrt_libs: %s", "loaded" if _trt_loaded else "TensorRT runtime not found")
+    return _trt_loaded
