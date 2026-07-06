@@ -10,9 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # The music facade targets the API shapes in OnTheSpot's `web.py`. Pin to a
-# specific commit for a reproducible deployment; `main` keeps the dev harness on
-# the latest.
-RUN pip install --no-cache-dir "git+https://github.com/justin025/onthespot@main"
+# specific commit for a reproducible deployment; `master` (the repo's default
+# branch) keeps the dev harness on the latest.
+RUN pip install --no-cache-dir "git+https://github.com/justin025/onthespot@master"
 
 # OnTheSpot reads/writes its config (account pool + credentials) here; the compose
 # shares this dir with the backend so the facade can read the account pool.

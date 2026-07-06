@@ -20,7 +20,6 @@ from app.music.facade import (
 )
 from app.music.models import AddAccountRequest
 
-
 # --- fakes ----------------------------------------------------------------
 
 
