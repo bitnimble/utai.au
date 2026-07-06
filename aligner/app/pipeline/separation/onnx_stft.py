@@ -16,9 +16,11 @@ a later optimisation).
 - `build_inverse` mirrors `bs_apply_mask` + `bs_unpack` / `np_stft.istft` (complex
   mask multiply, iRFFT-as-matmul, windowed Σw² weighted-overlap-add, center strip)
   -- the full CUDA inverse.
-- `build_inverse_frames` is the Mac split: mask + iRFFT only (the matmuls the ANE
-  runs), emitting windowed time-frames for `np_stft.overlap_add` to finish in numpy
-  (the ANE won't run the index-heavy overlap-add).
+- `build_inverse_frames` emits mask + iRFFT only (the matmuls), leaving the
+  overlap-add to `np_stft.overlap_add` in numpy. Two consumers: the Mac fold
+  (`_RoformerFoldMac`, the ANE won't run the index-heavy overlap-add) and the CUDA
+  hop-agnostic fold (`_RoformerFoldFrames`, when hop doesn't divide n_fft so the
+  full GPU overlap-add can't reshape frames into hop-blocks).
 
 All fixed-shape (one chunk), fp32 (the model's I/O is fp32, so no casts).
 """
@@ -203,9 +205,10 @@ def build_forward(n_fft, hop, n_freq, n_frames, channels, window):
 def build_inverse_frames(n_fft, n_freq, n_frames, n_stems, channels, window):
     """(stft_repr [1,fs,T,2], mask [1,n,fs,T,2]) -> windowed time-frames
     [n*s, T, n_fft] (complex mask multiply + iRFFT-as-matmul). The overlap-add is
-    left to numpy (np_stft.overlap_add): this is the Mac fold, where the ANE runs
-    the matmuls but not the index-heavy overlap-add. Uses Slice (not Gather) for
-    the re/im split so nothing forces it off the ANE. fs = n_freq*s."""
+    left to numpy (np_stft.overlap_add). Two consumers: the Mac fold (the ANE runs
+    the matmuls but not the index-heavy overlap-add) and the CUDA hop-agnostic fold
+    (hop doesn't divide n_fft). Uses Slice (not Gather) for the re/im split so
+    nothing forces it off the ANE. fs = n_freq*s."""
     s, n, t = channels, n_stems, n_frames
     fs = n_freq * s
     b = n * s

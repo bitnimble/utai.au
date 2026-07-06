@@ -2,22 +2,27 @@
 `torch.stft`/`torch.istft` to fp32 rounding. np_inference.py's docstring promises
 this test; without it a future edit (or an onnxruntime/numpy bump) could silently
 shift every separated stem. Tolerances are ~10x looser than the measured drift
-(STFT ~2e-5, iSTFT ~7e-7) so the test is a real guard, not a flake."""
+(STFT ~2e-5, iSTFT ~7e-7) so the test is a real guard, not a flake.
+
+Both hops matter: 512 divides n_fft (the vectorized overlap-add branch, BS-Roformer's
+old hop) and 441 does not (Mel-Band Roformer's hop -> the `overlap_add` loop + Σw²
+envelope branch that the `_RoformerFoldFrames` fold runs)."""
 import numpy as np
 import pytest
 
-N_FFT, HOP = 2048, 512
+N_FFT = 2048
 
 
-def test_np_stft_matches_torch():
+@pytest.mark.parametrize("hop", [512, 441])
+def test_np_stft_matches_torch(hop):
     torch = pytest.importorskip("torch")
     from app.pipeline.separation import np_stft
 
     x = np.random.RandomState(0).randn(2, 44100).astype(np.float32)
     win = np_stft.hann_window(N_FFT)
-    npy = np_stft.stft(x, N_FFT, HOP, win, center=True)  # (b, F, T) complex64
+    npy = np_stft.stft(x, N_FFT, hop, win, center=True)  # (b, F, T) complex64
     tspec = torch.stft(
-        torch.from_numpy(x), N_FFT, hop_length=HOP, win_length=N_FFT,
+        torch.from_numpy(x), N_FFT, hop_length=hop, win_length=N_FFT,
         window=torch.hann_window(N_FFT, periodic=True),
         center=True, pad_mode="reflect", return_complex=True,
     ).numpy()
@@ -25,16 +30,17 @@ def test_np_stft_matches_torch():
     assert np.abs(npy - tspec).max() < 1e-4
 
 
-def test_np_istft_matches_torch_and_roundtrips():
+@pytest.mark.parametrize("hop", [512, 441])
+def test_np_istft_matches_torch_and_roundtrips(hop):
     torch = pytest.importorskip("torch")
     from app.pipeline.separation import np_stft
 
     x = np.random.RandomState(1).randn(2, 44100).astype(np.float32)
     win = np_stft.hann_window(N_FFT)
-    spec = np_stft.stft(x, N_FFT, HOP, win, center=True)
-    npy = np_stft.istft(spec, N_FFT, HOP, win, center=True, length=x.shape[1])
+    spec = np_stft.stft(x, N_FFT, hop, win, center=True)
+    npy = np_stft.istft(spec, N_FFT, hop, win, center=True, length=x.shape[1])
     tinv = torch.istft(
-        torch.from_numpy(spec).to(torch.complex64), N_FFT, hop_length=HOP,
+        torch.from_numpy(spec).to(torch.complex64), N_FFT, hop_length=hop,
         win_length=N_FFT, window=torch.hann_window(N_FFT, periodic=True),
         center=True, length=x.shape[1],
     ).numpy()

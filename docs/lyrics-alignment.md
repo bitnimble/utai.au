@@ -119,11 +119,24 @@ kernel is shared by both paths.
   fp16 GRU; CPU/MPS pin to fp32).
 - **CUDA** (`onnx_cuda.py`): `preload_cuda_libs()` makes onnxruntime-gpu
   find its runtime libs in a torch-free process (`RTLD_GLOBAL` on Linux,
-  `add_dll_directory` on Windows); `default_providers()` is CUDA-first
-  and drops TensorRT.
+  `add_dll_directory` on Windows). `default_providers()` is CUDA-first and
+  drops TensorRT for **variable-length** audio (the CTC aligner) -- a
+  per-shape engine rebuild would dominate.
+- **TensorRT** (separation only, `np_inference._with_tensorrt`): the vocals
+  body runs a **fixed** 8s chunk, so its engine builds once and is cached
+  (`settings.cache_dir/tensorrt`) -- the ~100x-realtime path (vs ~8-18x on
+  CUDA). The EP is prepended ahead of CUDA when the TRT runtime is installed
+  and loadable (`preload_tensorrt_libs`); opt out with `UTAI_SEP_TRT=0`, and
+  it silently stays on CUDA if TRT is absent. The body is mixed fp16/fp32 and
+  TRT obeys those explicit dtypes (no `trt_fp16_enable`). Mel-Band's hop=441
+  doesn't divide n_fft=2048, so the GPU STFT fold emits frames and finishes
+  the overlap-add in numpy (`_RoformerFoldFrames`).
 - **macOS CoreML/ANE** (`separation/coreml_optimize.py`): rewrites the
   separation ONNX graph so every op is CoreML-native.
-- **fp16 conversion**: `onnx_fp16.py::to_fp16`, used by the exporters.
+- **fp16 conversion**: `onnx_fp16.py::to_fp16` (plain fp16: the CTC aligner
+  bodies + the macOS separation body). The CUDA/TensorRT separation body uses
+  `export._to_mixed_fp16` instead -- fp16 everywhere except the RMSNorm
+  reductions (`Pow`/`ReduceMean`), which stay fp32 for quality.
 - **Provisioning is capability-scoped** (`provision.py`,
   `_capability_assets`): the `lyrics` capability pulls the separation
   weights + the two CTC aligner fp16 ONNX bodies and **nothing else**.

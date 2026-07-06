@@ -26,10 +26,12 @@ def _run(model, feeds):
     return sess.run(None, feeds)[0]
 
 
-def test_forward_matches_bs_pack():
-    audio = (np.random.default_rng(0).standard_normal((1, S, CHUNK)) * 0.1).astype(np.float32)
-    ref = bs_pack(audio, N_FFT, HOP, WINDOW)
-    got = _run(onnx_stft.build_forward(N_FFT, HOP, N_FREQ, T, S, WINDOW), {"audio": audio})
+@pytest.mark.parametrize("hop", [512, 441])
+def test_forward_matches_bs_pack(hop):
+    chunk = hop * (T - 1)
+    audio = (np.random.default_rng(0).standard_normal((1, S, chunk)) * 0.1).astype(np.float32)
+    ref = bs_pack(audio, N_FFT, hop, WINDOW)
+    got = _run(onnx_stft.build_forward(N_FFT, hop, N_FREQ, T, S, WINDOW), {"audio": audio})
     assert got.shape == ref.shape
     assert np.allclose(got, ref, atol=1e-3), np.abs(got - ref).max()
 
@@ -45,16 +47,19 @@ def test_inverse_matches_bs_apply_mask_and_unpack():
     assert np.allclose(got, ref, atol=1e-3), np.abs(got - ref).max()
 
 
-def test_inverse_frames_plus_overlap_add_matches_numpy():
-    """The Mac split -- mask+iRFFT in-graph (on the ANE), overlap-add in numpy --
-    reproduces the full numpy inverse."""
+@pytest.mark.parametrize("hop", [512, 441])
+def test_inverse_frames_plus_overlap_add_matches_numpy(hop):
+    """mask+iRFFT in-graph, overlap-add in numpy reproduces the full numpy inverse.
+    This split runs on the Mac fold (the ANE runs the matmuls) AND on the CUDA
+    hop-agnostic fold (`_RoformerFoldFrames`, taken when hop does not divide n_fft --
+    Mel-Band's 441 -> the `overlap_add` loop + Σw² envelope branch)."""
     rng = np.random.default_rng(1)
     stft_repr = (rng.standard_normal((1, FS, T, 2)) * 0.1).astype(np.float32)
     mask = (rng.standard_normal((1, N, FS, T, 2)) * 0.1).astype(np.float32)
-    ref = bs_unpack(bs_apply_mask(stft_repr, mask), N_FFT, HOP, WINDOW, S, N)
+    ref = bs_unpack(bs_apply_mask(stft_repr, mask), N_FFT, hop, WINDOW, S, N)
     frames = _run(onnx_stft.build_inverse_frames(N_FFT, N_FREQ, T, N, S, WINDOW),
                   {"stft_repr": stft_repr, "mask": mask})
-    got = np_stft.overlap_add(frames, N_FFT, HOP, WINDOW).reshape(1, N, S, -1)
+    got = np_stft.overlap_add(frames, N_FFT, hop, WINDOW).reshape(1, N, S, -1)
     assert got.shape == ref.shape
     assert np.allclose(got, ref, atol=1e-3), np.abs(got - ref).max()
 

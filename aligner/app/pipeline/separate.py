@@ -268,8 +268,9 @@ def _onnx_separation_enabled() -> bool:
 
 def _onnx_separation_fp16() -> bool:
     """UTAI_SEP_ONNX=fp16 -> export an fp16 body (~half the file, GPU tensor /
-    NPU fp16 path). ~10% magnitude error vs fp32 but shape preserved (corr ~1.0);
-    the STFT/iSTFT stay fp32 in torch regardless."""
+    NPU fp16 path). CUDA/TensorRT gets the mixed fp16/fp32 body (RMSNorm reductions
+    kept fp32 -> transparent vs fp32); macOS gets plain fp16. The STFT/iSTFT stay
+    fp32 outside the graph regardless."""
     return os.environ.get("UTAI_SEP_ONNX", "").strip().lower() in ("fp16", "16", "half")
 
 
