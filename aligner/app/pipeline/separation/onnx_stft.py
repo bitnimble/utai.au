@@ -1,4 +1,4 @@
-"""In-graph STFT / iSTFT for BS-Roformer, so the framing + DFT + complex-mask +
+"""In-graph STFT / iSTFT for the Roformer separator, so the framing + DFT + complex-mask +
 iDFT + overlap-add run on the accelerator instead of numpy on the CPU.
 
 Measured: the numpy pre/post (`bs_pack` + `bs_apply_mask` + `bs_unpack`) is ~half

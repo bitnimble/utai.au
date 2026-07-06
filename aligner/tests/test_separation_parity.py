@@ -35,7 +35,7 @@ from app.config import settings
 from app.pipeline.provision import yaml_for_ckpt
 
 # The shipped vocals separator ckpt filename(s).
-_MODELS = [settings.demucs_model]  # model_bs_roformer_sw.ckpt
+_MODELS = [settings.demucs_model]  # model_mel_band_roformer.ckpt
 
 _DEFAULT_CKPT_DIR = "/codebox-workspace/utai/models-cache"
 _DEFAULT_ONNX_DIR = "/codebox-workspace/utai/onnx-export"

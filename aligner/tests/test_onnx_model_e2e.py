@@ -3,14 +3,14 @@ produces stems through its real loader.
 
 This validates the download -> load -> run path the desktop app relies on: the
 `Separator` prefers the provisioned `{stem}.fp16.onnx` bodies
-(`provision.shipped_onnx`). The test is GATED on the BS-Roformer body being
+(`provision.shipped_onnx`). The test is GATED on the Roformer body being
 present, so it stays skipped until the fp16 set is uploaded to
 `bitnimble/utai-onnx` and provisioned into `models_dir`.
 
 To enable it once the upload is done, provision the model (or point at a dir
 that already has it):
 
-    UTAI_MODELS_DIR=/path/with/model_bs_roformer_sw.fp16.onnx pytest
+    UTAI_MODELS_DIR=/path/with/model_mel_band_roformer.fp16.onnx pytest
     # or: python -m app.pipeline.provision separation   (downloads into models_dir)
 """
 
@@ -45,7 +45,7 @@ def _tone_clip(path, dur=6.0, sr=44100):
 
 
 def test_shipped_separation_onnx_runs(tmp_path):
-    """The provisioned BS-Roformer ONNX body loads through the real `Separator`
+    """The provisioned Roformer ONNX body loads through the real `Separator`
     and produces a vocals stem, proving the model ran (not just that the file
     loads)."""
     from app.pipeline.separate import Separator

@@ -1,7 +1,7 @@
 """Rewrite a separation ONNX graph so EVERY op is covered by the CoreML EP
 (MLProgram), for fast on-device (ANE) inference on macOS.
 
-BS-Roformer's exported graph uses ops the CoreML EP has no builder for --
+The Roformer's exported graph uses ops the CoreML EP has no builder for --
 `ReduceL2` (RMSNorm), `Einsum` (band-feature outer product), `Neg` (rotary
 rotate-half), `Expand` (broadcast) -- plus rotary `Cos`/`Sin` and dynamic-shape
 machinery. Each unsupported op is a partition cut, so the model would shred into
@@ -128,7 +128,7 @@ def rewrite_expand_drop(graph: onnx.GraphProto) -> int:
 
 def _empty_tensors(model: onnx.ModelProto) -> set[str]:
     """Names of tensors with a statically-0 dimension (empty), from shape
-    inference. CoreML rejects 0-dim shapes outright -- they come from BS-Roformer's
+    inference. CoreML rejects 0-dim shapes outright -- they come from the Roformer's
     rotary embedding, whose 'unrotated remainder' slice is empty when rot_dim == dim."""
     inferred = onnx.shape_inference.infer_shapes(model)
     empty = set()

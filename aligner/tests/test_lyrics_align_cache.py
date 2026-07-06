@@ -43,7 +43,7 @@ def test_hash_bytes_matches_known_sha256() -> None:
 
 def test_vocals_cache_key_changes_with_separator_model(monkeypatch) -> None:
     h = "2" * 64
-    monkeypatch.setattr(settings, "demucs_model", "model_bs_roformer_sw.ckpt")
+    monkeypatch.setattr(settings, "demucs_model", "model_mel_band_roformer.ckpt")
     a = main._vocals_cache_key(h)
     monkeypatch.setattr(settings, "demucs_model", "some_other_model.ckpt")
     b = main._vocals_cache_key(h)

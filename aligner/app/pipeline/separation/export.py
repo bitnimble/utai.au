@@ -25,17 +25,17 @@ from .loader import LoadedModel
 
 
 def _target_variant() -> str:
-    """Which bs_roformer optimization to bake into the exported body: `coreml`
-    (macOS) or `mha` (CUDA/DirectML, the default off macOS). A release build that
-    ships both sets `UTAI_SEP_VARIANT` to force one regardless of the build
-    host's platform."""
+    """Which platform body to export: `coreml` (macOS, the coreml_optimize'd plain
+    fp16 graph) or `cuda` (the mixed fp16/fp32 body for the CUDA/TensorRT/DirectML
+    EPs, the default off macOS). A release build that ships both sets
+    `UTAI_SEP_VARIANT` to force one regardless of the build host's platform."""
     override = os.environ.get("UTAI_SEP_VARIANT", "").strip().lower()
-    if override in ("coreml", "mha"):
+    if override in ("coreml", "cuda"):
         return override
-    return "coreml" if sys.platform == "darwin" else "mha"
+    return "coreml" if sys.platform == "darwin" else "cuda"
 
 
-class _BsBody(torch.nn.Module):
+class _RoformerBody(torch.nn.Module):
     def __init__(self, model: torch.nn.Module) -> None:
         super().__init__()
         self.model = model
@@ -44,7 +44,7 @@ class _BsBody(torch.nn.Module):
         return self.model.forward_mask(x)
 
 
-def _bs_example(loaded: LoadedModel) -> torch.Tensor:
+def _roformer_example(loaded: LoadedModel) -> torch.Tensor:
     model = loaded.model
     chunk = model.stft_kwargs["hop_length"] * (loaded.config.inference.dim_t - 1)
     dummy = torch.randn(1, model.audio_channels, chunk)
@@ -98,7 +98,7 @@ def export_body(
     orig_device = next(model.parameters()).device
     model.cpu().eval()
     try:
-        body, example, in_name, out_name = _BsBody(model), _bs_example(loaded), "stft_repr", "mask"
+        body, example, in_name, out_name = _RoformerBody(model), _roformer_example(loaded), "stft_repr", "mask"
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with torch.no_grad():
@@ -111,28 +111,24 @@ def export_body(
                 opset_version=opset,
                 dynamo=False,
             )
-        # BS-Roformer needs a platform-specific rewrite of its attention-heavy
-        # graph. Both rewrites are numerically exact and run on the fp32 graph,
-        # before the fp16 conversion below.
-        #   - macOS (CoreML EP): the exported ReduceL2/Einsum/Neg/Expand/rotary ops
-        #     have no CoreML builder -- each a partition cut that shreds the model
-        #     into CPU-bridged islands. `coreml_optimize` rewrites them CoreML-native.
-        #   - CUDA / DirectML: the naive SDPA decomposition materializes the
-        #     O(seq^2) score matrix (multi-GB fp16 peak -> WDDM paging). `mha_optimize`
-        #     fuses it into `MultiHeadAttention` (flash/CUTLASS, O(seq) memory). MHA
-        #     has no CoreML kernel, so the two variants are mutually exclusive.
+        # macOS (CoreML EP) needs a numerically-exact rewrite of the attention-heavy
+        # graph: the exported ReduceL2/Einsum/Neg/Expand/rotary ops have no CoreML
+        # builder -- each a partition cut that shreds the model into CPU-bridged
+        # islands. `coreml_optimize` rewrites them CoreML-native, on the fp32 graph
+        # before the fp16 conversion below. MHA has no CoreML kernel, so this and the
+        # CUDA body are mutually exclusive.
         shapes = {in_name: list(example.shape)}
         if _target_variant() == "coreml":
             from app.pipeline.separation.coreml_optimize import coreml_optimize
 
             coreml_optimize(out_path, shapes)
-        # CUDA / TensorRT: deliberately NO mha_optimize. TensorRT fuses attention itself, and its
-        # `com.microsoft.MultiHeadAttention` contrib op can't be consumed by the TRT EP; Mel-Band's
-        # attention (seq 801 / 60) is also small enough that the naive SDPA score matrix isn't the
-        # multi-GB blow-up it is for BS-Roformer. The fp16/fp32-norm precision is set by _to_mixed_fp16.
+        # CUDA / TensorRT: no graph rewrite. TensorRT fuses attention itself (and its
+        # `com.microsoft.MultiHeadAttention` contrib op can't be consumed by the TRT EP anyway), and
+        # Mel-Band's attention (seq 801 / 60) is small enough that the naive SDPA score matrix isn't a
+        # memory blow-up. The fp16/fp32-norm precision is set by _to_mixed_fp16.
     finally:
         # Restore device AND eval: torch.onnx.export can leave the module in
-        # train mode, which would re-enable BS-Roformer's attn/ff dropout on any
+        # train mode, which would re-enable the model's attn/ff dropout on any
         # later torch forward (the separators are always eval / inference).
         model.to(orig_device).eval()
     if fp16:

@@ -13,6 +13,7 @@ from app.pipeline.provision import (
     deprovision,
     provisioned_file,
     shipped_onnx,
+    yaml_for_ckpt,
 )
 
 
@@ -20,16 +21,20 @@ def _names(capability):
     return {a.filename for a in _capability_assets(capability)}
 
 
+def _sep_stem() -> str:
+    return Path(settings.demucs_model).stem
+
+
 def test_separation_is_scoped_to_separation():
     names = _names("separation")
-    assert {"model_bs_roformer_sw.fp16.onnx", "config_bs_roformer_sw.yaml"} <= names
+    assert {f"{_sep_stem()}.fp16.onnx", yaml_for_ckpt(settings.demucs_model)} <= names
     # never pulls lyrics weights
     assert not any("ctc_align" in f for f in names)
 
 
 def test_lyrics_composes_separation():
     names = _names("lyrics")
-    assert "model_bs_roformer_sw.fp16.onnx" in names  # /lyrics needs the vocals stem
+    assert f"{_sep_stem()}.fp16.onnx" in names  # /lyrics needs the vocals stem
     assert any(f.startswith("ctc_align__") for f in names)
 
 
@@ -38,7 +43,7 @@ def test_every_loader_lookup_is_provisioned_by_some_capability():
     for cap in ("separation", "lyrics"):
         provisioned |= _names(cap)
     loader_names = {
-        "model_bs_roformer_sw",  # separation
+        _sep_stem(),  # separation
         f"ctc_align__{settings.lyrics_align_model_english.replace('/', '__')}",
         f"ctc_align__{settings.lyrics_align_model_default.replace('/', '__')}",  # lyrics
     }
@@ -47,8 +52,8 @@ def test_every_loader_lookup_is_provisioned_by_some_capability():
 
 
 def test_roformer_ships_platform_variant_under_canonical_local_name(monkeypatch):
-    stem = Path(settings.demucs_model).stem  # the bs_roformer body
-    for platform, variant in (("darwin", "coreml"), ("linux", "mha"), ("win32", "mha")):
+    stem = Path(settings.demucs_model).stem  # the roformer body
+    for platform, variant in (("darwin", "coreml"), ("linux", "cuda"), ("win32", "cuda")):
         monkeypatch.setattr("app.pipeline.provision.sys.platform", platform)
         asset = _sep_onnx_asset(stem)
         # local name stays canonical (the loader is platform-agnostic)...

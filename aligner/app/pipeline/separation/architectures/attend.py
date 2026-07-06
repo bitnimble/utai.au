@@ -1,7 +1,7 @@
 """Vendored verbatim from audio-separator's uvr_lib_v5/roformer/attend.py.
 
-Kept byte-compatible with the upstream class so BS-Roformer state_dicts load
-unchanged. The only consumer is `bs_roformer.Attention`.
+Kept byte-compatible with the upstream class so the Roformer state_dicts load
+unchanged. The only consumer is `mel_band_roformer.Attention`.
 """
 
 from collections import namedtuple

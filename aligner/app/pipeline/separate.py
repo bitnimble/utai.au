@@ -1,10 +1,10 @@
 """Vocal separation for CTC lyrics alignment.
 
-Extracts a vocals stem from a full mix with **BS-Roformer SW** (jarredou's
-BS-ROFO-SW-Fixed) -- a 6-stem (vocals / drums / bass / guitar / piano / other)
-Band-Split RoPE Transformer whose `vocals` output (SDR ~11.3) beats the retired
-UVR-MDX-NET-Voc_FT (~10). `pipeline/lyrics_align.py` then forced-aligns the
-caller's lyric text against that stem.
+Extracts a vocals stem from a full mix with **Mel-Band Roformer** (KJ's
+MIT-licensed vocals model) -- a single-stem Mel-Band RoPE Transformer whose
+`vocals` output feeds alignment; the accompaniment is the residual we don't use.
+`pipeline/lyrics_align.py` then forced-aligns the caller's lyric text against
+that stem.
 
 The model runs through a vendored, torch-only separation wrapper
 (`pipeline/separation/`), reimplemented from `audio-separator`'s chunked
@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 
 
 class Separator:
-    """Vocals separator (BS-Roformer SW). The model is loaded eagerly by
+    """Vocals separator (Mel-Band Roformer). The model is loaded eagerly by
     `load()` at application startup so the first `/lyrics/align` mix-flow call
     doesn't pay model-load latency.
 
@@ -49,7 +49,7 @@ class Separator:
         self._stems_all = None
 
     def load(self) -> None:
-        """Idempotently load the vocals separator (BS-Roformer SW).
+        """Idempotently load the vocals separator (Mel-Band Roformer).
 
         Called once at container startup (FastAPI lifespan) so the first mix-flow
         /lyrics/align call doesn't pay model-load latency, and again defensively
@@ -146,10 +146,9 @@ class Separator:
     def park_vocals(self) -> None:
         """Park the vocals separator's VRAM before the CTC aligner loads.
 
-        Vocals comes from the BS-Roformer SW model (its `vocals` stem, SDR ~11.3,
-        beats the retired UVR-MDX-NET-Voc_FT ~10), so this parks the SW runner.
-        Idempotent / no-op when SW was never loaded (e.g. a vocals cache hit fed
-        the aligner directly)."""
+        Vocals comes from the Mel-Band Roformer model (its `vocals` stem), so this
+        parks that runner. Idempotent / no-op when it was never loaded (e.g. a
+        vocals cache hit fed the aligner directly)."""
         from app.pipeline.gpu_park import park_module
 
         if self._stems_all is None:
@@ -166,9 +165,8 @@ class Separator:
     def run_vocals(self, audio_path: Path, work_dir: Path) -> Path | None:
         """Extract a vocals stem from a full mix for CTC forced alignment.
 
-        Runs the BS-Roformer SW separator and keeps its `vocals` stem (SDR ~11.3,
-        cleaner than the old dedicated MDX-Net model ~10). Returns the absolute
-        path to the vocals WAV, or None if SW emitted no vocals stem.
+        Runs the Mel-Band Roformer separator and keeps its `vocals` stem. Returns
+        the absolute path to the vocals WAV, or None if it emitted no vocals stem.
         """
         self.load()
         assert self._stems_all is not None
@@ -183,14 +181,14 @@ class Separator:
         )
         if "vocals" not in sources:
             log.info(
-                "vocals: SW finished in %.2fs but produced no vocals stem (got %s)",
+                "vocals: separator finished in %.2fs but produced no vocals stem (got %s)",
                 time.perf_counter() - t0,
                 sorted(sources),
             )
             return None
         vocals_stem = out_dir / "vocals.wav"
         _write_stem(vocals_stem, sources["vocals"])
-        log.info("vocals: extracted in %.2fs (BS-Roformer SW)", time.perf_counter() - t0)
+        log.info("vocals: extracted in %.2fs (Mel-Band Roformer)", time.perf_counter() - t0)
         return vocals_stem
 
 

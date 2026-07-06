@@ -9,9 +9,9 @@ fallback path).
 
 Output matches the torch ONNX runner to fp32 rounding (see the parity test).
 
-The spectrogram packing mirrors the vendored BS-Roformer
-(`BSRoformer._stft_prep`/`_apply_mask`/`_istft_post`): frequency-leading
-real-view `b (f s) t c`, plus the complex mask multiply.
+The spectrogram packing mirrors the vendored Mel-Band Roformer
+(`MelBandRoformer._stft_prep` / `forward_mask`): frequency-leading real-view
+`b (f s) t c`, plus the complex mask multiply.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def _prepare_mix(audio: str | Path | np.ndarray) -> np.ndarray:
     return mix.astype(np.float32)
 
 
-# ---- BS-Roformer spectrogram packing (mirrors BSRoformer prep/post) -------
+# ---- Roformer spectrogram packing (mirrors MelBandRoformer prep/post) -----
 
 
 def bs_pack(audio: np.ndarray, n_fft: int, hop: int, window: np.ndarray) -> np.ndarray:
@@ -100,11 +100,10 @@ def _ort_session(onnx_path, providers):
     if providers is None:
         providers = default_providers()
     so = ort.SessionOptions()
-    # ORT's memory *planner* over-reserves for the MHA-fused roformer: it plans as
-    # if the (now-fused) attention scores still materialize, pre-allocating a
-    # ~5.9GB arena that masks the fusion's win. Off, the BFC arena grows to the
-    # true ~3.25GB peak (vs ~5.7GB naive) -- the difference between fitting a
-    # 6GB / ~4GB-free GPU and WDDM paging (~15s/chunk). Run time is unchanged.
+    # ORT's memory *planner* over-reserves for the roformer graph: it pre-allocates
+    # a worst-case attention arena that can exceed the true peak and force WDDM
+    # paging on a tight GPU. Off, the BFC arena grows to the real peak instead;
+    # run time is unchanged.
     so.enable_mem_pattern = False
     if _profiling():
         so.log_severity_level = 0  # VERBOSE
@@ -214,7 +213,7 @@ def _trt_cache_dir() -> str | None:
 
 
 def _fold_stft_enabled(default: bool) -> bool:
-    """Whether to run the BS-Roformer STFT/iSTFT on the accelerator (onnx_stft
+    """Whether to run the Roformer STFT/iSTFT on the accelerator (onnx_stft
     graphs chained around the model) instead of numpy. `UTAI_SEP_FOLD_STFT`
     overrides; unset falls to the platform `default`. CUDA defaults ON (measured
     ~2x, the numpy pre/post is ~half a chunk); CoreML defaults OFF (the ANE runs
@@ -399,8 +398,8 @@ class NumpySeparator:
         with open(yaml_path, encoding="utf-8") as fh:
             cfg = yaml.load(fh, Loader=yaml.FullLoader)
         # Mel-Band Roformer configs carry `num_bands`. The spectrogram packing
-        # (bs_pack) is model-agnostic (full STFT, freq-leading); the model band-splits
-        # internally, so only the guard differs from the old BS-Roformer path.
+        # (bs_pack) is model-agnostic (full STFT, freq-leading) -- the model
+        # band-splits internally -- so only this config guard is model-specific.
         if "num_bands" not in cfg.get("model", {}):
             raise ValueError("NumpySeparator only supports Mel-Band Roformer configs (num_bands)")
         self.cfg = cfg

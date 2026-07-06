@@ -541,7 +541,7 @@ def _parse_lyrics_input(raw: str) -> list[InputLine]:
 def _extract_vocals_with_separator(
     separator: Separator, mix_path: Path, work_dir: Path,
 ) -> Path | None:
-    """Run the vocals separator (Stage-1 BS-Roformer SW) on `mix_path` and
+    """Run the vocals separator (Stage-1 Mel-Band Roformer) on `mix_path` and
     return the vocals stem path for CTC forced alignment.
 
     Returns None when the separator finished but no vocals-named output
@@ -603,7 +603,7 @@ def _sanitize_id(s: str) -> str:
 def _vocals_model_id() -> str:
     """Identifier for the vocals separator output. Burnt into the cache key so
     a model swap auto-invalidates every cached vocals stem. Vocals comes from
-    the Stage-1 BS-Roformer SW model, so it tracks that ckpt."""
+    the Stage-1 Mel-Band Roformer model, so it tracks that ckpt."""
     return _sanitize_id(settings.demucs_model)
 
 

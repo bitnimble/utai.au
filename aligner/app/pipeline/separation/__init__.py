@@ -1,5 +1,5 @@
 """Thin torch-only separation wrapper, a drop-in for `audio-separator` for the
-vocals separator (BS-Roformer SW).
+vocals separator (Mel-Band Roformer).
 
 `loader.load_model` builds a vendored `nn.Module` from a (ckpt, yaml) pair and
 `runner.SeparationRunner.separate` runs the chunked overlap-add inference,

@@ -1,7 +1,7 @@
 """GPU-residency control for warm model singletons.
 
 The pipeline worker holds two model singletons across the process
-lifetime: the vocals separator (BS-Roformer SW, eagerly loaded at
+lifetime: the vocals separator (Mel-Band Roformer, eagerly loaded at
 startup) and the lyrics aligner's CTC checkpoints (lazy). On a 6 GB
 consumer GPU both resident simultaneously exceeds the budget once CTC
 forced alignment tries to allocate its emissions tensor, so the vocals

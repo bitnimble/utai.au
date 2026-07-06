@@ -1,6 +1,6 @@
 """Tests for parking the vocals-extraction model.
 
-Vocals comes from the BS-Roformer SW separator (a torch model), so
+Vocals comes from the Mel-Band Roformer separator (a torch model), so
 `park_vocals` / `unpark_vocals` just move that `SeparationRunner`'s module
 between CPU and GPU. The old dedicated MDX/ONNX vocals model (whose ORT-session
 CUDA arena needed a full release) is gone.
@@ -30,7 +30,7 @@ class _FakeModule:
         return self
 
 
-def _sep_with_sw(model: object) -> Separator:
+def _sep_with_model(model: object) -> Separator:
     sep = Separator.__new__(Separator)
     runner = SeparationRunner.__new__(SeparationRunner)
     runner.model = model  # type: ignore[attr-defined]
@@ -44,15 +44,15 @@ def test_park_module_noop_on_non_module() -> None:
     gpu_park.unpark_module(lambda spek: spek, "vocals")
 
 
-def test_park_vocals_parks_sw_runner() -> None:
-    """park_vocals parks the SW runner's module; unpark brings it back."""
-    sep = _sep_with_sw(_FakeModule())
+def test_park_vocals_parks_runner() -> None:
+    """park_vocals parks the runner's module; unpark brings it back."""
+    sep = _sep_with_model(_FakeModule())
     sep.park_vocals()
     sep.unpark_vocals()
 
 
-def test_park_vocals_noop_when_sw_not_loaded() -> None:
-    """No SW loaded (e.g. a vocals cache hit) -> park/unpark are no-ops."""
+def test_park_vocals_noop_when_not_loaded() -> None:
+    """Separator never loaded (e.g. a vocals cache hit) -> park/unpark are no-ops."""
     sep = Separator.__new__(Separator)
     sep._stems_all = None  # type: ignore[attr-defined]
     sep.park_vocals()

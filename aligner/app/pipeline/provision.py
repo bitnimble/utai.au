@@ -63,10 +63,11 @@ def _onnx(name: str) -> _Asset:
 def _sep_onnx_asset(stem: str) -> _Asset:
     """The fp16 onnx body for the Mel-Band Roformer separator stem, saved under the
     canonical local name `{stem}.fp16.onnx` (what the loader looks up). Ships two
-    platform-specific variants -- `.coreml.` (macOS ANE) and `.mha.` (CUDA/
-    DirectML memory-efficient attention) -- that must never be cross-used, so the
-    remote file is chosen by platform while the local name stays canonical."""
-    variant = "coreml" if sys.platform == "darwin" else "mha"
+    platform-specific variants -- `.coreml.` (macOS ANE, plain fp16) and `.cuda.`
+    (the mixed fp16/fp32 body for the CUDA/TensorRT/DirectML EPs) -- that must never
+    be cross-used, so the remote file is chosen by platform while the local name
+    stays canonical."""
+    variant = "coreml" if sys.platform == "darwin" else "cuda"
     return _Asset(f"{stem}.fp16.onnx", f"{settings.onnx_repo}/{stem}.{variant}.fp16.onnx")
 
 

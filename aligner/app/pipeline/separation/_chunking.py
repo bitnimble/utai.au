@@ -42,7 +42,7 @@ def chunk_size_for(hop_length: int, segment: int) -> int:
 
 
 def roformer_step(chunk_size: int, sample_rate: int) -> int:
-    """BS-Roformer overlap step (mdxc_separator.py:272-343): `overlap` is in
+    """Roformer overlap step (mdxc_separator.py:272-343): `overlap` is in
     seconds, clamp the resulting step to chunk_size."""
     desired_step = int(MDXC_OVERLAP * sample_rate)
     return chunk_size if desired_step <= 0 else min(desired_step, chunk_size)

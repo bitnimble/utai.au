@@ -36,21 +36,22 @@ Forced alignment on a full mix is noticeably worse than on an isolated
 vocal, drums/bass smear the acoustic emissions. So we separate first
 and align on the vocals stem only.
 
-- **Model: BS-Roformer SW** (`model_bs_roformer_sw.ckpt` +
-  `config_bs_roformer_sw.yaml`, jarredou's "BS-ROFO-SW-Fixed", a 6-stem
-  band-split RoPE transformer). We keep only its `vocals` output.
-  ~14 SDR, best-in-class open separation at time of writing.
+- **Model: Mel-Band Roformer** (`model_mel_band_roformer.ckpt` +
+  `config_mel_band_roformer.yaml`, KJ's MIT-licensed vocals model, a
+  Mel-Band RoPE transformer). Single-stem: we keep its `vocals` output and
+  treat the accompaniment as the residual. MIT weights (unlike the prior
+  BS-Roformer SW, whose provenance was murky) and fast -- ~100x realtime
+  end-to-end via the TensorRT path (see ONNX/accel below).
 - Architecture is **vendored** into `aligner/app/pipeline/separation/`
-  (`bs_roformer.py`, `attend.py`, STFT helpers), the upstream
-  `audio-separator` dependency was dropped, and jarredou's original
-  GitHub is gone, so the on-disk `.ckpt` + HF mirrors are the only
-  source. Vendor them; do not assume they can be re-downloaded upstream.
-- Weights on dev boxes live at
-  `/codebox-workspace/drumjot/models-cache/` (shared with Drumjot). The
-  runtime resolves them through `settings.models_dir`.
+  (`architectures/mel_band_roformer.py`, `architectures/attend.py`, STFT
+  helpers); the upstream `audio-separator` dependency was dropped, so the
+  vendored classes are the source. The `.ckpt` + shipped fp16 `.onnx` are
+  fetched via `provision.py` and resolved through `settings.models_dir`
+  (the HF repo id in `settings.onnx_repo` is a placeholder until the real
+  models are uploaded).
 - Runtime is **torch-free ONNX** by default (`NumpySeparator` +
   onnxruntime); torch is only the fallback / export path. The STFT/iSTFT
-  is either folded into the ONNX graph (CUDA) or done in numpy
+  is either folded into the ONNX graph (CUDA/TensorRT) or done in numpy
   (matmul-only, macOS). See `separation/np_stft.py`, `onnx_stft.py`.
 
 ## [2] Language detection + Japanese romaji pre-pass
@@ -176,5 +177,7 @@ ML via the website, no server), not yet built.
 - **MMS-300m aligner: CC-BY-NC** (non-commercial). The English wav2vec2
   is Apache-2.0. If utai.au is ever commercial, the multilingual default
   needs an Apache/MIT replacement or a separate license.
-- Separation weights are jarredou's community models; upstream is gone,
-  so treat the vendored copies as the source of truth.
+- Separation weights are **KJ's Mel-Band Roformer (MIT)**, commercial-
+  friendly and clean-provenance -- a replacement for the prior BS-Roformer
+  SW community weights (murky provenance, upstream gone). Treat the vendored
+  architecture classes as the source of truth.

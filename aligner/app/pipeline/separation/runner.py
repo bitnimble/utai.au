@@ -3,7 +3,7 @@ audio-separator's `architectures/mdxc_separator.py` so it runs the vendored
 models without importing `audio-separator`.
 
 The chunking + overlap-add + peak-normalization all happen *outside* the
-model, exactly as audio-separator does it (BS-Roformer, `mdxc_separator.py:272-343`,
+model, exactly as audio-separator does it (the Roformer path, `mdxc_separator.py:272-343`,
 the `is_roformer` branch): an explicit `for i in range(0, n, step)` loop with a
 Hamming-window overlap-add (`signal.windows.hamming(chunk_size)`) and a per-sample
 `counter` accumulator; final result is `result / counter.clamp(min=1e-10)`.
@@ -80,7 +80,7 @@ class SeparationRunner:
             )
         return out
 
-    # ---- BS-Roformer demix (mdxc_separator.py:272-343) -----------------
+    # ---- Roformer demix (mdxc_separator.py:272-343) -----------------
 
     def _demix_roformer(
         self, mix: np.ndarray, progress_callback: ProgressCallback | None

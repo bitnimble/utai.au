@@ -3,7 +3,7 @@
 Word-timed lyrics from a full mix + the caller's lyric text:
 
     audio bytes + lyric lines
-        -> BS-Roformer SW                 (full mix -> vocals stem)
+        -> Mel-Band Roformer              (full mix -> vocals stem)
         -> CTC forced alignment (MMS-300m via ctc-forced-aligner)
                                           (align the caller's text to the vocals)
         -> word/line timings returned as structured data

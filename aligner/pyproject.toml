@@ -70,9 +70,9 @@ separation = [
 # Lyrics alignment: MahmoudAshraf97's long-form CTC forced aligner (MMS-300m).
 # Pinned by commit SHA. NOT the deskpai PyPI port, which hard-pins the CPU
 # onnxruntime wheel and shadows onnxruntime-gpu. Includes separation: the mix flow
-# runs BS-Roformer SW to extract a vocals stem before aligning. `transformers` is
-# used tokenizer-only here (torch-free); the CTC maths run through the vendored
-# torch-free path (lyrics_onnx.py).
+# runs the Mel-Band Roformer separator to extract a vocals stem before aligning.
+# `transformers` is used tokenizer-only here (torch-free); the CTC maths run
+# through the vendored torch-free path (lyrics_onnx.py).
 #
 # NB torch caveat: `ctc-forced-aligner` declares torch as a dependency, so a plain
 # `uv sync --group lyrics` still pulls torch transitively. The shipped torch-free
@@ -98,7 +98,7 @@ lyrics-ja = [
 # fp16 ONNX, torch-free). Needed only for (1) the one-time ONNX export
 # (export_onnx_models.py / separation/export.py + lyrics_onnx.export_ctc_model),
 # (2) the UTAI_SEP_ONNX=0 / UTAI_LYRICS_ONNX=0 torch fallback + A-B paths, and
-# (3) the vendored BS-Roformer model classes (einops / rotary-embedding-torch /
+# (3) the vendored Roformer model classes (einops / rotary-embedding-torch /
 # ml-collections are imported only on that torch path).
 torch = [
     "torch>=2.8,<2.12",
@@ -113,7 +113,7 @@ torch = [
 # runtime paths + export). Not shipped in the desktop install (the shipped runtime
 # downloads pre-built fp16 onnx via provision and never exports; see
 # allow_local_export). `onnxsim` (onnx-simplifier) is export-only: coreml_optimize
-# / mha_fusion use it to fold the BS-Roformer graph.
+# uses it to fold the Roformer graph.
 dev = [
     { include-group = "torch" },
     "ruff>=0.6",
@@ -160,7 +160,7 @@ extend-exclude = [
     "venv",
     "build",
     "models",
-    # Vendored BS-Roformer model classes (copied near-verbatim from
+    # Vendored Roformer model classes (copied near-verbatim from
     # audio-separator so they stay diffable against upstream); not our style.
     "app/pipeline/separation/architectures",
 ]
