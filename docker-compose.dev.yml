@@ -46,7 +46,9 @@ services:
     # Mount the whole repo (a subdir bind of ./aligner came up EMPTY on this
     # Docker) and run uvicorn as a module from /repo/aligner so cwd + PYTHONPATH
     # put the app source on sys.path; the sandbox image installs the deps only.
-    command: sh -c "cd /repo/aligner && exec /opt/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    # --reload-dir app: watch ONLY the source, not the huge mounted .venv/ or
+    # tests/ (watching those thrashes watchfiles into an OOM).
+    command: sh -c "cd /repo/aligner && exec /opt/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /repo/aligner/app"
     environment:
       PYTHONPATH: /repo/aligner
       # Music needs no GPU/model load; `api` skips the eager separation-model
