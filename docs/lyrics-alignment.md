@@ -115,8 +115,10 @@ kernel is shared by both paths.
 ## ONNX / acceleration / shipping
 
 - **Everything runs on onnxruntime** (separation + CTC aligner), torch-
-  free. The shipped format is **fp16** (GPU-only. ORT's CPU EP can't run
-  fp16 GRU; CPU/MPS pin to fp32).
+  free. Bodies execute **fp16** (GPU-only. ORT's CPU EP can't run fp16 GRU;
+  CPU/MPS pin to fp32). On disk the CUDA/TensorRT vocals body is **weight-only
+  int8** (~half the download, dequantized to fp16 at load); the CTC aligner and
+  macOS bodies are plain fp16.
 - **CUDA** (`onnx_cuda.py`): `preload_cuda_libs()` makes onnxruntime-gpu
   find its runtime libs in a torch-free process (`RTLD_GLOBAL` on Linux,
   `add_dll_directory` on Windows). `default_providers()` is CUDA-first and
@@ -133,10 +135,12 @@ kernel is shared by both paths.
   the overlap-add in numpy (`_RoformerFoldFrames`).
 - **macOS CoreML/ANE** (`separation/coreml_optimize.py`): rewrites the
   separation ONNX graph so every op is CoreML-native.
-- **fp16 conversion**: `onnx_fp16.py::to_fp16` (plain fp16: the CTC aligner
-  bodies + the macOS separation body). The CUDA/TensorRT separation body uses
-  `export._to_mixed_fp16` instead -- fp16 everywhere except the RMSNorm
-  reductions (`Pow`/`ReduceMean`), which stay fp32 for quality.
+- **fp16 / int8 conversion**: `onnx_fp16.py::to_fp16` (plain fp16: the CTC
+  aligner bodies + the macOS separation body). The CUDA/TensorRT separation body
+  uses `export._to_mixed_fp16` (fp16 everywhere except the RMSNorm `Pow`/`ReduceMean`,
+  kept fp32 for quality), then `export._to_mixed_int8` compresses its MatMul/Gemm
+  weights to per-tensor symmetric int8 on disk (DequantizeLinear -> fp16; ~515 ->
+  ~290 MB, execution unchanged). Opt out with `UTAI_SEP_INT8=0`.
 - **Provisioning is capability-scoped** (`provision.py`,
   `_capability_assets`): the `lyrics` capability pulls the separation
   weights + the two CTC aligner fp16 ONNX bodies and **nothing else**.

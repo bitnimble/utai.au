@@ -53,13 +53,14 @@ def test_every_loader_lookup_is_provisioned_by_some_capability():
 
 def test_roformer_ships_platform_variant_under_canonical_local_name(monkeypatch):
     stem = Path(settings.demucs_model).stem  # the roformer body
-    for platform, variant in (("darwin", "coreml"), ("linux", "cuda"), ("win32", "cuda")):
+    # cuda ships weight-only int8 on disk; coreml ships plain fp16. Both execute fp16.
+    for platform, variant, fmt in (("darwin", "coreml", "fp16"), ("linux", "cuda", "int8"), ("win32", "cuda", "int8")):
         monkeypatch.setattr("app.pipeline.provision.sys.platform", platform)
         asset = _sep_onnx_asset(stem)
         # local name stays canonical (the loader is platform-agnostic)...
         assert asset.filename == f"{stem}.fp16.onnx"
         # ...while the remote file is the platform's mutually-exclusive variant.
-        assert asset.url.endswith(f"{stem}.{variant}.fp16.onnx")
+        assert asset.url.endswith(f"{stem}.{variant}.{fmt}.onnx")
 
 
 def test_deprovision_removes_only_orphaned_assets(tmp_path, monkeypatch):

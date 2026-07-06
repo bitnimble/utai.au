@@ -451,6 +451,11 @@ class NumpySeparator:
         return None
 
     def separate(self, audio, *, progress_callback: ProgressCallback | None = None) -> dict[str, np.ndarray]:
+        # Peak-normalize in AND out (audio-separator's Separator default). The KJ reference
+        # harness does neither; input-normalize is harmless (RMSNorm makes the model
+        # scale-invariant), output-normalize forces each stem to peak 0.9 -- fine for the CTC
+        # aligner (the only consumer; its features are amplitude-robust), but NOT amplitude-
+        # faithful to KJ, so revisit if a stem ever becomes user-facing.
         mix = normalize(
             _prepare_mix(audio), max_peak=NORMALIZATION_THRESHOLD, min_peak=AMPLIFICATION_THRESHOLD
         )

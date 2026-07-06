@@ -6,10 +6,10 @@ of each separation chunk (the iSTFT + mask alone ~380ms vs the model's ~390ms);
 folding it onto the GPU makes separation ~2x faster and lifts GPU utilisation
 from ~50% to ~100%. These builders emit torch-free onnx graphs (via `onnx.helper`,
 like the rest of the runtime) that are numerically identical to the numpy path
-(verified in `tests/test_onnx_stft.py`); `np_inference._RoformerFold` /
-`_RoformerFoldMac` run them as their own sessions chained around the model (plain
-`run` today; a resident IOBinding chain that keeps the spectrogram/mask in VRAM is
-a later optimisation).
+(verified in `tests/test_onnx_stft.py`). The CUDA folds (`np_inference._RoformerFold`,
+`_RoformerFoldFrames`) chain them via IOBinding so the spectrogram/mask stay resident in
+VRAM across the three sessions; the Mac fold (`_RoformerFoldMac`) runs them with a plain
+`run` (the ANE can't keep the intermediates device-resident).
 
 - `build_forward` mirrors `bs_pack` / `np_stft.stft` (reflect-`center`, periodic
   Hann, one-sided rFFT as a matmul).
