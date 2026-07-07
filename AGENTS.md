@@ -104,9 +104,18 @@ Frontend (`bun`, repo root):
 | `bun run e2e` | Playwright suite. |
 | `bun run tauri` | Tauri desktop build (via `scripts/tauri-build.ts`). |
 | `bun run android:build` | Android APK. |
+| `bun run win:build` | **Cross-build** the Windows app (binary + NSIS installer) from Linux via cargo-xwin, no Wine. |
 
 **Build-output location (`UTAI_BUILD_DIR`).** Set in `.env` to move the
 heavy Rust/Tauri artifacts off the repo disk (maps to `CARGO_TARGET_DIR`).
+
+**Windows cross-build (`win:build`).** Emits `Utai.exe` + the NSIS `*-setup.exe`
+to `UTAI_WIN_DIST_DIR` (set in `.env`, e.g. a `/codebox-workspace` path reachable
+over SMB from Windows). Drops the ML-sidecar resources (can't cross-stage a
+Windows Python), so **alignment is unavailable in this build**; audio + UI work.
+One-time host prereqs: `rustup target add x86_64-pc-windows-msvc`, `cargo install
+--locked cargo-xwin`, `apt install clang llvm lld nsis`, and
+`ln -sf "$(which makensis)" /usr/local/bin/makensis.exe` (Tauri runs `makensis.exe`).
 
 **Sandbox** (`sandbox/Dockerfile`): a throwaway CUDA + Python container
 carrying the aligner dep stack plus `bun`. Container name `utai-sandbox`.
