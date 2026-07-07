@@ -257,14 +257,21 @@ function positionedSegments(
 const _fmt = (n: number) => (Math.round(n * 10) / 10).toString();
 const _clamp = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi : n);
 
-/** SVG path for a word's sung-pitch line, in a `0 0 100 100` viewBox stretched
- *  (preserveAspectRatio="none") across the word's post-text sustain region. y=50
- *  is the word's median pitch (== the text's vertical centre); notes step off it
- *  by their pitch, connected by smooth cubic curves so a melisma reads as one
- *  continuous stepping line. A vibrato note's run is drawn as a wave. Notes are
- *  distributed across x by their relative duration. Returns undefined when the
- *  word has no pitch/segments. */
-export function pitchContourPath(word: PositionedWord): string | undefined {
+/** Where a vibrato wave overlay sits, as percentages of the sustain region's
+ *  width, at the note's pitch. The wave itself is a fixed-pixel CSS mask, so its
+ *  density is constant regardless of chip width. */
+export type PitchWave = { leftPct: number; widthPct: number; pitchFrac: number };
+
+/** The render model for a word's sung-pitch line, over its post-text sustain
+ *  region. `spine` is an SVG path in a `0 0 100 100` viewBox stretched
+ *  (preserveAspectRatio="none") across that region: y=50 is the word's median
+ *  pitch (== the text's vertical centre); notes step off it by pitch, joined by
+ *  smooth cubic curves so a melisma reads as one continuous stepping line. A
+ *  vibrato note is a GAP in the spine, filled by a `waves` entry (drawn wavy in
+ *  CSS). Notes are distributed across x by relative duration. */
+export type PitchLine = { spine: string; waves: PitchWave[] };
+
+export function buildPitchLine(word: PositionedWord): PitchLine | undefined {
   const segs = word.segments;
   if (word.pitchFrac === undefined || !segs || segs.length === 0) return undefined;
   const wordFrac = word.pitchFrac;
@@ -274,6 +281,7 @@ export function pitchContourPath(word: PositionedWord): string | undefined {
   const yOf = (frac: number) => _clamp(50 - (frac - wordFrac) * 100, 5, 95);
   const transitionX = 6; // viewBox units reserved on each side of a note for the curve
 
+  const waves: PitchWave[] = [];
   let x = 0;
   let prevX = 0;
   let prevY = yOf(wordFrac); // start at the text edge, at the median pitch
@@ -289,24 +297,14 @@ export function pitchContourPath(word: PositionedWord): string | undefined {
     const flatEnd = Math.max(x1 - transitionX, mid);
     const cx = (prevX + flatStart) / 2; // symmetric cubic control for a smooth S
     d += ` C${_fmt(cx)} ${_fmt(prevY)} ${_fmt(cx)} ${_fmt(y)} ${_fmt(flatStart)} ${_fmt(y)}`;
-    d += g.vibrato ? _wavyRun(flatStart, flatEnd, y) : ` L${_fmt(flatEnd)} ${_fmt(y)}`;
+    if (g.vibrato) {
+      d += ` M${_fmt(flatEnd)} ${_fmt(y)}`; // gap the run; the CSS wave fills it
+      waves.push({ leftPct: flatStart, widthPct: flatEnd - flatStart, pitchFrac: g.pitchFrac });
+    } else {
+      d += ` L${_fmt(flatEnd)} ${_fmt(y)}`;
+    }
     prevX = flatEnd;
     prevY = y;
   }
-  return `${d} L100 ${_fmt(prevY)}`;
-}
-
-/** A wavy (vibrato) run as a polyline sine between x0..x1 at height y. Wave count
- *  scales with the run width so density stays even after the x-stretch. */
-function _wavyRun(x0: number, x1: number, y: number): string {
-  const amplitude = 6;
-  const width = x1 - x0;
-  const cycles = Math.max(1.5, width / 7);
-  const steps = Math.max(6, Math.round(cycles * 6));
-  let s = '';
-  for (let k = 1; k <= steps; k++) {
-    const t = k / steps;
-    s += ` L${_fmt(x0 + width * t)} ${_fmt(y - amplitude * Math.sin(2 * Math.PI * cycles * t))}`;
-  }
-  return s;
+  return { spine: `${d} L100 ${_fmt(prevY)}`, waves };
 }
