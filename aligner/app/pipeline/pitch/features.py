@@ -139,12 +139,16 @@ def segment_notes(
     return notes
 
 
-def _vibrato_window(seg: np.ndarray, fps: float) -> tuple[float, float, float] | None:
-    """(periodicity, extent_semitones, rate_hz) for one NaN-free window.
+def _vibrato_window(seg: np.ndarray, fps: float) -> tuple[float, float, float, float] | None:
+    """(periodicity, extent_semitones, rate_hz, trend_range) for one NaN-free
+    window.
 
     Detrends (removes glissando), scores periodicity by autocorrelation at the
     vibrato lag (a stable note is broadband noise, a transition is a ramp -- both
-    score low), and measures extent from the band-passed swing."""
+    score low), and measures extent from the band-passed swing. `trend_range` is
+    how far the note's *center* moves across the window -- large for a
+    rising/falling run (which isn't vibrato even when it wiggles), ~0 for a note
+    held with vibrato."""
     n = len(seg)
     trend = median_filter(seg, size=max(3, int(0.15 * fps)), mode="nearest")
     x = seg - trend
@@ -165,7 +169,8 @@ def _vibrato_window(seg: np.ndarray, fps: float) -> tuple[float, float, float] |
     sos = butter(2, [_VIBRATO_LO_HZ, _VIBRATO_HI_HZ], btype="band", fs=fps, output="sos")
     band = sosfiltfilt(sos, x)
     extent = float(np.percentile(band, 95) - np.percentile(band, 5))
-    return periodicity, extent, rate
+    trend_range = float(np.max(trend) - np.min(trend))
+    return periodicity, extent, rate, trend_range
 
 
 def detect_vibrato_frames(
@@ -174,18 +179,22 @@ def detect_vibrato_frames(
     fps: float = FPS,
     win_sec: float = 0.42,
     hop_sec: float = 0.06,
-    min_periodicity: float = 0.40,
-    min_extent: float = 0.30,
+    min_periodicity: float = 0.45,
+    min_extent: float = 0.45,
     max_extent: float = 3.0,
+    max_trend_range: float = 1.5,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per-frame vibrato via a sliding window over the NaN-gapped contour.
 
     Scanning windows rather than whole notes is what catches **delayed-onset**
     vibrato (a note that steadies then develops vibrato -- the whole-note average
     dilutes below threshold) and vibrato **split across note boundaries**. Each
-    frame keeps the strongest overlapping qualifying window. `max_extent` rejects
-    wide glissando/portamento masquerading as vibrato. Returns (rate, extent)
-    arrays, NaN where no vibrato."""
+    frame keeps the strongest overlapping qualifying window. A window qualifies
+    only with a genuine periodic swing (`min_periodicity`) of noticeable depth
+    (`min_extent`) around a roughly *stable* centre (`max_trend_range` rejects a
+    rising/falling run, whose centre sweeps far even when it wiggles);
+    `max_extent` rejects wide glissando. Returns (rate, extent) arrays, NaN where
+    no vibrato."""
     n = len(midi)
     rate = np.full(n, np.nan)
     extent = np.full(n, np.nan)
@@ -206,10 +215,10 @@ def detect_vibrato_frames(
         m = _vibrato_window(seg, fps)
         if m is None:
             continue
-        per, ext, r = m
+        per, ext, r, trend_range = m
         if per < min_periodicity or not (min_extent <= ext <= max_extent):
             continue
-        if not (_VIBRATO_LO_HZ <= r <= _VIBRATO_HI_HZ):
+        if trend_range > max_trend_range or not (_VIBRATO_LO_HZ <= r <= _VIBRATO_HI_HZ):
             continue
         win = slice(s, s + w)
         better = per > best[win]
