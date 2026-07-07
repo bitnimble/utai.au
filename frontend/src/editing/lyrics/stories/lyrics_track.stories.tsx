@@ -19,17 +19,27 @@ import styles from '../lyrics_track_view.module.css';
  * Mirrors LyricsTrackView's row geometry (px-per-beat, pitch band, row height)
  * minus the player/seek/overflow-menu wiring, which need live stores.
  */
-const meta: Meta = {
+type DemoArgs = { pxPerBeat: number };
+
+const meta: Meta<DemoArgs> = {
   title: 'Editing/LyricsTrack',
   parameters: { layout: 'fullscreen' },
+  // The Zoom slider drives `--px-per-beat` exactly like the app's zoom, so you
+  // can watch the chips + pitch line scale/clip. The range mirrors the app's
+  // zoom bounds (floor ~45, max ~224 px/beat; see lyrics_measure.ts).
+  argTypes: {
+    pxPerBeat: {
+      name: 'Zoom (px per second)',
+      control: { type: 'range', min: 40, max: 260, step: 5 },
+    },
+  },
+  // Default wider than the app's ~80 so held notes leave visible sustain slack.
+  args: { pxPerBeat: 130 },
 };
 export default meta;
 
-type Story = StoryObj;
+type Story = StoryObj<DemoArgs>;
 
-// Pixels per second (1 beat == 1 second in karaoke). Wider than the app's ~80
-// default so held notes leave visible sustain slack for the pitch line to fill.
-const PX_PER_BEAT = 130;
 const LYRICS_ROW_HEIGHT = 64;
 const PITCHED_ROW_HEIGHT = 140;
 const PITCH_BAND_PX = 84;
@@ -97,7 +107,7 @@ function withoutPitch(lines: LyricLine[]): LyricLine[] {
   }));
 }
 
-function LyricsTrackDemo({ lines }: { lines: LyricLine[] }) {
+function LyricsTrackDemo({ lines, pxPerBeat }: { lines: LyricLine[]; pxPerBeat: number }) {
   const hasPitch = lines.some((l) => l.words?.some((w) => w.midi != null));
   const rowHeight = hasPitch ? PITCHED_ROW_HEIGHT : LYRICS_ROW_HEIGHT;
   const durationSec = Math.max(...lines.flatMap((l) => l.words?.map((w) => w.endSec) ?? [0])) + 1;
@@ -105,8 +115,8 @@ function LyricsTrackDemo({ lines }: { lines: LyricLine[] }) {
   const positioned = positionLyricLines(lines, timeline, 0, [durationSec], 0, durationSec);
   const emptyShifts = React.useMemo(() => new Map<string, number>(), []);
   const pitchPaths = React.useMemo(
-    () => computePitchPaths(positioned, PX_PER_BEAT),
-    [positioned],
+    () => computePitchPaths(positioned, pxPerBeat),
+    [positioned, pxPerBeat],
   );
 
   return (
@@ -124,8 +134,8 @@ function LyricsTrackDemo({ lines }: { lines: LyricLine[] }) {
           style={
             {
               ['--layer-beats' as string]: durationSec,
-              ['--bars-row-width' as string]: PX_PER_BEAT * durationSec,
-              ['--px-per-beat' as string]: PX_PER_BEAT,
+              ['--bars-row-width' as string]: pxPerBeat * durationSec,
+              ['--px-per-beat' as string]: pxPerBeat,
               ['--lyric-pitch-band' as string]: hasPitch ? PITCH_BAND_PX : 0,
               height: rowHeight,
             } as React.CSSProperties
@@ -151,13 +161,14 @@ function LyricsTrackDemo({ lines }: { lines: LyricLine[] }) {
   );
 }
 
-/** Words laid out vertically by pitch, with melisma ("sky") + vibrato accents. */
+/** Words laid out vertically by pitch, with melisma ("sky") + vibrato accents.
+ *  Drag the Zoom control to see scaling / clipping. */
 export const WithPitch: Story = {
-  render: () => <LyricsTrackDemo lines={LINES} />,
+  render: (args) => <LyricsTrackDemo lines={LINES} pxPerBeat={args.pxPerBeat} />,
 };
 
 /** Same lyrics, no pitch data: the flat single-lane fallback (unchanged from
  *  before the pitch feature). */
 export const WithoutPitch: Story = {
-  render: () => <LyricsTrackDemo lines={withoutPitch(LINES)} />,
+  render: (args) => <LyricsTrackDemo lines={withoutPitch(LINES)} pxPerBeat={args.pxPerBeat} />,
 };
