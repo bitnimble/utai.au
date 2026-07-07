@@ -25,7 +25,7 @@
     "android:dev": "bun run scripts/tauri-build.ts android dev --config '{\"bundle\":{\"resources\":[]}}'",
     "android:build": "bun run scripts/tauri-build.ts android build --target aarch64 --target armv7 --apk --config '{\"bundle\":{\"resources\":[]}}'",
     "desktop:resources": "bun run scripts/prepare-desktop-resources.ts",
-    "storybook": "storybook dev -p 6006",
+    "storybook": "storybook dev -p 6006 --no-open",
     "build-storybook": "storybook build",
     "postinstall": "bun run scripts/copy-kuromoji-dict.ts"
   },
