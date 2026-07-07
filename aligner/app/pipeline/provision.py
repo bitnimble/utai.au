@@ -86,16 +86,25 @@ def _lyrics_assets() -> list[_Asset]:
     ]
 
 
-_KNOWN_CAPABILITIES = ("separation", "lyrics")
+def _pitch_assets() -> list[_Asset]:
+    """The SwiftF0 f0 model. Sourced off `settings.pitch_model_url` (not
+    `onnx_repo`) until it's mirrored there; shipped as-is (fp32, ~400 kB)."""
+    return [_Asset(settings.pitch_model, settings.pitch_model_url)]
+
+
+_KNOWN_CAPABILITIES = ("separation", "lyrics", "pitch")
 
 
 def _capability_assets(capability: str) -> list[_Asset]:
-    """Assets one capability needs. `lyrics` composes `separation`, mirroring
-    the pyproject dependency-groups."""
+    """Assets one capability needs. `lyrics` and `pitch` each compose
+    `separation` (both run over the vocals stem), mirroring the pyproject
+    dependency-groups."""
     if capability == "separation":
         return _separation_assets()
     if capability == "lyrics":
         return _separation_assets() + _lyrics_assets()
+    if capability == "pitch":
+        return _separation_assets() + _pitch_assets()
     return []
 
 

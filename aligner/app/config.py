@@ -43,6 +43,18 @@ class Settings(BaseSettings):
     lyrics_align_model_english: str = "facebook/wav2vec2-large-robust-ft-libri-960h"
     lyrics_align_model_default: str = "MahmoudAshraf/mms-300m-1130-forced-aligner"
 
+    # --- Pitch (f0) analysis ---
+    # SwiftF0 (lars76/swift-f0, MIT): a ~400 kB CNN mapping a 16 kHz mono
+    # waveform to per-frame pitch (Hz) + confidence, run over the vocals stem to
+    # place lyric words vertically by pitch. `pitch_model` is the local filename
+    # under models_dir; `pitch_model_url` its source. Pinned to a commit for
+    # reproducibility; repoint to `onnx_repo` once the model is mirrored there.
+    pitch_model: str = "f0_swiftf0.onnx"
+    pitch_model_url: str = (
+        "https://raw.githubusercontent.com/lars76/swift-f0/"
+        "64700fce8ef39c2970814bf427ac1d75a2f20d72/swift_f0/model.onnx"
+    )
+
     # --- Paths (Docker volumes mount these) ---
     models_dir: Path = Path("/models")
 

@@ -467,6 +467,15 @@ async def _stream_lyrics_align(
                 input_lines,
                 language,
             )
+            # Overlay vocal pitch (median / melisma / vibrato per word) from the
+            # same stem. Best-effort: a failure or an unprovisioned f0 model
+            # leaves alignment untouched.
+            try:
+                from app.pipeline.pitch.analyze import attach_pitch
+
+                await asyncio.to_thread(attach_pitch, vocals_path, lines)
+            except Exception:
+                log.exception("lyrics_align: pitch analysis failed; continuing without pitch")
             lines_json = lines_to_json(lines)
             # Populate the alignment-result cache so an identical repeat
             # request skips this whole GPU path. Best-effort: a write
@@ -577,7 +586,7 @@ _KEY_SAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 # Bump when the aligner models or alignment logic change so stale
 # entries miss instead of serving a result the current code wouldn't
 # produce (the analogue of `_vocals_model_id()` for the result cache).
-_ALIGN_CACHE_VERSION = "wav2vec2robust+mms300m-v1"
+_ALIGN_CACHE_VERSION = "wav2vec2robust+mms300m+swiftf0-v2"
 
 _vocals_cache: BlobCache | None = None
 _alignment_cache: BlobCache | None = None

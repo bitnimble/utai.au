@@ -85,6 +85,13 @@ lyrics = [
     "ctc-forced-aligner @ git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git@264e7a1f81bff9ff5e787a5537020c2ad0b0df02",
 ]
 
+# Vocal pitch (f0) analysis: SwiftF0 over the vocals stem, torch-free onnxruntime.
+# Composes separation (runs on the stem) and needs no extra packages beyond the
+# runtime numeric/audio stack (numpy/scipy/librosa/soundfile) + onnxruntime.
+pitch = [
+    { include-group = "separation" },
+]
+
 # Japanese-aware romanization for lyrics: cutlet (fugashi/MeCab + unidic-lite)
 # produces contextual readings before they reach the aligner's preprocess_text.
 lyrics-ja = [
@@ -139,7 +146,7 @@ dev = [
 # `uv sync` installs all groups so dev / Docker keep full parity; the desktop
 # installer pulls capabilities via `uv sync --no-default-groups --group <cap>`
 # (base deps plus the selected group(s)).
-default-groups = ["dev", "lyrics", "lyrics-ja", "music"]
+default-groups = ["dev", "lyrics", "lyrics-ja", "music", "pitch"]
 # Drop torchvision: unused, and on cu128/WSL its compiled ops fail to load and
 # break transformers model loading. The impossible marker removes it from the
 # resolved graph.

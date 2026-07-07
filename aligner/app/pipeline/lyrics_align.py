@@ -58,6 +58,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.pipeline.pitch.features import PitchSegment
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +110,14 @@ class LyricWord:
     # UI debug tooltip show "displayed 君 / aligned kimi". None for
     # English / Chinese words, where `text` already is the aligned form.
     romaji: str | None = None
+    # Vocal pitch over `start_sec`..`end_sec`, filled by the pitch stage
+    # (`pitch.analyze.attach_pitch`) when the `pitch` capability is present.
+    # `midi` is the median voiced pitch (frontend uses it for vertical
+    # placement); `pitch_segments` are the held notes within the word (>1 ==
+    # melisma), each optionally carrying vibrato. Both None when the word had no
+    # usable pitch (spoken/unvoiced) or the pitch model wasn't provisioned.
+    midi: float | None = None
+    pitch_segments: list[PitchSegment] | None = None
 
 
 @dataclass
@@ -1790,6 +1799,24 @@ def _word_to_json(w: LyricWord) -> dict[str, Any]:
         entry["endFallback"] = w.end_fallback
     if w.romaji is not None:
         entry["romaji"] = w.romaji
+    if w.midi is not None:
+        entry["midi"] = round(w.midi, 2)
+    if w.pitch_segments:
+        entry["pitchSegments"] = [_segment_to_json(s) for s in w.pitch_segments]
+    return entry
+
+
+def _segment_to_json(s: PitchSegment) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "startSec": s.start_sec,
+        "endSec": s.end_sec,
+        "midi": round(s.midi, 2),
+    }
+    if s.vibrato is not None:
+        entry["vibrato"] = {
+            "rateHz": round(s.vibrato.rate_hz, 1),
+            "extentSemitones": round(s.vibrato.extent_semitones, 2),
+        }
     return entry
 
 

@@ -38,6 +38,13 @@ def test_lyrics_composes_separation():
     assert any(f.startswith("ctc_align__") for f in names)
 
 
+def test_pitch_composes_separation_and_pulls_f0_model():
+    names = _names("pitch")
+    assert f"{_sep_stem()}.fp16.onnx" in names  # pitch runs over the vocals stem
+    assert settings.pitch_model in names
+    assert not any("ctc_align" in f for f in names)  # never pulls lyrics weights
+
+
 def test_every_loader_lookup_is_provisioned_by_some_capability():
     provisioned = set()
     for cap in ("separation", "lyrics"):
