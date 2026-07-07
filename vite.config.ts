@@ -59,16 +59,8 @@ const noHmrPushPlugin: Plugin = {
 // node:http layer can't relay the backend's chunked NDJSON streaming
 // responses (it hangs - oven-sh/bun#5737, #28396).
 
-// Signalsmith Stretch installs its AudioWorklet processor by
-// stringifying a function (via `${fn}`) and dropping it into a
-// `URL.createObjectURL(new Blob([...]))`-backed `audioWorklet.addModule`
-// call. If esbuild downlevels class fields to a `__publicField` helper,
-// the helper exists in the main-bundle scope but the worklet's blob
-// scope can't see it; the worklet fails to parse with
-// `ReferenceError: __publicField is not defined`. Keep both the
-// dep-prebundle path (dev) and the prod build at a target that emits
-// class fields natively (`es2022`+) so the stringified processor is
-// self-contained.
+// Evergreen-only browsers (see package.json browserslist); es2022 emits
+// class fields / top-level await natively, no downlevel helpers.
 const ESBUILD_TARGET = 'es2022';
 
 // Tauri sets `TAURI_ENV_PLATFORM` in the env of its before-dev/build command

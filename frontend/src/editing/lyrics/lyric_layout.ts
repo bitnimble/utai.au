@@ -1,6 +1,6 @@
 import { LyricLine, LyricWord } from 'src/lyrics/lrc';
 import { audioSecToBeat } from 'src/lyrics/store';
-import { JotTimeline } from 'src/editing/playback/timeline';
+import { UtaiTimeline } from 'src/editing/playback/timeline';
 
 /** Per-word position metadata derived from the lyrics store + timeline.
  *  Stable under playhead movement; rebuilt only when `lines`, `offsetSec`,
@@ -103,7 +103,7 @@ function pitchFracOf(midi: number, range: PitchRange): number {
  *  rather than rebuilt on every playhead tick. */
 export function positionLyricLines(
   lines: readonly LyricLine[],
-  timeline: JotTimeline,
+  timeline: UtaiTimeline,
   songLeadIn: number,
   structuralBeats: readonly number[],
   offsetSec: number,

@@ -14,7 +14,7 @@
  */
 
 import { makeAutoObservable } from 'mobx';
-import { JotTimeline } from 'src/editing/playback/timeline';
+import { UtaiTimeline } from 'src/editing/playback/timeline';
 import { LyricLine } from './lrc';
 
 /** Neutral fill for a lyrics row's `color`. Lyrics rows have no visible
@@ -151,7 +151,7 @@ export const lyricsStore = new LyricsStore();
  * Convert an audio-time second to a beat offset on the row's bars-row.
  *
  * With the karaoke "1 beat == 1 second" collapse and a single-span linear
- * {@link JotTimeline} (`songLeadIn == 0`, `structuralBeats == [dur]`),
+ * {@link UtaiTimeline} (`songLeadIn == 0`, `structuralBeats == [dur]`),
  * this reduces to the identity: `t` for `t` inside `[0, dur)`, `undefined`
  * out of range. The full timeline/structure walk is preserved so
  * `lyric_layout.ts` stays verbatim and a non-linear timeline could be
@@ -159,23 +159,23 @@ export const lyricsStore = new LyricsStore();
  */
 export function audioSecToBeat(
   audioTimeSec: number,
-  timeline: JotTimeline,
+  timeline: UtaiTimeline,
   songLeadIn: number,
   structuralBeats: readonly number[],
 ): number | undefined {
-  // jot = media + songLeadIn (0 here, so jot == media == audio time).
-  const jotTime = audioTimeSec + songLeadIn;
+  // playback time = media + songLeadIn (0 here, so it equals audio time).
+  const playSec = audioTimeSec + songLeadIn;
   const bars = timeline.bars;
   if (bars.length === 0 || structuralBeats.length !== bars.length) return undefined;
   const first = bars[0];
   const last = bars[bars.length - 1];
-  if (jotTime < first.startSec) return undefined;
-  if (jotTime >= last.startSec + last.durationSec) return undefined;
+  if (playSec < first.startSec) return undefined;
+  if (playSec >= last.startSec + last.durationSec) return undefined;
   let cumBeats = 0;
   for (let i = 0; i < bars.length; i++) {
     const bar = bars[i];
-    if (jotTime < bar.startSec + bar.durationSec) {
-      const within = bar.durationSec > 0 ? (jotTime - bar.startSec) / bar.durationSec : 0;
+    if (playSec < bar.startSec + bar.durationSec) {
+      const within = bar.durationSec > 0 ? (playSec - bar.startSec) / bar.durationSec : 0;
       return cumBeats + within * structuralBeats[i];
     }
     cumBeats += structuralBeats[i];

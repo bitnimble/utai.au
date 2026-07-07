@@ -1,0 +1,33 @@
+[package]
+name = "utai-audio"
+version = "0.1.0"
+edition = "2021"
+description = "Native audio engine for the utai.au desktop app: decode + mix + device I/O."
+
+# Its own workspace so cargo doesn't try to fold it into the `app` crate above
+# (they're linked by a path dependency, added when the Tauri commands land).
+[workspace]
+
+[lib]
+name = "utai_audio"
+
+[dependencies]
+# Lock-free SPSC ring for handing mic frames from the input callback to the
+# output callback without blocking either real-time thread.
+rtrb = "0.3"
+# Pure-Rust decoders matching the browser's decodeAudioData coverage. mp3/aac/
+# isomp4 are the patent-gated extras on top of the royalty-free defaults
+# (flac/ogg/vorbis/wav/pcm).
+symphonia = { version = "0.5", features = ["mp3", "aac", "isomp4"] }
+
+# The device layer (cpal I/O + arc-swap for the lock-free track hand-off + log)
+# is optional so the pure mixer/transport/decode/resample core builds and
+# unit-tests without system audio libs (alsa/CoreAudio/WASAPI). Real desktop
+# builds enable `device`.
+cpal = { version = "0.15", optional = true }
+arc-swap = { version = "1", optional = true }
+log = { version = "0.4", optional = true }
+
+[features]
+default = []
+device = ["dep:cpal", "dep:arc-swap", "dep:log"]

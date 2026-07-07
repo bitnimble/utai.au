@@ -2,69 +2,55 @@ import { ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import type { ServiceInfo } from 'src/net/music_source_client';
-import { Modal, ModalHeader } from 'src/ui/modal/modal';
 import { Select } from 'src/ui/select/select';
 import { MusicSourcePresenterContext, MusicSourceStoreContext } from './music_source_contexts';
 import type { MusicSourcePresenter } from './music_source_presenter';
 import type { MusicSourceStore } from './music_source_store';
-import styles from './music_settings_modal.module.css';
+import styles from './music_sources_settings.module.css';
 
 const AUDIO_FORMATS = ['mp3', 'm4a', 'flac', 'ogg'] as const;
 const BITRATES = ['128k', '256k', '320k', 'lossless'] as const;
 
 /**
- * Music-source settings: sign in to each streaming service (the affordance
- * depends on how the service authenticates), rank services by priority (which
- * one's results appear first), and pick download quality. Every connected
- * service is searched; there's no per-service search toggle.
- * Credentials are sent to the local OnTheSpot backend, never persisted here.
+ * Music-source settings (the "Music sources" tab): sign in to each streaming
+ * service (the affordance depends on how the service authenticates), rank
+ * services by priority (which one's results appear first), and pick download
+ * quality. Every connected service is searched; there's no per-service search
+ * toggle. Credentials are sent to the local OnTheSpot backend, never persisted
+ * here.
  */
-export const MusicSettingsModal = observer(function MusicSettingsModal() {
+export const MusicSourcesSettings = observer(function MusicSourcesSettings() {
   const store = React.useContext(MusicSourceStoreContext);
   const presenter = React.useContext(MusicSourcePresenterContext);
-  if (store == null || presenter == null || !store.settingsOpen) return null;
+  if (store == null || presenter == null) return null;
 
   const services = store.orderedServices;
 
   return (
-    <Modal
-      open
-      onClose={() => presenter.closeSettings()}
-      ariaLabel="Music source settings"
-      width={620}
-      maxHeight
-      testId="music-settings-modal"
-    >
-      <ModalHeader
-        title="Music sources"
-        onClose={() => presenter.closeSettings()}
-        closeLabel="Close music settings"
-      />
-      <div className={styles.body}>
-        <p className={styles.intro}>
-          Sign in to your streaming services, then rank which service&rsquo;s results appear
-          first. Credentials stay on this machine.
-        </p>
-        {services.length === 0 ? (
-          <div className={styles.loading} data-testid="music-settings-loading">
-            Loading services…
-          </div>
-        ) : (
-          <ul className={styles.serviceList}>
-            {services.map((service, i) => (
-              <ServiceRow
-                key={service.id}
-                service={service}
-                isFirst={i === 0}
-                isLast={i === services.length - 1}
-                presenter={presenter}
-              />
-            ))}
-          </ul>
-        )}
-        <QualitySection store={store} presenter={presenter} />
-      </div>
-    </Modal>
+    <div className={styles.body}>
+      <p className={styles.intro}>
+        Sign in to your streaming services, then rank which service&rsquo;s results appear first.
+        Credentials stay on this machine.
+      </p>
+      {services.length === 0 ? (
+        <div className={styles.loading} data-testid="music-settings-loading">
+          Loading services…
+        </div>
+      ) : (
+        <ul className={styles.serviceList}>
+          {services.map((service, i) => (
+            <ServiceRow
+              key={service.id}
+              service={service}
+              isFirst={i === 0}
+              isLast={i === services.length - 1}
+              presenter={presenter}
+            />
+          ))}
+        </ul>
+      )}
+      <QualitySection store={store} presenter={presenter} />
+    </div>
   );
 });
 
@@ -286,8 +272,8 @@ const SpotifyOAuthControls = observer(function SpotifyOAuthControls({
     <div className={styles.oauthFlow}>
       <p className={styles.oauthHint}>
         Approve in the Spotify tab. Your browser then lands on a{' '}
-        <code>127.0.0.1:5588</code> page that won&rsquo;t load, copy that page&rsquo;s URL (or
-        the <code>code</code> from it) and paste it here.
+        <code>127.0.0.1:5588</code> page that won&rsquo;t load, copy that page&rsquo;s URL (or the{' '}
+        <code>code</code> from it) and paste it here.
       </p>
       <form
         className={styles.oauthForm}

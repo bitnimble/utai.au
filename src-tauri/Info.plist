@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Auto-merged into the macOS app bundle's Info.plist by the Tauri bundler
+     (it picks up an Info.plist next to tauri.conf.json). The usage string is
+     required for the WKWebView microphone prompt; without it getUserMedia is
+     denied outright on macOS. -->
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>utai.au uses your microphone for live karaoke, so you can hear yourself sing over the backing track.</string>
+</dict>
+</plist>

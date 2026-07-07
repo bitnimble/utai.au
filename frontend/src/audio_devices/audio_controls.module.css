@@ -1,0 +1,50 @@
+/* Per-channel mute button + volume slider, shared by the Settings Audio tab
+   and the home transport bar (same store, so they stay in sync). */
+
+.channel {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.muteButton {
+    composes: reset from '../ui/button/button.module.css';
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-height);
+    height: var(--control-height);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-base);
+    color: var(--color-text-muted-alt);
+}
+
+.muteButton:hover {
+    color: var(--color-text-strong);
+    background: var(--color-bg-hover);
+}
+
+.muteButton[aria-pressed='true'] {
+    color: var(--color-accent-on-text);
+    border-color: var(--color-accent);
+    background: var(--color-accent-overlay-medium);
+}
+
+.slider {
+    flex: 1 1 0;
+    min-width: 80px;
+}
+
+/* Home transport cluster: push to the right of the transport row, side by side. */
+.home {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-left: auto;
+}
+
+.home .slider {
+    width: 90px;
+    flex: 0 0 auto;
+}

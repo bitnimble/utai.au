@@ -2,7 +2,7 @@ import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
 import { Music, Pause, Play, Search, Settings, Square } from 'lucide-react';
 import React from 'react';
-import { jotPlayer } from 'src/editing/playback/player';
+import { nativeAudioEngine, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
 import { formatPlayheadTime } from 'src/editing/playback/playhead_label';
 import { AudioTrackView } from 'src/editing/mixer/audio_track_view';
@@ -16,19 +16,31 @@ import {
   LyricsPresenterContext,
 } from 'src/editing/lyrics/lyrics_contexts';
 import { StructuralPresenter } from 'src/editing/structure/structural_presenter';
-import { StructuralContext } from 'src/editing/jot_editor_contexts';
+import { StructuralContext } from 'src/editing/editor_contexts';
 import { ViewportStore } from 'src/editing/viewport/viewport_store';
 import { ViewportStoreContext } from 'src/editing/viewport/viewport_contexts';
 import { ViewConfig } from 'src/editing/viewport/view_config';
 import { ToastContainer } from 'src/ui/toasts/toast_container';
 import { MusicSearchModal } from 'src/music_source/music_search_modal';
-import { MusicSettingsModal } from 'src/music_source/music_settings_modal';
 import {
   MusicSourcePresenterContext,
   MusicSourceStoreContext,
 } from 'src/music_source/music_source_contexts';
 import { MusicSourcePresenter } from 'src/music_source/music_source_presenter';
 import { MusicSourceStore } from 'src/music_source/music_source_store';
+import { isTauri } from '@tauri-apps/api/core';
+import { AudioDeviceStore } from 'src/audio_devices/audio_device_store';
+import { AudioDevicePresenter } from 'src/audio_devices/audio_device_presenter';
+import { NONE_DEVICE_ID } from 'src/audio_devices/audio_io_backend';
+import { WebAudioBackend } from 'src/audio_devices/web_audio_backend';
+import { NativeAudioBackend } from 'src/audio_devices/native_audio_backend';
+import {
+  AudioDevicePresenterContext,
+  AudioDeviceStoreContext,
+} from 'src/audio_devices/audio_device_contexts';
+import { HomeAudioControls } from 'src/audio_devices/audio_controls';
+import { SettingsModal } from 'src/settings/settings_modal';
+import { useSettingsModal } from 'src/settings/settings_modal_context';
 import { KaraokePresenter } from './karaoke_presenter';
 import { KaraokePresenterContext, SongStoreContext } from './karaoke_contexts';
 import { SongStore } from './song_store';
@@ -45,6 +57,8 @@ type Session = {
   presenter: KaraokePresenter;
   musicSource: MusicSourceStore;
   musicPresenter: MusicSourcePresenter;
+  audioDevice: AudioDeviceStore;
+  audioDevicePresenter: AudioDevicePresenter;
 };
 
 function buildSession(): Session {
@@ -59,6 +73,16 @@ function buildSession(): Session {
   const musicPresenter = new MusicSourcePresenter(musicSource, (file) =>
     presenter.loadAudioFile(file),
   );
+  // Desktop app defaults the mic to the system device; web + mobile default to
+  // None so the browser never prompts for the mic on load (the user opts in).
+  const isDesktopApp = isTauri() && !__IS_MOBILE__;
+  const audioDevice = new AudioDeviceStore(isDesktopApp ? '' : NONE_DEVICE_ID);
+  // Desktop routes the mic/device backend to the one native engine; web uses
+  // the Web Audio backend.
+  const audioBackend = nativeAudioEngine
+    ? new NativeAudioBackend(nativeAudioEngine)
+    : new WebAudioBackend();
+  const audioDevicePresenter = new AudioDevicePresenter(audioDevice, audioBackend);
   return {
     song,
     viewport,
@@ -68,6 +92,8 @@ function buildSession(): Session {
     presenter,
     musicSource,
     musicPresenter,
+    audioDevice,
+    audioDevicePresenter,
   };
 }
 
@@ -82,7 +108,22 @@ export const KaraokePage = observer(function KaraokePage() {
     presenter,
     musicSource,
     musicPresenter,
+    audioDevice,
+    audioDevicePresenter,
   } = session;
+
+  // Open the native engine's telemetry stream on desktop (no-op on web).
+  React.useEffect(() => {
+    nativeAudioEngine?.init();
+    return () => nativeAudioEngine?.dispose();
+  }, []);
+
+  // Boot the audio-device layer (enumerate, restore prefs, resume a saved
+  // monitor) once, and release the mic on unmount.
+  React.useEffect(() => {
+    void audioDevicePresenter.init();
+    return () => audioDevicePresenter.dispose();
+  }, [audioDevicePresenter]);
 
   // Expose the live session on `window.utai` for e2e specs + debugging.
   React.useEffect(() => {
@@ -95,8 +136,10 @@ export const KaraokePage = observer(function KaraokePage() {
       presenter,
       musicSource,
       musicPresenter,
+      audioDevice,
+      audioDevicePresenter,
       lyricsStore,
-      jotPlayer,
+      playbackEngine,
     };
   }, [
     song,
@@ -107,12 +150,16 @@ export const KaraokePage = observer(function KaraokePage() {
     presenter,
     musicSource,
     musicPresenter,
+    audioDevice,
+    audioDevicePresenter,
   ]);
 
   return (
     <KaraokePresenterContext.Provider value={presenter}>
       <MusicSourceStoreContext.Provider value={musicSource}>
       <MusicSourcePresenterContext.Provider value={musicPresenter}>
+      <AudioDeviceStoreContext.Provider value={audioDevice}>
+      <AudioDevicePresenterContext.Provider value={audioDevicePresenter}>
       <SongStoreContext.Provider value={song}>
         <StructuralContext.Provider value={structural}>
           <ViewportStoreContext.Provider value={viewport}>
@@ -130,6 +177,8 @@ export const KaraokePage = observer(function KaraokePage() {
           </ViewportStoreContext.Provider>
         </StructuralContext.Provider>
       </SongStoreContext.Provider>
+      </AudioDevicePresenterContext.Provider>
+      </AudioDeviceStoreContext.Provider>
       </MusicSourcePresenterContext.Provider>
       </MusicSourceStoreContext.Provider>
     </KaraokePresenterContext.Provider>
@@ -141,6 +190,7 @@ const Toolbar = observer(function Toolbar() {
   const lyricsPresenter = React.useContext(LyricsPresenterContext)!;
   const musicPresenter = React.useContext(MusicSourcePresenterContext)!;
   const viewport = React.useContext(ViewportStoreContext)!;
+  const settingsModal = useSettingsModal();
   const fileRef = React.useRef<HTMLInputElement>(null);
 
   const onPickAudio = (e: React.ChangeEvent<HTMLInputElement>): void => {
@@ -150,7 +200,7 @@ const Toolbar = observer(function Toolbar() {
   };
 
   const firstLyricsId = lyricsStore.trackIds[0];
-  const canAlign = firstLyricsId !== undefined && jotPlayer.audioTracks.size > 0;
+  const canAlign = firstLyricsId !== undefined && playbackEngine.audioTracks.size > 0;
 
   return (
     <header className={styles.toolbar}>
@@ -202,10 +252,10 @@ const Toolbar = observer(function Toolbar() {
       <button
         type="button"
         className={styles.toolButton}
-        onClick={() => musicPresenter.openSettings()}
-        aria-label="Music source settings"
-        title="Music sources"
-        data-testid="music-settings-open"
+        onClick={() => settingsModal.openSettings()}
+        aria-label="Settings"
+        title="Settings"
+        data-testid="settings-open"
       >
         <Settings size={14} aria-hidden="true" />
       </button>
@@ -229,7 +279,7 @@ const ScoreArea = observer(function ScoreArea() {
   const presenter = React.useContext(KaraokePresenterContext)!;
   const viewport = React.useContext(ViewportStoreContext)!;
   const scrollRef = React.useRef<HTMLDivElement>(null);
-  const audioTrackIds = Array.from(jotPlayer.audioTracks.keys());
+  const audioTrackIds = Array.from(playbackEngine.audioTracks.keys());
   const lyricsIds = lyricsStore.trackIds;
   const hasContent = audioTrackIds.length > 0 || lyricsIds.length > 0;
 
@@ -249,7 +299,7 @@ const ScoreArea = observer(function ScoreArea() {
   // observable graph (autorun), not a raw rAF, so it quiesces when idle.
   React.useEffect(() => {
     return autorun(() => {
-      const x = jotPlayer.currentTime * viewport.pxPerBeat;
+      const x = playbackEngine.currentTime * viewport.pxPerBeat;
       const nodes = document.querySelectorAll<HTMLElement>('[data-playhead="1"]');
       for (const n of nodes) n.style.setProperty('--playhead-x', `${x}px`);
     });
@@ -270,7 +320,7 @@ const ScoreArea = observer(function ScoreArea() {
         </div>
       )}
       {audioTrackIds.map((id) => {
-        const track = jotPlayer.audioTracks.get(id);
+        const track = playbackEngine.audioTracks.get(id);
         return track ? <AudioTrackView key={id} track={track} onSeek={onSeek} /> : null;
       })}
       {lyricsIds.map((id) => (
@@ -283,7 +333,7 @@ const ScoreArea = observer(function ScoreArea() {
 const TransportBar = observer(function TransportBar() {
   const presenter = React.useContext(KaraokePresenterContext)!;
   const song = React.useContext(SongStoreContext)!;
-  const playing = jotPlayer.state === 'playing';
+  const playing = playbackEngine.state === 'playing';
   const canPlay = song.durationSec > 0;
   return (
     <footer className={styles.transport}>
@@ -300,7 +350,7 @@ const TransportBar = observer(function TransportBar() {
       <button
         type="button"
         className={styles.transportButton}
-        disabled={jotPlayer.state === 'idle'}
+        disabled={playbackEngine.state === 'idle'}
         onClick={() => presenter.stop()}
         aria-label="Stop"
         data-testid="transport-stop"
@@ -308,9 +358,10 @@ const TransportBar = observer(function TransportBar() {
         <Square size={16} aria-hidden="true" />
       </button>
       <span className={styles.transportTime} data-testid="transport-time">
-        {formatPlayheadTime(jotPlayer.currentTime)}
+        {formatPlayheadTime(playbackEngine.currentTime)}
         {song.durationSec > 0 ? ` / ${formatPlayheadTime(song.durationSec)}` : ''}
       </span>
+      <HomeAudioControls />
     </footer>
   );
 });
@@ -333,7 +384,7 @@ const Modals = observer(function Modals() {
         presenter={lyricsPresenter}
       />
       <MusicSearchModal />
-      <MusicSettingsModal />
+      <SettingsModal />
     </>
   );
 });

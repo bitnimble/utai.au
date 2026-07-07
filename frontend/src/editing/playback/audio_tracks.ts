@@ -1,16 +1,15 @@
 /**
  * Audio-track model + live playback for the karaoke build.
  *
- * A loaded track plays through the Signalsmith Stretch AudioWorklet on the
- * shared `AudioContext`, so pitch is preserved at any speed and seek/pause
- * are single `schedule()` messages. Karaoke has `songLeadIn == 0`, so media
- * (recorded-audio) time equals playback (jot) time; there's no drum-scheduler
- * / drift-map machinery.
+ * A loaded track plays through a plain `AudioBufferSourceNode` on the shared
+ * `AudioContext` (always 1×). Seek/pause stop the current source; a later
+ * `scheduleAll` starts a fresh one at the new offset. Karaoke has
+ * `songLeadIn == 0`, so recorded-audio time equals playback time; there's no
+ * drum-scheduler / drift-map machinery.
  */
 
 import { makeAutoObservable } from 'mobx';
 import { WAVEFORM_PAINT_COLOR } from 'src/editing/utils/waveform_color';
-import { createStretchNode, preloadStretch, StretchNode } from './stretch_node';
 import { backendFetch } from 'src/net/backend_fetch';
 
 /** Opaque per-track id. Every loaded track gets a fresh unique id. */
@@ -20,8 +19,8 @@ export type AudioTrackId = string;
  *  vocals pick (a `vocals` track skips the separator). */
 export type AudioTrackRole = 'full-mix' | 'vocals' | 'unknown';
 
-/** How far ahead worklet `schedule()` events are placed past
- *  `ctx.currentTime`, so the transition lands smoothly. */
+/** Tiny pad past `ctx.currentTime` so a scheduled `start()` never lands in the
+ *  past. */
 const SCHEDULE_PAD_SEC = 0.02;
 
 /** One loaded audio track. Identity is fixed at construction; `color` is a
@@ -91,24 +90,21 @@ export async function decodeAudioTrackUrl(
   return { buffer, sourceBlob };
 }
 
-/** Live playback slot for one track during a single `play()` cycle. */
+/** Live playback slot for one track: a reusable gain node and the currently
+ *  playing source (buffer sources are one-shot, so each start mints a fresh
+ *  one). */
 type ActiveAudioTrack = {
   id: AudioTrackId;
   gainNode: GainNode;
   buffer: AudioBuffer;
-  /** The track's stretch worklet, or a Promise resolving to it during
-   *  the first-load window. Reused for the slot's lifetime. */
-  node: Promise<StretchNode>;
-  /** Bumped on every (re)schedule/cancel; a still-loading slot checks it
-   *  before firing its own message so a superseded request can't fire late. */
-  gen: number;
+  source: AudioBufferSourceNode | undefined;
 };
 
 /**
- * Manages live audio-track playback for one `play()` cycle. Created lazily
- * by the player, disposed on `stop()` so a fresh play starts clean. Seek /
- * speed / pause are `schedule()` messages on the stretch worklet; no node
- * teardown, no audible gap.
+ * Manages live audio-track playback for one `play()` cycle. Created lazily by
+ * the player, disposed on `stop()` so a fresh play starts clean. Seek / pause
+ * stop the current sources; a later `scheduleAll` starts fresh ones at the new
+ * offset.
  */
 export class AudioTrackPlaybackController {
   private active: Map<AudioTrackId, ActiveAudioTrack> = new Map();
@@ -118,50 +114,23 @@ export class AudioTrackPlaybackController {
     private readonly destination: AudioNode = ctx.destination,
   ) {}
 
-  /** Start every track at `audioStartTime`, at input position `mediaSec`
-   *  (== jot time here, since `songLeadIn == 0`). When `mediaSec` is
-   *  negative (playhead before the recording's t=0) the buffer clamps to 0
-   *  and output is delayed so the audio enters exactly at t=0. */
-  scheduleAll(
-    tracks: Iterable<AudioTrack>,
-    audioStartTime: number,
-    mediaSec: number,
-    speed: number,
-  ): void {
-    for (const track of tracks) this.scheduleOne(track, audioStartTime, mediaSec, speed);
+  /** Start every track at `audioStartTime` (ctx time), from input position
+   *  `mediaSec` (== playback time, since `songLeadIn == 0`). */
+  scheduleAll(tracks: Iterable<AudioTrack>, audioStartTime: number, mediaSec: number): void {
+    for (const track of tracks) this.scheduleOne(track, audioStartTime, mediaSec);
   }
 
-  private scheduleOne(
-    track: AudioTrack,
-    audioStartTime: number,
-    mediaSec: number,
-    speed: number,
-  ): void {
-    const inputTime = Math.max(0, mediaSec);
-    const leadInDelaySec = mediaSec < 0 ? -mediaSec / speed : 0;
+  private scheduleOne(track: AudioTrack, audioStartTime: number, mediaSec: number): void {
     const slot = this.ensureSlot(track);
-    const gen = ++slot.gen;
-    const when = Math.max(audioStartTime + leadInDelaySec, this.ctx.currentTime + SCHEDULE_PAD_SEC);
-    void slot.node
-      .then((node) => {
-        if (slot.gen !== gen) return;
-        return node.schedule({ active: true, input: inputTime, rate: speed, output: when });
-      })
-      .catch((err) => console.warn('[audio-tracks] scheduleOne threw', err));
-  }
-
-  /** Apply a new playback rate to every active track. */
-  setPlaybackRate(speed: number, audioStartTime: number): void {
+    this.stopSource(slot);
+    const offset = Math.max(0, mediaSec);
+    if (offset >= slot.buffer.duration) return; // past the end; nothing to play
     const when = Math.max(audioStartTime, this.ctx.currentTime + SCHEDULE_PAD_SEC);
-    for (const slot of this.active.values()) {
-      const gen = slot.gen;
-      void slot.node
-        .then((node) => {
-          if (slot.gen !== gen) return;
-          return node.schedule({ rate: speed, output: when });
-        })
-        .catch((err) => console.warn('[audio-tracks] setPlaybackRate threw', err));
-    }
+    const source = this.ctx.createBufferSource();
+    source.buffer = slot.buffer;
+    source.connect(slot.gainNode);
+    source.start(when, offset);
+    slot.source = source;
   }
 
   private ensureSlot(track: AudioTrack): ActiveAudioTrack {
@@ -170,39 +139,28 @@ export class AudioTrackPlaybackController {
     const gainNode = this.ctx.createGain();
     gainNode.gain.value = 1;
     gainNode.connect(this.destination);
-    const slot: ActiveAudioTrack = {
-      id: track.id,
-      gainNode,
-      buffer: track.buffer,
-      node: this.buildStretchSlot(gainNode, track.buffer),
-      gen: 0,
-    };
+    const slot: ActiveAudioTrack = { id: track.id, gainNode, buffer: track.buffer, source: undefined };
     this.active.set(track.id, slot);
     return slot;
   }
 
-  private buildStretchSlot(gainNode: GainNode, buffer: AudioBuffer): Promise<StretchNode> {
-    return createStretchNode(this.ctx, buffer).then((node) => {
-      node.connect(gainNode);
-      return node;
-    });
+  private stopSource(slot: ActiveAudioTrack): void {
+    const source = slot.source;
+    if (!source) return;
+    slot.source = undefined;
+    try {
+      source.stop();
+      source.disconnect();
+    } catch (err) {
+      console.debug('[audio-tracks] stopSource threw', err);
+    }
   }
 
-  /** Fully tear down one track's slot (node + gain). */
+  /** Fully tear down one track's slot (source + gain). */
   dropAudioTrack(id: AudioTrackId): void {
     const slot = this.active.get(id);
     if (!slot) return;
-    slot.gen++;
-    void slot.node
-      .then((node) => {
-        try {
-          void node.stop();
-          node.disconnect();
-        } catch (err) {
-          console.debug('[audio-tracks] dropAudioTrack teardown threw', err);
-        }
-      })
-      .catch(() => {});
+    this.stopSource(slot);
     try {
       slot.gainNode.disconnect();
     } catch (err) {
@@ -211,33 +169,16 @@ export class AudioTrackPlaybackController {
     this.active.delete(id);
   }
 
-  /** Stop playback of every track without tearing the graph down (an
-   *  `active: false` schedule per slot), so a later `scheduleAll` resumes
-   *  from a fresh position. Used by seek / pause. */
+  /** Stop every track's source without tearing the gain graph down, so a later
+   *  `scheduleAll` resumes from a fresh position. Used by seek / pause. */
   cancelSources(): void {
-    const when = this.ctx.currentTime + SCHEDULE_PAD_SEC;
-    for (const slot of this.active.values()) {
-      slot.gen++;
-      void slot.node
-        .then((node) => node.stop(when))
-        .catch((err) => console.debug('[audio-tracks] cancelSources stop threw', err));
-    }
+    for (const slot of this.active.values()) this.stopSource(slot);
   }
 
   /** Teardown; invoked when playback ends so the graph doesn't leak. */
   dispose(): void {
     for (const slot of this.active.values()) {
-      slot.gen++;
-      void slot.node
-        .then((node) => {
-          try {
-            void node.stop();
-            node.disconnect();
-          } catch (err) {
-            console.debug('[audio-tracks] dispose teardown threw', err);
-          }
-        })
-        .catch(() => {});
+      this.stopSource(slot);
       try {
         slot.gainNode.disconnect();
       } catch (err) {
@@ -247,7 +188,3 @@ export class AudioTrackPlaybackController {
     this.active.clear();
   }
 }
-
-// Warmup entry point, re-exported so the player can preload the stretch
-// worklet alongside a track load without a second import.
-export { preloadStretch };

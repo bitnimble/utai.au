@@ -9,16 +9,17 @@ test('music-source: enable YouTube Music, search, fetch', async ({ page }) => {
   page.on('requestfailed', (r) => console.log(`[reqfail] ${r.method()} ${r.url()} ${r.failure()?.errorText}`));
 
   await page.goto('/');
-  await expect(page.getByTestId('music-settings-open')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('settings-open')).toBeVisible({ timeout: 30_000 });
 
   // settings: confirm the service catalog loaded (browser -> caddy -> backend
-  // facade -> OnTheSpot config). YouTube Music needs no sign-in and every
-  // connected service is searched by default, so there's nothing to toggle.
-  await page.getByTestId('music-settings-open').click();
-  await expect(page.getByTestId('music-settings-modal')).toBeVisible();
+  // facade -> OnTheSpot config). The Settings dialog opens on the Music sources
+  // tab; YouTube Music needs no sign-in and every connected service is searched
+  // by default, so there's nothing to toggle.
+  await page.getByTestId('settings-open').click();
+  await expect(page.getByTestId('settings-modal')).toBeVisible();
   await expect(page.getByTestId('music-service-youtube_music')).toBeVisible({ timeout: 20_000 });
-  await page.getByRole('button', { name: 'Close music settings' }).click();
-  await expect(page.getByTestId('music-settings-modal')).toBeHidden();
+  await page.getByRole('button', { name: 'Close settings' }).click();
+  await expect(page.getByTestId('settings-modal')).toBeHidden();
 
   // search
   await page.getByTestId('music-search-open').click();

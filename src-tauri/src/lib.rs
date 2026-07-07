@@ -4,6 +4,8 @@
 // the frontend `backendClient()`). Gate them out so the Android `cdylib`
 // builds with just the webview + the file/dialog plugins.
 #[cfg(desktop)]
+mod audio;
+#[cfg(desktop)]
 mod capability;
 #[cfg(desktop)]
 mod logs;
@@ -67,6 +69,7 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder
         .manage(sidecar::SidecarState::default())
+        .manage(audio::AudioState::new())
         .setup(|app| {
             use tauri::Manager;
             use tauri_plugin_fs::FsExt;
@@ -105,6 +108,16 @@ pub fn run() {
             capability::available_disk_space,
             logs::read_log_tail,
             logs::open_data_folder,
+            audio::audio_list_devices,
+            audio::audio_load_track,
+            audio::audio_play,
+            audio::audio_pause,
+            audio::audio_stop,
+            audio::audio_seek,
+            audio::audio_set_mic_gain,
+            audio::audio_set_output_volume,
+            audio::audio_set_devices,
+            audio::audio_subscribe,
         ]);
 
     let app = builder

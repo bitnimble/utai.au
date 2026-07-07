@@ -48,10 +48,18 @@ const AMD_GPU_ENV = {
   VK_DRIVER_FILES: '/usr/share/vulkan/icd.d/radeon_icd.json',
   VK_ICD_FILENAMES: '/usr/share/vulkan/icd.d/radeon_icd.json',
 };
+// Fake media devices so the audio-settings specs can drive getUserMedia /
+// enumerateDevices headlessly: `--use-fake-device-for-media-stream` supplies a
+// synthetic mic, `--use-fake-ui-for-media-stream` auto-accepts the permission
+// prompt. Inert for every other spec (nothing calls getUserMedia).
+const FAKE_MEDIA_ARGS = [
+  '--use-fake-device-for-media-stream',
+  '--use-fake-ui-for-media-stream',
+];
 // launchOptions.env replaces (not merges) the browser environment, so spread
 // process.env to keep PATH etc. `gpu` adds the iGPU args/env on top.
 const chromiumLaunch = (gpu: boolean) => ({
-  args: ['--no-sandbox', ...(gpu ? AMD_GPU_ARGS : [])],
+  args: ['--no-sandbox', ...FAKE_MEDIA_ARGS, ...(gpu ? AMD_GPU_ARGS : [])],
   env: { ...process.env, ...(gpu ? AMD_GPU_ENV : {}) },
 });
 const GPU_PERF = !GPU_OFF; // perf: default on

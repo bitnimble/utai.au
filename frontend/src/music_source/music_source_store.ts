@@ -18,13 +18,12 @@ export type FetchState =
   | { kind: 'error'; id: string; message: string };
 
 /**
- * Data-only store for the music-source feature: the settings/search modal
- * visibility, the loaded service catalog + config, and the search + fetch
- * state. Observables + read accessors only; every mutation lives on
+ * Data-only store for the music-source feature: the search modal visibility,
+ * the loaded service catalog + config, and the search + fetch state.
+ * Observables + read accessors only; every mutation lives on
  * {@link import('./music_source_presenter').MusicSourcePresenter}.
  */
 export class MusicSourceStore {
-  settingsOpen = false;
   searchOpen = false;
 
   /** Service catalog with per-service `configured` status (from the backend). */
