@@ -1,5 +1,5 @@
-/* Music-source settings modal. Panel/header from the shared <Modal>; the
-   service list, per-service account controls, and quality picker live here. */
+/* Music sources settings tab: the service list, per-service account controls,
+   and quality picker. Panel/header come from the shared <Modal>. */
 
 .body {
     padding: 14px 16px 16px;

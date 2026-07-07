@@ -32,6 +32,11 @@ const SCHEDULE_LEAD_SECONDS = 0.05;
 const PLAYBACK_TAIL_SECONDS = 0.5;
 
 export class JotPlayer {
+  /** Whether this engine can route output to a chosen device (Chromium's
+   *  `AudioContext.setSinkId`). Web-only; a native backend reports its own. */
+  static readonly outputSinkSupported =
+    typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype;
+
   state: PlayerState = 'idle';
   errorMessage: string | undefined;
   /** Seconds since the song start (playback == recorded-audio time). */
@@ -285,6 +290,21 @@ export class JotPlayer {
       window.clearTimeout(this.endTimerId);
       this.endTimerId = undefined;
     }
+  }
+
+  /** The shared context, created on demand. Exposed so the mic-monitor graph
+   *  attaches to the SAME context as playback, one output-sink choice then
+   *  routes both the backing track and the monitor. */
+  getAudioContext(): AudioContext {
+    return this.ensureAudioContext();
+  }
+
+  /** Route all output (backing track + mic monitor) to `sinkId` (`''` = system
+   *  default). No-op when the engine lacks `setSinkId`. */
+  async setOutputSink(sinkId: string): Promise<void> {
+    const ctx = this.ensureAudioContext();
+    if (typeof ctx.setSinkId !== 'function') return;
+    await ctx.setSinkId(sinkId);
   }
 
   private ensureAudioContext(): AudioContext {

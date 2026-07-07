@@ -22,13 +22,21 @@ import { ViewportStoreContext } from 'src/editing/viewport/viewport_contexts';
 import { ViewConfig } from 'src/editing/viewport/view_config';
 import { ToastContainer } from 'src/ui/toasts/toast_container';
 import { MusicSearchModal } from 'src/music_source/music_search_modal';
-import { MusicSettingsModal } from 'src/music_source/music_settings_modal';
 import {
   MusicSourcePresenterContext,
   MusicSourceStoreContext,
 } from 'src/music_source/music_source_contexts';
 import { MusicSourcePresenter } from 'src/music_source/music_source_presenter';
 import { MusicSourceStore } from 'src/music_source/music_source_store';
+import { AudioDeviceStore } from 'src/audio_devices/audio_device_store';
+import { AudioDevicePresenter } from 'src/audio_devices/audio_device_presenter';
+import { WebAudioBackend } from 'src/audio_devices/web_audio_backend';
+import {
+  AudioDevicePresenterContext,
+  AudioDeviceStoreContext,
+} from 'src/audio_devices/audio_device_contexts';
+import { SettingsModal } from 'src/settings/settings_modal';
+import { useSettingsModal } from 'src/settings/settings_modal_context';
 import { KaraokePresenter } from './karaoke_presenter';
 import { KaraokePresenterContext, SongStoreContext } from './karaoke_contexts';
 import { SongStore } from './song_store';
@@ -45,6 +53,8 @@ type Session = {
   presenter: KaraokePresenter;
   musicSource: MusicSourceStore;
   musicPresenter: MusicSourcePresenter;
+  audioDevice: AudioDeviceStore;
+  audioDevicePresenter: AudioDevicePresenter;
 };
 
 function buildSession(): Session {
@@ -59,6 +69,8 @@ function buildSession(): Session {
   const musicPresenter = new MusicSourcePresenter(musicSource, (file) =>
     presenter.loadAudioFile(file),
   );
+  const audioDevice = new AudioDeviceStore();
+  const audioDevicePresenter = new AudioDevicePresenter(audioDevice, new WebAudioBackend());
   return {
     song,
     viewport,
@@ -68,6 +80,8 @@ function buildSession(): Session {
     presenter,
     musicSource,
     musicPresenter,
+    audioDevice,
+    audioDevicePresenter,
   };
 }
 
@@ -82,7 +96,16 @@ export const KaraokePage = observer(function KaraokePage() {
     presenter,
     musicSource,
     musicPresenter,
+    audioDevice,
+    audioDevicePresenter,
   } = session;
+
+  // Boot the audio-device layer (enumerate, restore prefs, resume a saved
+  // monitor) once, and release the mic on unmount.
+  React.useEffect(() => {
+    void audioDevicePresenter.init();
+    return () => audioDevicePresenter.dispose();
+  }, [audioDevicePresenter]);
 
   // Expose the live session on `window.utai` for e2e specs + debugging.
   React.useEffect(() => {
@@ -95,6 +118,8 @@ export const KaraokePage = observer(function KaraokePage() {
       presenter,
       musicSource,
       musicPresenter,
+      audioDevice,
+      audioDevicePresenter,
       lyricsStore,
       jotPlayer,
     };
@@ -107,12 +132,16 @@ export const KaraokePage = observer(function KaraokePage() {
     presenter,
     musicSource,
     musicPresenter,
+    audioDevice,
+    audioDevicePresenter,
   ]);
 
   return (
     <KaraokePresenterContext.Provider value={presenter}>
       <MusicSourceStoreContext.Provider value={musicSource}>
       <MusicSourcePresenterContext.Provider value={musicPresenter}>
+      <AudioDeviceStoreContext.Provider value={audioDevice}>
+      <AudioDevicePresenterContext.Provider value={audioDevicePresenter}>
       <SongStoreContext.Provider value={song}>
         <StructuralContext.Provider value={structural}>
           <ViewportStoreContext.Provider value={viewport}>
@@ -130,6 +159,8 @@ export const KaraokePage = observer(function KaraokePage() {
           </ViewportStoreContext.Provider>
         </StructuralContext.Provider>
       </SongStoreContext.Provider>
+      </AudioDevicePresenterContext.Provider>
+      </AudioDeviceStoreContext.Provider>
       </MusicSourcePresenterContext.Provider>
       </MusicSourceStoreContext.Provider>
     </KaraokePresenterContext.Provider>
@@ -141,6 +172,7 @@ const Toolbar = observer(function Toolbar() {
   const lyricsPresenter = React.useContext(LyricsPresenterContext)!;
   const musicPresenter = React.useContext(MusicSourcePresenterContext)!;
   const viewport = React.useContext(ViewportStoreContext)!;
+  const settingsModal = useSettingsModal();
   const fileRef = React.useRef<HTMLInputElement>(null);
 
   const onPickAudio = (e: React.ChangeEvent<HTMLInputElement>): void => {
@@ -202,10 +234,10 @@ const Toolbar = observer(function Toolbar() {
       <button
         type="button"
         className={styles.toolButton}
-        onClick={() => musicPresenter.openSettings()}
-        aria-label="Music source settings"
-        title="Music sources"
-        data-testid="music-settings-open"
+        onClick={() => settingsModal.openSettings()}
+        aria-label="Settings"
+        title="Settings"
+        data-testid="settings-open"
       >
         <Settings size={14} aria-hidden="true" />
       </button>
@@ -333,7 +365,7 @@ const Modals = observer(function Modals() {
         presenter={lyricsPresenter}
       />
       <MusicSearchModal />
-      <MusicSettingsModal />
+      <SettingsModal />
     </>
   );
 });

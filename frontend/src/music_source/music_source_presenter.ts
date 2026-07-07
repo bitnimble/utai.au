@@ -61,15 +61,6 @@ export class MusicSourcePresenter {
     this.store.searchOpen = false;
   }
 
-  openSettings(): void {
-    this.store.settingsOpen = true;
-    void this.ensureLoaded();
-  }
-
-  closeSettings(): void {
-    this.store.settingsOpen = false;
-  }
-
   // --- load ---
 
   /** Load the service catalog + config once (on first modal open). */

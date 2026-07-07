@@ -5,6 +5,7 @@ import React from 'react';
 import type { TrackResult } from 'src/net/music_source_client';
 import { Modal, ModalHeader } from 'src/ui/modal/modal';
 import { Spinner } from 'src/ui/spinner/spinner';
+import { useSettingsModal } from 'src/settings/settings_modal_context';
 import { MusicSourcePresenterContext, MusicSourceStoreContext } from './music_source_contexts';
 import type { MusicSourcePresenter } from './music_source_presenter';
 import type { MusicSourceStore } from './music_source_store';
@@ -20,6 +21,7 @@ import styles from './music_search_modal.module.css';
 export const MusicSearchModal = observer(function MusicSearchModal() {
   const store = React.useContext(MusicSourceStoreContext);
   const presenter = React.useContext(MusicSourcePresenterContext);
+  const settingsModal = useSettingsModal();
   if (store == null || presenter == null || !store.searchOpen) return null;
 
   const onSubmit = (e: React.FormEvent): void => {
@@ -48,7 +50,7 @@ export const MusicSearchModal = observer(function MusicSearchModal() {
           className={styles.setupNote}
           onClick={() => {
             presenter.closeSearch();
-            presenter.openSettings();
+            settingsModal.openSettings('sources');
           }}
           data-testid="music-search-setup-note"
         >
