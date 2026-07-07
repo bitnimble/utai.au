@@ -49,12 +49,16 @@ def attach_pitch(vocals_path: str | Path, lines: list[LyricLine]) -> None:
         fps=contour.fps,
         drop_octave_outliers=False,
     )
+    # Vibrato is scanned track-wide (sliding window) rather than per note, so
+    # delayed-onset / boundary-split vibrato is caught.
+    vib_rate, vib_extent = features.detect_vibrato_frames(midi, fps=contour.fps)
     for line in lines:
         if not line.words:
             continue
         for word in line.words:
             wp = features.word_pitch(
-                midi, contour.ts, word.start_sec, word.end_sec, fps=contour.fps
+                midi, contour.ts, word.start_sec, word.end_sec, fps=contour.fps,
+                vib_rate=vib_rate, vib_extent=vib_extent,
             )
             word.midi = wp.midi
             word.pitch_segments = wp.segments or None

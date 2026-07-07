@@ -7,7 +7,7 @@ import numpy as np
 from app.pipeline.pitch.features import (
     FPS,
     clean_contour,
-    detect_vibrato,
+    detect_vibrato_frames,
     hz_to_midi,
     segment_notes,
     voiced_midi,
@@ -69,24 +69,49 @@ def test_segment_notes_drops_sub_min_notes():
     assert segment_notes(midi) == []
 
 
-def test_detect_vibrato_on_modulated_note():
-    n = int(1.0 * FPS)
+def test_detect_vibrato_frames_on_modulated_note():
+    n = int(1.2 * FPS)
     t = np.arange(n) / FPS
     midi = 60.0 + 0.5 * np.sin(2 * np.pi * 6.0 * t)  # 6 Hz, ~1 st peak-to-peak
-    vib = detect_vibrato(midi)
-    assert vib is not None
-    assert abs(vib.rate_hz - 6.0) < 1.0
-    assert vib.extent_semitones > 0.4
+    rate, extent = detect_vibrato_frames(midi)
+    assert np.isfinite(rate).any()
+    assert abs(np.nanmedian(rate) - 6.0) < 1.0
+    assert np.nanmedian(extent) > 0.4
 
 
-def test_no_vibrato_on_straight_note():
-    assert detect_vibrato(_const_note(60.0, 1.0)) is None
+def test_no_vibrato_frames_on_straight_note():
+    rate, _ = detect_vibrato_frames(_const_note(60.0, 1.2))
+    assert not np.isfinite(rate).any()
 
 
-def test_no_vibrato_on_glissando():
-    n = int(1.0 * FPS)
+def test_no_vibrato_frames_on_glissando():
+    n = int(1.2 * FPS)
     midi = np.linspace(60.0, 63.0, n)  # monotonic slide, not periodic
-    assert detect_vibrato(midi) is None
+    rate, _ = detect_vibrato_frames(midi)
+    assert not np.isfinite(rate).any()
+
+
+def test_detect_vibrato_frames_catches_delayed_onset():
+    # steady first half, vibrato second half -- the whole-note detector missed
+    # this because averaging over the steady part diluted the periodicity.
+    n = int(1.6 * FPS)
+    t = np.arange(n) / FPS
+    midi = np.full(n, 60.0)
+    half = n // 2
+    midi[half:] = 60.0 + 0.6 * np.sin(2 * np.pi * 6.5 * t[half:])
+    rate, _ = detect_vibrato_frames(midi)
+    assert np.isfinite(rate).any()
+    assert not np.isfinite(rate[: n // 4]).any()  # steady opening stays unmarked
+
+
+def test_word_pitch_tags_vibrato_from_frames():
+    n = int(1.0 * FPS)
+    t = np.arange(n) / FPS
+    midi = 60.0 + 0.6 * np.sin(2 * np.pi * 6.0 * t)
+    ts = np.arange(n) / FPS
+    rate, extent = detect_vibrato_frames(midi)
+    wp = word_pitch(midi, ts, 0.0, ts[-1] + 1e-3, vib_rate=rate, vib_extent=extent)
+    assert wp.segments and any(s.vibrato is not None for s in wp.segments)
 
 
 def test_word_pitch_reports_melisma_and_median():

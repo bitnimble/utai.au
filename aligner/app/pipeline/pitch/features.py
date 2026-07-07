@@ -22,9 +22,9 @@ FPS = 62.5
 F0_MIN_HZ = 46.875
 F0_MAX_HZ = 2093.75
 
-# Vibrato lives in the 4-8 Hz band; a human singer's rate sits in here.
+# Vibrato lives in the 4-9 Hz band; a human singer's rate sits in here.
 _VIBRATO_LO_HZ = 4.0
-_VIBRATO_HI_HZ = 8.0
+_VIBRATO_HI_HZ = 9.0
 
 
 @dataclass(frozen=True)
@@ -139,21 +139,18 @@ def segment_notes(
     return notes
 
 
-def detect_vibrato(note_midi: np.ndarray, *, fps: float = FPS) -> Vibrato | None:
-    """Periodic 4-8 Hz modulation on a contiguous (NaN-free) note contour.
+def _vibrato_window(seg: np.ndarray, fps: float) -> tuple[float, float, float] | None:
+    """(periodicity, extent_semitones, rate_hz) for one NaN-free window.
 
-    Gated on autocorrelation, not just band energy: a stable note's residual is
-    broadband noise (low autocorrelation at the vibrato lag) and a pitch
-    transition is a monotonic ramp (no periodicity), so both are rejected."""
-    n = len(note_midi)
-    if n < int(0.35 * fps):
-        return None
-    trend = median_filter(note_midi, size=max(3, int(0.15 * fps)), mode="nearest")
-    x = note_midi - trend
+    Detrends (removes glissando), scores periodicity by autocorrelation at the
+    vibrato lag (a stable note is broadband noise, a transition is a ramp -- both
+    score low), and measures extent from the band-passed swing."""
+    n = len(seg)
+    trend = median_filter(seg, size=max(3, int(0.15 * fps)), mode="nearest")
+    x = seg - trend
     x = x - x.mean()
     if float(np.std(x)) < 1e-3:
         return None
-
     ac = np.correlate(x, x, mode="full")[n - 1 :]
     if ac[0] <= 0:
         return None
@@ -165,14 +162,83 @@ def detect_vibrato(note_midi: np.ndarray, *, fps: float = FPS) -> Vibrato | None
     lag = lo + int(np.argmax(ac[lo : hi + 1]))
     periodicity = float(ac[lo : hi + 1].max())
     rate = fps / lag
-
     sos = butter(2, [_VIBRATO_LO_HZ, _VIBRATO_HI_HZ], btype="band", fs=fps, output="sos")
     band = sosfiltfilt(sos, x)
     extent = float(np.percentile(band, 95) - np.percentile(band, 5))
+    return periodicity, extent, rate
 
-    if periodicity >= 0.45 and extent >= 0.4 and _VIBRATO_LO_HZ <= rate <= _VIBRATO_HI_HZ:
-        return Vibrato(rate_hz=rate, extent_semitones=extent)
-    return None
+
+def detect_vibrato_frames(
+    midi: np.ndarray,
+    *,
+    fps: float = FPS,
+    win_sec: float = 0.42,
+    hop_sec: float = 0.06,
+    min_periodicity: float = 0.40,
+    min_extent: float = 0.30,
+    max_extent: float = 3.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-frame vibrato via a sliding window over the NaN-gapped contour.
+
+    Scanning windows rather than whole notes is what catches **delayed-onset**
+    vibrato (a note that steadies then develops vibrato -- the whole-note average
+    dilutes below threshold) and vibrato **split across note boundaries**. Each
+    frame keeps the strongest overlapping qualifying window. `max_extent` rejects
+    wide glissando/portamento masquerading as vibrato. Returns (rate, extent)
+    arrays, NaN where no vibrato."""
+    n = len(midi)
+    rate = np.full(n, np.nan)
+    extent = np.full(n, np.nan)
+    best = np.zeros(n)  # best periodicity seen per frame, for overlap resolution
+    w = int(round(win_sec * fps))
+    h = max(1, int(round(hop_sec * fps)))
+    if n < w:
+        return rate, extent
+    idx = np.arange(w)
+    for s in range(0, n - w + 1, h):
+        seg = midi[s : s + w]
+        good = ~np.isnan(seg)
+        if good.sum() < 0.7 * w:
+            continue
+        if not good.all():
+            seg = seg.copy()
+            seg[~good] = np.interp(idx[~good], idx[good], seg[good])
+        m = _vibrato_window(seg, fps)
+        if m is None:
+            continue
+        per, ext, r = m
+        if per < min_periodicity or not (min_extent <= ext <= max_extent):
+            continue
+        if not (_VIBRATO_LO_HZ <= r <= _VIBRATO_HI_HZ):
+            continue
+        win = slice(s, s + w)
+        better = per > best[win]
+        best[win] = np.where(better, per, best[win])
+        rate[win] = np.where(better, r, rate[win])
+        extent[win] = np.where(better, ext, extent[win])
+    return rate, extent
+
+
+def _segment_vibrato(
+    vib_rate: np.ndarray,
+    vib_extent: np.ndarray,
+    i0: int,
+    i1: int,
+    fps: float,
+    *,
+    min_frac: float = 0.15,
+    min_sec: float = 0.22,
+) -> Vibrato | None:
+    """A note is vibrato if enough of its frames fall in a vibrato region."""
+    marked = ~np.isnan(vib_rate[i0 : i1 + 1])
+    count = int(marked.sum())
+    seg_len = i1 - i0 + 1
+    if count < min_sec * fps or count < min_frac * seg_len:
+        return None
+    return Vibrato(
+        rate_hz=float(np.median(vib_rate[i0 : i1 + 1][marked])),
+        extent_semitones=float(np.median(vib_extent[i0 : i1 + 1][marked])),
+    )
 
 
 def word_pitch(
@@ -183,9 +249,16 @@ def word_pitch(
     *,
     fps: float = FPS,
     min_voiced: int = 3,
+    vib_rate: np.ndarray | None = None,
+    vib_extent: np.ndarray | None = None,
 ) -> WordPitch:
     """Aggregate the cleaned contour over one word's [start_sec, end_sec) window
-    into a median pitch + note sub-segments (melisma) with per-note vibrato."""
+    into a median pitch + note sub-segments (melisma) with per-note vibrato.
+
+    `vib_rate`/`vib_extent` are the full-contour frame arrays from
+    `detect_vibrato_frames`; a note is tagged vibrato when enough of its frames
+    fall in a vibrato region (computed track-wide, not per note, so delayed-onset
+    and boundary-split vibrato are caught)."""
     lo = int(np.searchsorted(ts, start_sec, side="left"))
     hi = int(np.searchsorted(ts, end_sec, side="right"))
     if hi <= lo:
@@ -197,15 +270,21 @@ def word_pitch(
         return WordPitch(None)
 
     med = float(np.median(seg_midi[voiced]))
-    segments = [
-        PitchSegment(
-            start_sec=float(seg_ts[i0]),
-            end_sec=float(seg_ts[i1]),
-            midi=note_midi,
-            vibrato=detect_vibrato(seg_midi[i0 : i1 + 1], fps=fps),
+    segments = []
+    for i0, i1, note_midi in segment_notes(seg_midi, fps=fps):
+        vibrato = (
+            _segment_vibrato(vib_rate, vib_extent, lo + i0, lo + i1, fps)
+            if vib_rate is not None and vib_extent is not None
+            else None
         )
-        for i0, i1, note_midi in segment_notes(seg_midi, fps=fps)
-    ]
+        segments.append(
+            PitchSegment(
+                start_sec=float(seg_ts[i0]),
+                end_sec=float(seg_ts[i1]),
+                midi=note_midi,
+                vibrato=vibrato,
+            )
+        )
     return WordPitch(med, segments)
 
 
