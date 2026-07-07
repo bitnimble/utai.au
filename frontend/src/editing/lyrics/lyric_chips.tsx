@@ -191,21 +191,8 @@ const LyricWordChip = observer(
               viewBox="0 0 100 100"
               preserveAspectRatio="none"
             >
-              <path d={pitchLine.spine} />
+              <path d={pitchLine} />
             </svg>
-            {pitchLine.waves.map((wv, i) => (
-              <span
-                key={i}
-                className={styles.lyricPitchWave}
-                style={
-                  {
-                    left: `${wv.leftPct}%`,
-                    width: `${wv.widthPct}%`,
-                    ['--seg-pitch-frac' as string]: wv.pitchFrac,
-                  } as React.CSSProperties
-                }
-              />
-            ))}
           </span>
         )}
       </span>
