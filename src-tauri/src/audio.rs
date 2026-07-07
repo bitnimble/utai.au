@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use tauri::ipc::Channel;
 use tauri::State;
-use utai_audio::device::{AudioEngine, DeviceSelection, ENGINE_RATE};
-use utai_audio::{decode, resample};
+use utai_audio::decode;
+use utai_audio::device::{AudioEngine, DeviceSelection};
 
 /// The engine handle, in an `Arc` so the telemetry thread can share it.
 pub struct AudioState(pub Arc<AudioEngine>);
@@ -48,10 +48,8 @@ pub fn audio_list_devices() -> DeviceList {
 pub fn audio_load_track(path: String, state: State<'_, AudioState>) -> Result<f64, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("read {path}: {e}"))?;
     let decoded = decode::decode_bytes(bytes)?;
-    let samples = resample::resample_stereo(&decoded.samples, decoded.sample_rate, ENGINE_RATE);
-    let frames = samples.len() / 2;
-    state.0.load_track(samples);
-    Ok(frames as f64 / ENGINE_RATE as f64)
+    state.0.load_track(decoded);
+    Ok(state.0.duration_secs())
 }
 
 #[tauri::command]
