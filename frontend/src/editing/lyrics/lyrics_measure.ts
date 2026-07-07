@@ -31,6 +31,7 @@
  */
 import { makeAutoObservable, runInAction } from 'mobx';
 import { RubySegment } from 'src/lyrics/furigana';
+import { PositionedLine, WAVE_WAVELENGTH_PX, buildPitchLine } from './lyric_layout';
 
 const FONT_FAMILY =
   "'Bricolage Grotesque', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
@@ -221,6 +222,30 @@ export function computeLyricShifts(
         out.set(lyricShiftKey(line.lineIdx, w.sourceIdx), shift);
       }
       prevRight = required + textWidth;
+    }
+  }
+  return out;
+}
+
+/** Per-word SVG pitch-line path (see `lyric_layout.buildPitchLine`), keyed like
+ *  the shift map. Measures each word's glyph width at the current zoom to get
+ *  its sustain (post-text) pixel width, so the vibrato wave's on-screen
+ *  wavelength stays constant across chips. Recomputed on zoom / font-load like
+ *  the shifts. */
+export function computePitchPaths(
+  lines: readonly PositionedLine[],
+  pxPerBeat: number,
+): Map<LyricShiftKey, string> {
+  const out = new Map<LyricShiftKey, string>();
+  if (!Number.isFinite(pxPerBeat) || pxPerBeat <= 0) return out;
+  for (const line of lines) {
+    if (!line.wordPositions) continue;
+    for (const w of line.wordPositions) {
+      if (w.pitchFrac === undefined || !w.segments) continue;
+      const textPx = lyricsMeasurer.measureWordPx(w.text, pxPerBeat, false);
+      const trailPx = Math.max(0, w.beatWidth * pxPerBeat - textPx);
+      const path = buildPitchLine(w, trailPx, WAVE_WAVELENGTH_PX);
+      if (path) out.set(lyricShiftKey(line.i, w.sourceIdx), path);
     }
   }
   return out;

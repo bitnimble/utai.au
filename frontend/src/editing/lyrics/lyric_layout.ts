@@ -257,18 +257,24 @@ function positionedSegments(
 const _fmt = (n: number) => (Math.round(n * 10) / 10).toString();
 const _clamp = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi : n);
 
-/** Roughly one wave per this many beats (== seconds) of vibrato, so the number
- *  of oscillations tracks how long the note is actually held. */
-const _WAVES_PER_BEAT = 6;
+/** Target on-screen wavelength (px) of a vibrato wave. The cycle count is
+ *  derived from the note's sustain pixel width so this stays constant regardless
+ *  of chip width. */
+export const WAVE_WAVELENGTH_PX = 18;
 
 /** One continuous SVG path for a word's sung-pitch line, in a `0 0 100 100`
  *  viewBox stretched (preserveAspectRatio="none") across the word's post-text
- *  sustain region. y=50 is the word's median pitch (== the text's vertical
- *  centre); notes step off it by pitch, joined by smooth cubic curves so a
- *  melisma reads as one continuous stepping line, and a vibrato note's run is a
- *  smooth (quadratic-bump) wave. Notes are distributed across x by relative
- *  duration. Returns undefined when the word has no pitch/segments. */
-export function buildPitchLine(word: PositionedWord): string | undefined {
+ *  sustain region (`trailPx` wide on screen). y=50 is the word's median pitch
+ *  (== the text's vertical centre); notes step off it by pitch, joined by smooth
+ *  cubic curves so a melisma reads as one continuous stepping line, and a
+ *  vibrato note's run is a smooth wave whose cycle count is set from `trailPx`
+ *  so its on-screen wavelength is ~`wavelengthPx` on every chip. Notes are
+ *  distributed across x by relative duration. Undefined when no pitch/segments. */
+export function buildPitchLine(
+  word: PositionedWord,
+  trailPx: number,
+  wavelengthPx: number,
+): string | undefined {
   const segs = word.segments;
   if (word.pitchFrac === undefined || !segs || segs.length === 0) return undefined;
   const wordFrac = word.pitchFrac;
@@ -292,27 +298,44 @@ export function buildPitchLine(word: PositionedWord): string | undefined {
     const flatStart = Math.min(x0 + transitionX, mid);
     const flatEnd = Math.max(x1 - transitionX, mid);
     const cx = (prevX + flatStart) / 2; // symmetric cubic control for a smooth S
-    d += ` C${_fmt(cx)} ${_fmt(prevY)} ${_fmt(cx)} ${_fmt(y)} ${_fmt(flatStart)} ${_fmt(y)}`;
-    d += g.vibrato
-      ? _wavyRun(flatStart, flatEnd, y, _clamp(g.beatWidth * _WAVES_PER_BEAT, 1.5, 20))
-      : ` L${_fmt(flatEnd)} ${_fmt(y)}`;
+    if (g.vibrato) {
+      // cycle count for a constant on-screen wavelength: run's pixel width / λ.
+      const runPx = ((flatEnd - flatStart) / 100) * trailPx;
+      const cycles = _clamp(runPx / wavelengthPx, 0.75, 40);
+      d += ` C${_fmt(cx)} ${_fmt(prevY)} ${_fmt(cx)} ${_fmt(y)} ${_fmt(flatStart)} ${_fmt(y)}`;
+      d += _wavyRun(flatStart, flatEnd, y, cycles);
+    } else {
+      d += ` C${_fmt(cx)} ${_fmt(prevY)} ${_fmt(cx)} ${_fmt(y)} ${_fmt(flatStart)} ${_fmt(y)}`;
+      d += ` L${_fmt(flatEnd)} ${_fmt(y)}`;
+    }
     prevX = flatEnd;
     prevY = y;
   }
   return `${d} L100 ${_fmt(prevY)}`;
 }
 
-/** A vibrato run from x0..x1 at height y, as `cycles` smooth quadratic bumps
- *  (up then down, repeating) so it reads as a rounded wave, not a sawtooth. */
+const _smoothstep = (t: number) => {
+  const c = t < 0 ? 0 : t > 1 ? 1 : t;
+  return c * c * (3 - 2 * c);
+};
+
+/** A vibrato run from x0..x1 at height y, as `cycles` smooth quadratic bumps (up
+ *  then down, repeating). The amplitude is enveloped so it eases up from the
+ *  straight line over the first cycle and back down over the last, instead of
+ *  snapping to full depth. */
 function _wavyRun(x0: number, x1: number, y: number, cycles: number): string {
-  const amplitude = 2.5;
+  const ampFull = 2.5;
+  const width = x1 - x0;
   const bumps = Math.max(2, Math.round(cycles * 2)); // 2 half-cycle bumps per cycle
-  const hw = (x1 - x0) / bumps;
+  const hw = width / bumps;
+  const ramp = width / Math.max(cycles, 1); // ease over ~one cycle at each end
   let s = '';
   let xx = x0;
   for (let i = 0; i < bumps; i++) {
+    const centerX = xx + hw / 2;
+    const env = _smoothstep((centerX - x0) / ramp) * _smoothstep((x1 - centerX) / ramp);
     const dir = i % 2 === 0 ? -1 : 1; // up (negative y) then down, alternating
-    s += ` Q${_fmt(xx + hw / 2)} ${_fmt(y + dir * 2 * amplitude)} ${_fmt(xx + hw)} ${_fmt(y)}`;
+    s += ` Q${_fmt(centerX)} ${_fmt(y + dir * 2 * ampFull * env)} ${_fmt(xx + hw)} ${_fmt(y)}`;
     xx += hw;
   }
   return s;

@@ -5,6 +5,7 @@ import { LyricLine, PitchSegment } from 'src/lyrics/lrc';
 import { buildLinearTimeline } from 'src/editing/playback/timeline';
 import { LyricLineChip } from '../lyric_chips';
 import { positionLyricLines } from '../lyric_layout';
+import { computePitchPaths } from '../lyrics_measure';
 import styles from '../lyrics_track_view.module.css';
 
 /**
@@ -103,6 +104,10 @@ function LyricsTrackDemo({ lines }: { lines: LyricLine[] }) {
   const timeline = buildLinearTimeline(durationSec);
   const positioned = positionLyricLines(lines, timeline, 0, [durationSec], 0, durationSec);
   const emptyShifts = React.useMemo(() => new Map<string, number>(), []);
+  const pitchPaths = React.useMemo(
+    () => computePitchPaths(positioned, PX_PER_BEAT),
+    [positioned],
+  );
 
   return (
     <div style={{ padding: 24, minWidth: 'max-content' }}>
@@ -135,6 +140,7 @@ function LyricsTrackDemo({ lines }: { lines: LyricLine[] }) {
               text={p.text}
               wordPositions={p.wordPositions}
               shifts={emptyShifts}
+              pitchPaths={pitchPaths}
               isActive={false}
               activeWordIdx={undefined}
             />

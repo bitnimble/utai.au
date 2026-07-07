@@ -5,7 +5,7 @@ import { RubySegment, furiganaAnnotator } from 'src/lyrics/furigana';
 import { LyricWord } from 'src/lyrics/lrc';
 import { ViewportStoreContext } from '../viewport/viewport_contexts';
 import { intersectsBeatRange } from '../utils/windowing';
-import { PositionedLine, PositionedWord, buildPitchLine } from './lyric_layout';
+import { PositionedLine, PositionedWord } from './lyric_layout';
 import { lyricShiftKey } from './lyrics_measure';
 import styles from './lyrics_track_view.module.css';
 
@@ -81,6 +81,7 @@ export const LyricLineChip = observer(
     text,
     wordPositions,
     shifts,
+    pitchPaths,
     isActive,
     activeWordIdx,
   }: {
@@ -90,6 +91,8 @@ export const LyricLineChip = observer(
     text: string;
     wordPositions: PositionedWord[] | undefined;
     shifts: Map<string, number>;
+    /** Per-word sung-pitch SVG path, keyed like `shifts`. */
+    pitchPaths: Map<string, string>;
     isActive: boolean;
     /** Defined only when this line is the active line; otherwise undefined
      *  so non-active lines stay memo-stable across word transitions. */
@@ -128,6 +131,7 @@ export const LyricLineChip = observer(
                 wordIdx={w.sourceIdx}
                 word={w}
                 shift={shifts.get(lyricShiftKey(lineIdx, w.sourceIdx)) ?? 0}
+                pitchPath={pitchPaths.get(lyricShiftKey(lineIdx, w.sourceIdx))}
                 isActive={activeWordIdx === w.sourceIdx}
                 lineWordTexts={lineWordTexts}
                 wordPosIndex={i}
@@ -145,6 +149,7 @@ const LyricWordChip = observer(
     wordIdx,
     word,
     shift,
+    pitchPath,
     isActive,
     lineWordTexts,
     wordPosIndex,
@@ -153,6 +158,8 @@ const LyricWordChip = observer(
     wordIdx: number;
     word: PositionedWord;
     shift: number;
+    /** The word's sung-pitch SVG path, or undefined when it carries no pitch. */
+    pitchPath: string | undefined;
     isActive: boolean;
     /** Surfaces of every (in-range) word on this line, in render order;
      *  the furigana annotator tokenizes them together for context. Stable
@@ -169,7 +176,6 @@ const LyricWordChip = observer(
     if (shift > 0) wordStyle['--lyric-word-shift'] = `${shift}px`;
     const pitched = word.pitchFrac !== undefined;
     if (pitched) wordStyle['--lyric-word-pitch-frac'] = word.pitchFrac!;
-    const pitchLine = pitched ? buildPitchLine(word) : undefined;
     return (
       <span
         className={classNames(
@@ -184,14 +190,14 @@ const LyricWordChip = observer(
         <span className={styles.lyricWordText}>
           <WordText words={lineWordTexts} index={wordPosIndex} />
         </span>
-        {pitchLine && (
+        {pitchPath && (
           <span className={styles.lyricPitchTrail} aria-hidden="true">
             <svg
               className={styles.lyricPitchLine}
               viewBox="0 0 100 100"
               preserveAspectRatio="none"
             >
-              <path d={pitchLine} />
+              <path d={pitchPath} />
             </svg>
           </span>
         )}
@@ -255,10 +261,12 @@ type LyricsPlayhead = {
 export const WindowedLines = observer(function WindowedLines({
   positioned,
   shifts,
+  pitchPaths,
   playhead,
 }: {
   positioned: PositionedLine[];
   shifts: Map<string, number>;
+  pitchPaths: Map<string, string>;
   playhead: LyricsPlayhead;
 }) {
   const viewport = React.useContext(ViewportStoreContext);
@@ -277,6 +285,7 @@ export const WindowedLines = observer(function WindowedLines({
             text={p.text}
             wordPositions={p.wordPositions}
             shifts={shifts}
+            pitchPaths={pitchPaths}
             isActive={isActive}
             activeWordIdx={isActive ? playhead.activeWordIdx : undefined}
           />

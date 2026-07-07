@@ -7,7 +7,12 @@ import { activeLineIndexAt, activeWordIndexAt } from 'src/lyrics/lrc';
 import { LyricsTrackId, lyricsStore } from 'src/lyrics/store';
 import { jotPlayer } from 'src/editing/playback/player';
 import { LyricsPresenterContext, LyricsAlignStoreContext } from './lyrics_contexts';
-import { LyricLineMeasureInput, computeLyricShifts, lyricsMeasurer } from './lyrics_measure';
+import {
+  LyricLineMeasureInput,
+  computeLyricShifts,
+  computePitchPaths,
+  lyricsMeasurer,
+} from './lyrics_measure';
 import { positionLyricLines } from './lyric_layout';
 import { WindowedLines } from './lyric_chips';
 import { LyricsOverflowMenu } from './lyrics_overflow_menu';
@@ -107,6 +112,14 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positioned, pxPerBeat, fontReady, furiganaRevision]);
 
+  // Per-word pitch-line SVG paths. Kept with the shifts because both need the
+  // zoom-dependent glyph measurement (the wave wavelength is derived from each
+  // word's sustain pixel width), so this re-derives on zoom / font-load too.
+  const pitchPaths = React.useMemo(
+    () => computePitchPaths(positioned, pxPerBeat),
+    [positioned, pxPerBeat, fontReady],
+  );
+
   // True once any word has a resolved furigana reading; drives the ruby
   // reserve strip. Re-derives on `furiganaRevision`.
   const trackHasFurigana = React.useMemo(() => {
@@ -171,7 +184,12 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
         }
         onClick={(e) => seekFromClick(e, onSeek)}
       >
-        <WindowedLines positioned={positioned} shifts={shifts} playhead={playhead} />
+        <WindowedLines
+          positioned={positioned}
+          shifts={shifts}
+          pitchPaths={pitchPaths}
+          playhead={playhead}
+        />
         <Playhead onSeek={onSeek} />
       </div>
     </div>
