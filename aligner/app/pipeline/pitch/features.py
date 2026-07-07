@@ -182,7 +182,7 @@ def detect_vibrato_frames(
     min_periodicity: float = 0.45,
     min_extent: float = 0.45,
     max_extent: float = 3.0,
-    max_trend_range: float = 1.5,
+    max_trend_range: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per-frame vibrato via a sliding window over the NaN-gapped contour.
 
