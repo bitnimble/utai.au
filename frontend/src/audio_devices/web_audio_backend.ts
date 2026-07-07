@@ -1,13 +1,19 @@
 import { JotPlayer, jotPlayer } from 'src/editing/playback/player';
-import type { AudioDevice, AudioIoBackend, MicPermission, MonitorOptions } from './audio_io_backend';
+import {
+  NONE_DEVICE_ID,
+  type AudioDevice,
+  type AudioIoBackend,
+  type MicPermission,
+  type MonitorOptions,
+} from './audio_io_backend';
 
 /**
  * Web Audio implementation of {@link AudioIoBackend}: `getUserMedia` for
- * capture, a `MediaStreamAudioSourceNode → gain → destination` monitor path
+ * capture, a `MediaStreamAudioSourceNode → gain → master bus` monitor path
  * (metered off an `AnalyserNode` tapped pre-gain, so muting still shows level),
- * and `AudioContext.setSinkId` for output routing. The monitor attaches to the
- * player's shared context so one sink choice routes the track and the monitor
- * together.
+ * the player's master gain for output volume, and `AudioContext.setSinkId` for
+ * output routing. The monitor attaches to the player's shared context + master
+ * bus so one sink choice routes the track and the monitor together.
  */
 export class WebAudioBackend implements AudioIoBackend {
   readonly outputSelectable = JotPlayer.outputSinkSupported;
@@ -74,7 +80,9 @@ export class WebAudioBackend implements AudioIoBackend {
       },
     });
     const ctx = jotPlayer.getAudioContext();
-    if (ctx.state === 'suspended') await ctx.resume();
+    // Best-effort: without a prior user gesture resume() rejects; the graph is
+    // built regardless and becomes audible once the context resumes (on play).
+    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
     const source = ctx.createMediaStreamSource(stream);
     const gainNode = ctx.createGain();
     gainNode.gain.value = gain;
@@ -82,7 +90,7 @@ export class WebAudioBackend implements AudioIoBackend {
     analyser.fftSize = 1024;
     source.connect(analyser);
     source.connect(gainNode);
-    gainNode.connect(ctx.destination);
+    gainNode.connect(jotPlayer.getOutputNode());
 
     this.stream = stream;
     this.source = source;
@@ -92,8 +100,12 @@ export class WebAudioBackend implements AudioIoBackend {
     this.runLevelLoop(onLevel);
   }
 
-  setMonitorGain(gain: number): void {
+  setMicGain(gain: number): void {
     if (this.gainNode != null) this.gainNode.gain.value = gain;
+  }
+
+  setOutputVolume(volume: number): void {
+    jotPlayer.setOutputVolume(volume);
   }
 
   stopMonitor(): void {
@@ -114,7 +126,7 @@ export class WebAudioBackend implements AudioIoBackend {
 
   async setOutputSink(outputId: string): Promise<void> {
     if (!this.outputSelectable) return;
-    await jotPlayer.setOutputSink(outputId);
+    await jotPlayer.setOutputSink(outputId === NONE_DEVICE_ID ? { type: 'none' } : outputId);
   }
 
   private runLevelLoop(onLevel: (level: number) => void): void {

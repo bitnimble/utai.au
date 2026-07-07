@@ -33,12 +33,6 @@
     min-width: 0;
 }
 
-.permButton {
-    composes: secondary from '../ui/button/button.module.css';
-    align-self: flex-start;
-    border-radius: var(--radius-sm);
-}
-
 .meter {
     height: 8px;
     border-radius: var(--radius-pill);
@@ -53,14 +47,6 @@
     /* Width is written per-frame from the observable mic level; keep the
        transition short so it reads as a live meter, not a laggy bar. */
     transition: width 60ms linear;
-}
-
-.toggleRow {
-    composes: bodyMd from '../typography.module.css';
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--color-text);
 }
 
 .hint {

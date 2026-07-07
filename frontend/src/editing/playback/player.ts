@@ -55,6 +55,10 @@ export class JotPlayer {
   }
 
   private ctx: AudioContext | undefined;
+  /** Master output bus: every source (tracks + mic monitor) routes through
+   *  here before `ctx.destination`, so one gain controls overall output
+   *  volume/mute and `setSinkId` on the context routes it all together. */
+  private masterGain: GainNode | undefined;
   private controller: AudioTrackPlaybackController | undefined;
   private startContextTime = 0;
   private startJotTime = 0;
@@ -183,7 +187,7 @@ export class JotPlayer {
       this.startContextTime = audioStartTime;
       this.startJotTime = anchor;
       this.controller?.dispose();
-      this.controller = new AudioTrackPlaybackController(ctx, ctx.destination);
+      this.controller = new AudioTrackPlaybackController(ctx, this.getOutputNode());
       this.controller.scheduleAll(this.audioTracks.values(), audioStartTime, anchor, 1);
       runInAction(() => {
         this.state = 'playing';
@@ -299,16 +303,33 @@ export class JotPlayer {
     return this.ensureAudioContext();
   }
 
-  /** Route all output (backing track + mic monitor) to `sinkId` (`''` = system
-   *  default). No-op when the engine lacks `setSinkId`. */
-  async setOutputSink(sinkId: string): Promise<void> {
+  /** The master output node every source connects to (tracks + mic monitor). */
+  getOutputNode(): AudioNode {
+    this.ensureAudioContext();
+    if (!this.masterGain) throw new Error('master output node not initialised');
+    return this.masterGain;
+  }
+
+  /** Overall output volume in [0, 1] (mute = 0). Applies to tracks + monitor. */
+  setOutputVolume(volume: number): void {
+    this.ensureAudioContext();
+    if (this.masterGain) this.masterGain.gain.value = volume;
+  }
+
+  /** Route all output to `sinkId` (`''` = system default, `{ type: 'none' }` =
+   *  no output). No-op when the engine lacks `setSinkId`. */
+  async setOutputSink(sinkId: string | { type: 'none' }): Promise<void> {
     const ctx = this.ensureAudioContext();
     if (typeof ctx.setSinkId !== 'function') return;
     await ctx.setSinkId(sinkId);
   }
 
   private ensureAudioContext(): AudioContext {
-    if (!this.ctx) this.ctx = new AudioContext();
+    if (!this.ctx) {
+      this.ctx = new AudioContext();
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.connect(this.ctx.destination);
+    }
     return this.ctx;
   }
 }

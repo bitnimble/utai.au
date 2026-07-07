@@ -1,7 +1,7 @@
 import { autorun, makeAutoObservable, runInAction } from 'mobx';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { AudioDeviceStore } from './audio_device_store';
-import type { AudioIoBackend } from './audio_io_backend';
+import { NONE_DEVICE_ID, type AudioIoBackend } from './audio_io_backend';
 
 const STORAGE_KEY = 'utai.audioDevices';
 
@@ -12,8 +12,12 @@ const LEVEL_EPSILON = 0.01;
 /**
  * Sole writer for {@link AudioDeviceStore} and the orchestrator over an
  * {@link AudioIoBackend}: device enumeration + hot-plug, permission, the live
- * monitor lifecycle, output routing, and localStorage persistence of the
- * selections. Kept store + presenter so the logic is unit-testable against a
+ * monitor lifecycle, output volume/routing, and localStorage persistence.
+ *
+ * The mic is a live monitor whenever an input other than {@link NONE_DEVICE_ID}
+ * is selected and permission is granted (a karaoke app keeps the mic hot);
+ * muting/volume only scale the audible gain, capture stays running so the meter
+ * still reads. Kept store + presenter so the logic is unit-testable against a
  * mocked backend.
  */
 export class AudioDevicePresenter {
@@ -36,8 +40,9 @@ export class AudioDevicePresenter {
     this.store.outputSelectable = backend.outputSelectable;
   }
 
-  /** One-time boot: restore saved prefs, enumerate, subscribe to hot-plug, and
-   *  (if the user last left monitoring on, with permission) resume it. */
+  /** One-time boot: restore saved prefs, enumerate + subscribe to hot-plug,
+   *  apply the saved output volume/route, and bring the mic live (unless the
+   *  user last chose "None"). */
   async init(): Promise<void> {
     if (this.started) return;
     this.started = true;
@@ -51,16 +56,11 @@ export class AudioDevicePresenter {
     });
     await this.refreshDevices();
 
+    this.backend.setOutputVolume(this.effectiveOutputVolume());
     if (this.store.selectedOutputId) {
       await this.backend.setOutputSink(this.store.selectedOutputId).catch(() => {});
     }
-    if (this.store.monitorEnabled && perm === 'granted') {
-      await this.startMonitor();
-    } else {
-      runInAction(() => {
-        this.store.monitorEnabled = false;
-      });
-    }
+    await this.ensureMonitor();
   }
 
   async refreshDevices(): Promise<void> {
@@ -76,22 +76,11 @@ export class AudioDevicePresenter {
     });
   }
 
-  async requestPermission(): Promise<void> {
-    const perm = await this.backend.requestPermission();
-    runInAction(() => {
-      this.store.permission = perm;
-    });
-    await this.refreshDevices();
-    if (perm === 'denied') {
-      toastStore.showError('Microphone access was blocked. Enable it in your browser settings.');
-    }
-  }
-
   async setInputDevice(id: string): Promise<void> {
     runInAction(() => {
       this.store.selectedInputId = id;
     });
-    if (this.store.monitorEnabled) await this.startMonitor();
+    await this.ensureMonitor();
   }
 
   async setOutputDevice(id: string): Promise<void> {
@@ -105,26 +94,32 @@ export class AudioDevicePresenter {
     }
   }
 
-  async setMonitorEnabled(on: boolean): Promise<void> {
-    if (!on) {
-      this.backend.stopMonitor();
-      runInAction(() => {
-        this.store.monitorEnabled = false;
-        this.store.micLevel = 0;
-      });
-      return;
-    }
-    if (this.store.permission !== 'granted') await this.requestPermission();
-    if (this.store.permission !== 'granted') return;
-    await this.startMonitor();
+  setMicVolume(volume: number): void {
+    runInAction(() => {
+      this.store.micVolume = clamp01(volume);
+    });
+    this.backend.setMicGain(this.effectiveMicGain());
   }
 
-  setMonitorGain(gain: number): void {
-    const g = Math.min(1, Math.max(0, gain));
+  setMicMuted(muted: boolean): void {
     runInAction(() => {
-      this.store.monitorGain = g;
+      this.store.micMuted = muted;
     });
-    this.backend.setMonitorGain(g);
+    this.backend.setMicGain(this.effectiveMicGain());
+  }
+
+  setOutputVolume(volume: number): void {
+    runInAction(() => {
+      this.store.outputVolume = clamp01(volume);
+    });
+    this.backend.setOutputVolume(this.effectiveOutputVolume());
+  }
+
+  setOutputMuted(muted: boolean): void {
+    runInAction(() => {
+      this.store.outputMuted = muted;
+    });
+    this.backend.setOutputVolume(this.effectiveOutputVolume());
   }
 
   /** Fully reverse {@link init} so a remount (React StrictMode) can re-run it
@@ -138,11 +133,23 @@ export class AudioDevicePresenter {
     this.started = false;
   }
 
-  private async startMonitor(): Promise<void> {
+  /** Bring capture into line with the current input selection: stop it for
+   *  "None", otherwise grant (prompting if needed) and start the live monitor. */
+  private async ensureMonitor(): Promise<void> {
+    if (this.store.selectedInputId === NONE_DEVICE_ID) {
+      this.backend.stopMonitor();
+      runInAction(() => {
+        this.store.micLevel = 0;
+      });
+      return;
+    }
+    if (this.store.permission !== 'granted') await this.requestPermission();
+    if (this.store.permission !== 'granted') return;
+
     try {
       await this.backend.startMonitor({
         inputId: this.store.selectedInputId,
-        gain: this.store.monitorGain,
+        gain: this.effectiveMicGain(),
         onLevel: (level) => {
           if (Math.abs(level - this.store.micLevel) < LEVEL_EPSILON) return;
           runInAction(() => {
@@ -150,17 +157,32 @@ export class AudioDevicePresenter {
           });
         },
       });
-      runInAction(() => {
-        this.store.monitorEnabled = true;
-      });
     } catch {
       this.backend.stopMonitor();
       runInAction(() => {
-        this.store.monitorEnabled = false;
         this.store.micLevel = 0;
       });
-      toastStore.showError('Could not start the microphone monitor.');
+      toastStore.showError('Could not start the microphone.');
     }
+  }
+
+  private async requestPermission(): Promise<void> {
+    const perm = await this.backend.requestPermission();
+    runInAction(() => {
+      this.store.permission = perm;
+    });
+    await this.refreshDevices();
+    if (perm === 'denied') {
+      toastStore.showError('Microphone access was blocked. Enable it in your browser settings.');
+    }
+  }
+
+  private effectiveMicGain(): number {
+    return this.store.micMuted ? 0 : this.store.micVolume;
+  }
+
+  private effectiveOutputVolume(): number {
+    return this.store.outputMuted ? 0 : this.store.outputVolume;
   }
 
   private persistOnChange(): void {
@@ -168,8 +190,10 @@ export class AudioDevicePresenter {
       const snapshot = JSON.stringify({
         selectedInputId: this.store.selectedInputId,
         selectedOutputId: this.store.selectedOutputId,
-        monitorEnabled: this.store.monitorEnabled,
-        monitorGain: this.store.monitorGain,
+        micVolume: this.store.micVolume,
+        micMuted: this.store.micMuted,
+        outputVolume: this.store.outputVolume,
+        outputMuted: this.store.outputMuted,
       });
       try {
         localStorage.setItem(STORAGE_KEY, snapshot);
@@ -193,10 +217,16 @@ export class AudioDevicePresenter {
       const obj = parsed as Record<string, unknown>;
       if (typeof obj.selectedInputId === 'string') this.store.selectedInputId = obj.selectedInputId;
       if (typeof obj.selectedOutputId === 'string') this.store.selectedOutputId = obj.selectedOutputId;
-      if (typeof obj.monitorEnabled === 'boolean') this.store.monitorEnabled = obj.monitorEnabled;
-      if (typeof obj.monitorGain === 'number') this.store.monitorGain = obj.monitorGain;
+      if (typeof obj.micVolume === 'number') this.store.micVolume = clamp01(obj.micVolume);
+      if (typeof obj.micMuted === 'boolean') this.store.micMuted = obj.micMuted;
+      if (typeof obj.outputVolume === 'number') this.store.outputVolume = clamp01(obj.outputVolume);
+      if (typeof obj.outputMuted === 'boolean') this.store.outputMuted = obj.outputMuted;
     } catch {
       // corrupt JSON; keep defaults
     }
   }
+}
+
+function clamp01(v: number): number {
+  return Math.min(1, Math.max(0, v));
 }

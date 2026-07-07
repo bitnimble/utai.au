@@ -7,6 +7,11 @@
  * without touching the store or the UI.
  */
 
+/** Selecting this for a channel means "no device": mic capture stops / output
+ *  is suppressed. Distinct from `''` (system default). Real device ids are
+ *  opaque non-empty strings, so this sentinel can't collide. */
+export const NONE_DEVICE_ID = 'none';
+
 /** A selectable audio endpoint. `id === ''` means the system default. */
 export type AudioDevice = {
   id: string;
@@ -20,7 +25,7 @@ export type MicPermission = 'unknown' | 'prompt' | 'granted' | 'denied';
 export type MonitorOptions = {
   /** Input device to capture (`''` = system default). */
   inputId: string;
-  /** Audible passthrough gain in [0, 1]. */
+  /** Effective audible passthrough gain in [0, 1] (already mute-adjusted). */
   gain: number;
   /** Called ~each animation frame with the input RMS level in [0, 1]. */
   onLevel: (level: number) => void;
@@ -40,11 +45,15 @@ export interface AudioIoBackend {
   /** Start (or restart) the live monitor. Rejects if capture fails
    *  (permission denied, device gone). */
   startMonitor(opts: MonitorOptions): Promise<void>;
-  /** Live-update the monitor's audible gain without restarting capture. */
-  setMonitorGain(gain: number): void;
+  /** Live-update the monitor's effective audible gain (mute = 0) without
+   *  restarting capture. */
+  setMicGain(gain: number): void;
   /** Stop the monitor and release the mic. */
   stopMonitor(): void;
-  /** Route all output to `outputId` (`''` = system default). No-op when
-   *  {@link outputSelectable} is false. */
+  /** Overall output volume in [0, 1] (mute = 0), applied to tracks + monitor. */
+  setOutputVolume(volume: number): void;
+  /** Route all output to `outputId` (`''` = system default,
+   *  {@link NONE_DEVICE_ID} = no output). No-op when {@link outputSelectable}
+   *  is false. */
   setOutputSink(outputId: string): Promise<void>;
 }

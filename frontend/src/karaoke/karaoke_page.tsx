@@ -35,6 +35,7 @@ import {
   AudioDevicePresenterContext,
   AudioDeviceStoreContext,
 } from 'src/audio_devices/audio_device_contexts';
+import { HomeAudioControls } from 'src/audio_devices/audio_controls';
 import { SettingsModal } from 'src/settings/settings_modal';
 import { useSettingsModal } from 'src/settings/settings_modal_context';
 import { KaraokePresenter } from './karaoke_presenter';
@@ -343,6 +344,7 @@ const TransportBar = observer(function TransportBar() {
         {formatPlayheadTime(jotPlayer.currentTime)}
         {song.durationSec > 0 ? ` / ${formatPlayheadTime(song.durationSec)}` : ''}
       </span>
+      <HomeAudioControls />
     </footer>
   );
 });

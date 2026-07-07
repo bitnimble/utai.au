@@ -1,20 +1,25 @@
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { Select } from 'src/ui/select/select';
+import { ChannelControls } from './audio_controls';
 import { AudioDevicePresenterContext, AudioDeviceStoreContext } from './audio_device_contexts';
+import { NONE_DEVICE_ID } from './audio_io_backend';
 import styles from './audio_settings.module.css';
 
 /**
- * The Audio settings tab: pick the mic input + speaker output, grant mic
- * access, and drive the live "hear yourself" monitor (toggle + gain) with an
- * input level meter. Reads the audio-device store, writes through its presenter.
+ * The Audio settings tab: pick the mic input + speaker output (each with a
+ * "None" option), and set per-channel volume/mute. The mic monitors live
+ * automatically whenever an input is selected, so there's no enable button;
+ * an input level meter shows what's coming in. Reads the audio-device store,
+ * writes through its presenter.
  */
 export const AudioSettings = observer(function AudioSettings() {
   const store = React.useContext(AudioDeviceStoreContext);
   const presenter = React.useContext(AudioDevicePresenterContext);
   if (store == null || presenter == null) return null;
 
-  const needsPermission = store.permission !== 'granted';
+  const micOff = store.selectedInputId === NONE_DEVICE_ID;
+  const denied = store.permission === 'denied';
 
   return (
     <div className={styles.body} data-testid="audio-settings">
@@ -27,6 +32,7 @@ export const AudioSettings = observer(function AudioSettings() {
             onChange={(e) => void presenter.setInputDevice(e.target.value)}
             data-testid="audio-input-select"
           >
+            <option value={NONE_DEVICE_ID}>None</option>
             <option value="">System default</option>
             {store.inputs.map((d) => (
               <option key={d.id} value={d.id}>
@@ -36,17 +42,6 @@ export const AudioSettings = observer(function AudioSettings() {
           </Select>
         </label>
 
-        {needsPermission && (
-          <button
-            type="button"
-            className={styles.permButton}
-            onClick={() => void presenter.requestPermission()}
-            data-testid="audio-enable-mic"
-          >
-            Enable microphone access
-          </button>
-        )}
-
         <div className={styles.meter} aria-hidden="true">
           <div
             className={styles.meterFill}
@@ -55,29 +50,14 @@ export const AudioSettings = observer(function AudioSettings() {
           />
         </div>
 
-        <label className={styles.toggleRow}>
-          <input
-            type="checkbox"
-            checked={store.monitorEnabled}
-            onChange={(e) => void presenter.setMonitorEnabled(e.target.checked)}
-            data-testid="audio-monitor-toggle"
-          />
-          Hear my microphone (monitor)
-        </label>
+        <ChannelControls channel="mic" scope="settings" />
 
-        <label className={styles.field}>
-          Monitor volume
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={Math.round(store.monitorGain * 100)}
-            onChange={(e) => presenter.setMonitorGain(Number(e.target.value) / 100)}
-            aria-label="Monitor volume"
-            data-testid="audio-monitor-gain"
-          />
-        </label>
+        {denied && (
+          <span className={styles.hint}>
+            Microphone access is blocked. Enable it in your browser settings, then reselect a device.
+          </span>
+        )}
+        {micOff && <span className={styles.hint}>Microphone is off. Pick a device to sing along.</span>}
       </section>
 
       <section className={styles.section}>
@@ -90,6 +70,7 @@ export const AudioSettings = observer(function AudioSettings() {
             disabled={!store.outputSelectable}
             data-testid="audio-output-select"
           >
+            <option value={NONE_DEVICE_ID}>None</option>
             <option value="">System default</option>
             {store.outputs.map((d) => (
               <option key={d.id} value={d.id}>
@@ -98,8 +79,13 @@ export const AudioSettings = observer(function AudioSettings() {
             ))}
           </Select>
         </label>
+
+        <ChannelControls channel="output" scope="settings" />
+
         {!store.outputSelectable && (
-          <span className={styles.hint}>Output device selection isn&rsquo;t supported in this browser.</span>
+          <span className={styles.hint}>
+            Output device selection isn&rsquo;t supported in this browser (volume still works).
+          </span>
         )}
       </section>
     </div>

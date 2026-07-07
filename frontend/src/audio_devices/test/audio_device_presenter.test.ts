@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { AudioDevicePresenter } from 'src/audio_devices/audio_device_presenter';
 import { AudioDeviceStore } from 'src/audio_devices/audio_device_store';
-import type {
-  AudioDevice,
-  AudioIoBackend,
-  MicPermission,
-  MonitorOptions,
+import {
+  NONE_DEVICE_ID,
+  type AudioDevice,
+  type AudioIoBackend,
+  type MicPermission,
+  type MonitorOptions,
 } from 'src/audio_devices/audio_io_backend';
 
 class FakeBackend implements AudioIoBackend {
@@ -14,7 +15,8 @@ class FakeBackend implements AudioIoBackend {
   permission: MicPermission = 'granted';
   starts = 0;
   stops = 0;
-  lastGain = -1;
+  lastMicGain = -1;
+  lastOutputVolume = -1;
   sink: string | undefined;
   lastMonitor: MonitorOptions | undefined;
 
@@ -34,11 +36,14 @@ class FakeBackend implements AudioIoBackend {
     this.starts++;
     this.lastMonitor = opts;
   }
-  setMonitorGain(gain: number): void {
-    this.lastGain = gain;
+  setMicGain(gain: number): void {
+    this.lastMicGain = gain;
   }
   stopMonitor(): void {
     this.stops++;
+  }
+  setOutputVolume(volume: number): void {
+    this.lastOutputVolume = volume;
   }
   async setOutputSink(outputId: string): Promise<void> {
     this.sink = outputId;
@@ -93,55 +98,62 @@ describe('AudioDevicePresenter', () => {
     expect(backend.sink).toBe('spk1');
   });
 
-  test('enabling the monitor starts it (after a grant); disabling stops it', async () => {
-    await presenter.setMonitorEnabled(true);
+  test('selecting an input brings the mic live; selecting None stops it', async () => {
+    await presenter.setInputDevice('mic2');
     expect(backend.starts).toBe(1);
-    expect(store.monitorEnabled).toBe(true);
+    expect(backend.lastMonitor?.inputId).toBe('mic2');
 
-    await presenter.setMonitorEnabled(false);
+    await presenter.setInputDevice(NONE_DEVICE_ID);
     expect(backend.stops).toBeGreaterThanOrEqual(1);
-    expect(store.monitorEnabled).toBe(false);
     expect(store.micLevel).toBe(0);
   });
 
-  test('a denied permission keeps the monitor off', async () => {
+  test('a denied permission keeps the mic off', async () => {
     backend.permission = 'denied';
-    await presenter.setMonitorEnabled(true);
+    await presenter.setInputDevice('mic1');
     expect(backend.starts).toBe(0);
-    expect(store.monitorEnabled).toBe(false);
     expect(store.permission).toBe('denied');
   });
 
-  test('changing input while monitoring restarts capture on the new device', async () => {
-    await presenter.setMonitorEnabled(true);
-    expect(backend.starts).toBe(1);
-    await presenter.setInputDevice('mic2');
-    expect(store.selectedInputId).toBe('mic2');
-    expect(backend.starts).toBe(2);
-    expect(backend.lastMonitor?.inputId).toBe('mic2');
+  test('mic volume + mute map to the effective monitor gain', () => {
+    presenter.setMicVolume(0.5);
+    expect(store.micVolume).toBe(0.5);
+    expect(backend.lastMicGain).toBe(0.5);
+
+    presenter.setMicMuted(true);
+    expect(backend.lastMicGain).toBe(0);
+
+    presenter.setMicVolume(1.5);
+    expect(store.micVolume).toBe(1); // clamped
   });
 
-  test('monitor gain clamps to [0, 1] and reaches the backend', () => {
-    presenter.setMonitorGain(1.5);
-    expect(store.monitorGain).toBe(1);
-    expect(backend.lastGain).toBe(1);
-    presenter.setMonitorGain(-0.2);
-    expect(store.monitorGain).toBe(0);
+  test('output volume + mute map to the effective master volume', () => {
+    presenter.setOutputVolume(0.5);
+    expect(store.outputVolume).toBe(0.5);
+    expect(backend.lastOutputVolume).toBe(0.5);
+
+    presenter.setOutputMuted(true);
+    expect(backend.lastOutputVolume).toBe(0);
   });
 
   test('selections persist and are restored + re-applied on the next boot', async () => {
     await presenter.init();
+    presenter.setOutputVolume(0.4);
+    presenter.setMicVolume(0.5);
+    presenter.setMicMuted(true);
     await presenter.setOutputDevice('spk9');
-    presenter.setMonitorGain(0.5);
 
     const store2 = new AudioDeviceStore();
     const backend2 = new FakeBackend();
     const presenter2 = new AudioDevicePresenter(store2, backend2);
     await presenter2.init();
 
+    expect(store2.outputVolume).toBe(0.4);
+    expect(store2.micVolume).toBe(0.5);
+    expect(store2.micMuted).toBe(true);
     expect(store2.selectedOutputId).toBe('spk9');
-    expect(store2.monitorGain).toBe(0.5);
-    // a saved output route is re-applied to the engine on boot
+    // saved output route + volume re-applied to the engine on boot
     expect(backend2.sink).toBe('spk9');
+    expect(backend2.lastOutputVolume).toBe(0.4);
   });
 });

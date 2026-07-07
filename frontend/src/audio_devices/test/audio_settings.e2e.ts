@@ -1,32 +1,43 @@
 import { expect, test } from '@playwright/test';
 
-// Audio settings tab: open Settings, switch to Audio, and exercise the mic +
-// output pickers. Chromium runs with fake media devices (see
-// playwright.config.ts launch args), so getUserMedia / enumerateDevices resolve
-// headlessly without real hardware or a permission prompt.
+// Audio settings + the shared home-transport controls. Chromium runs with fake
+// media devices (see playwright.config.ts launch args), so getUserMedia /
+// enumerateDevices resolve headlessly without real hardware or a prompt (the
+// mic auto-monitors on load).
 
-test('audio settings: open, switch to Audio tab, enable mic + monitor', async ({ page }) => {
+test('audio: None options, per-channel mute/volume, Settings ↔ home in sync', async ({ page }) => {
   await page.goto('/');
+
+  // The home transport carries the shared mic + output controls.
+  await expect(page.getByTestId('home-audio-controls')).toBeVisible();
+  await expect(page.getByTestId('audio-mic-volume-home')).toBeVisible();
+  await expect(page.getByTestId('audio-output-volume-home')).toBeVisible();
 
   await page.getByTestId('settings-open').click();
   await expect(page.getByTestId('settings-modal')).toBeVisible();
-
   await page.getByTestId('settings-tab-audio').click();
-  const panel = page.getByTestId('audio-settings');
-  await expect(panel).toBeVisible();
-  await expect(page.getByTestId('audio-output-select')).toBeVisible();
+  await expect(page.getByTestId('audio-settings')).toBeVisible();
 
-  // Grant mic access if the "enable" affordance is shown, then confirm the
-  // input list populated and the monitor toggles on without error.
-  const enable = page.getByTestId('audio-enable-mic');
-  if (await enable.isVisible()) await enable.click();
+  // Both device pickers offer a "None" option.
+  await expect(page.getByTestId('audio-input-select').locator('option[value="none"]')).toHaveCount(1);
+  await expect(page.getByTestId('audio-output-select').locator('option[value="none"]')).toHaveCount(1);
 
-  await expect(page.getByTestId('audio-input-select').locator('option')).not.toHaveCount(1);
+  // Muting the mic in Settings reflects on the home control (same store).
+  const settingsMic = page.getByTestId('audio-mic-mute-settings');
+  const homeMic = page.getByTestId('audio-mic-mute-home');
+  await expect(settingsMic).toHaveAttribute('aria-pressed', 'false');
+  await settingsMic.click();
+  await expect(settingsMic).toHaveAttribute('aria-pressed', 'true');
+  await expect(homeMic).toHaveAttribute('aria-pressed', 'true');
 
-  // Click (not check()) then poll: the toggle is controlled, so it only flips
-  // once the async monitor start resolves and MobX re-renders.
-  await page.getByTestId('audio-monitor-toggle').click();
-  await expect(page.getByTestId('audio-monitor-toggle')).toBeChecked();
+  // Output mute works too.
+  const outMute = page.getByTestId('audio-output-mute-settings');
+  await outMute.click();
+  await expect(outMute).toHaveAttribute('aria-pressed', 'true');
+
+  // Switching the mic to None doesn't error.
+  await page.getByTestId('audio-input-select').selectOption('none');
+  await expect(page.getByTestId('audio-input-select')).toHaveValue('none');
 
   await page.getByRole('button', { name: 'Close settings' }).click();
   await expect(page.getByTestId('settings-modal')).toBeHidden();
