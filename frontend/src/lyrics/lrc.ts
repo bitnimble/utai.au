@@ -52,6 +52,26 @@ export type LyricWord = {
    *  / Chinese words, where `text` already is the aligned form. Debug-
    *  tooltip only; the renderer shows `text`. */
   romaji?: string;
+  /** Median voiced pitch over `startSec`..`endSec`, MIDI note number
+   *  (69 = A4). Drives the word chip's vertical placement on the lyrics
+   *  row. Absent when the word had no usable pitch (spoken / unvoiced)
+   *  or the aligner ran without the `pitch` capability. */
+  midi?: number;
+  /** Held notes within the word, in time order. More than one == melisma
+   *  (one syllable sung across several pitches). Each carries its own
+   *  pitch and, when the note is modulated, a `vibrato` descriptor.
+   *  Absent alongside `midi`. */
+  pitchSegments?: PitchSegment[];
+};
+
+/** One sustained note inside a word (see {@link LyricWord.pitchSegments}). */
+export type PitchSegment = {
+  startSec: number;
+  endSec: number;
+  /** MIDI note number of the held pitch. */
+  midi: number;
+  /** Present when the note is modulated with vibrato. */
+  vibrato?: { rateHz: number; extentSemitones: number };
 };
 
 export type LyricLine = {

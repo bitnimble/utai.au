@@ -20,6 +20,12 @@ import { barsRowWidthSeed } from '../utils/windowing';
  *  text plus the furigana strip stacked above it. */
 const LYRICS_ROW_HEIGHT = 64;
 
+/** When the track carries pitch, the row grows to make vertical room for the
+ *  words to spread across the pitch band (`PITCH_BAND_PX`, the peak-to-peak
+ *  travel between the lowest and highest sung notes). */
+const PITCHED_ROW_HEIGHT = 140;
+const PITCH_BAND_PX = 84;
+
 /**
  * The time-aligned lyrics row. A sticky gutter (label + source + overflow
  * menu) on the left, and a bars-row on the right carrying one
@@ -41,6 +47,13 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   const lines = track.lines;
   const offsetSec = track.offsetSec;
   const sourceLabel = track.sourceLabel;
+  // Grow the row only when there's pitch to show, so pitch-less tracks keep
+  // their compact single-lane layout unchanged.
+  const trackHasPitch = React.useMemo(
+    () => lines.some((l) => l.words?.some((w) => w.midi != null)),
+    [lines],
+  );
+  const rowHeight = trackHasPitch ? PITCHED_ROW_HEIGHT : LYRICS_ROW_HEIGHT;
   const alignPhase = lyricsAlign?.lyricsAlignStatuses.get(id)?.phase;
   const isAligning = alignPhase === 'aligning' || alignPhase === 'queued';
   const alignLabel = alignPhase === 'queued' ? 'Queued, waiting for the GPU' : 'Aligning lyrics to audio';
@@ -129,7 +142,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
 
   return (
     <div className={styles.lyricsTrack} data-testid="lyrics-track">
-      <div className={styles.lyricsGutter} style={{ height: LYRICS_ROW_HEIGHT }}>
+      <div className={styles.lyricsGutter} style={{ height: rowHeight }}>
         <div className={styles.lyricsGutterText}>
           <span className={styles.lyricsTitle}>Lyrics{isAligning ? ` · ${alignLabel}…` : ''}</span>
           <span className={styles.lyricsSource} title={sourceLabel}>
@@ -152,7 +165,8 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
             ['--layer-beats' as string]: layerBeats,
             ['--bars-row-width' as string]: barsRowWidthSeed(structural, layerBeats),
             ['--px-per-beat' as string]: pxPerBeat,
-            height: LYRICS_ROW_HEIGHT,
+            ['--lyric-pitch-band' as string]: trackHasPitch ? PITCH_BAND_PX : 0,
+            height: rowHeight,
           } as React.CSSProperties
         }
         onClick={(e) => seekFromClick(e, onSeek)}

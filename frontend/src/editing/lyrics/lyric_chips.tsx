@@ -167,11 +167,14 @@ const LyricWordChip = observer(
       '--lyric-word-beat-width': word.beatWidth,
     };
     if (shift > 0) wordStyle['--lyric-word-shift'] = `${shift}px`;
+    const pitched = word.pitchFrac !== undefined;
+    if (pitched) wordStyle['--lyric-word-pitch-frac'] = word.pitchFrac!;
     return (
       <span
         className={classNames(
           styles.lyricWord,
           isActive && styles.lyricWordActive,
+          pitched && styles.lyricWordPitched,
         )}
         style={wordStyle as React.CSSProperties}
         title={buildWordDebugTitle(word.source)}
@@ -180,6 +183,23 @@ const LyricWordChip = observer(
         <span className={styles.lyricWordText}>
           <WordText words={lineWordTexts} index={wordPosIndex} />
         </span>
+        {word.segments?.map((seg, si) => (
+          <span
+            key={si}
+            aria-hidden="true"
+            className={classNames(
+              styles.lyricPitchSeg,
+              seg.vibrato && styles.lyricPitchSegVibrato,
+            )}
+            style={
+              {
+                '--seg-beat-offset': seg.beatOffset,
+                '--seg-beat-width': seg.beatWidth,
+                '--seg-pitch-frac': seg.pitchFrac,
+              } as React.CSSProperties
+            }
+          />
+        ))}
       </span>
     );
   },

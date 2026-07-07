@@ -85,6 +85,10 @@
        no engraving inset, so `--note-pad-beats` has no writer and defaults
        to 0. */
     --note-pad-px: calc(var(--note-pad-beats, 0) * var(--px-per-beat) * 1px);
+    /* Peak-to-peak vertical travel (px) between the lowest and highest sung
+       notes. 0 on pitch-less tracks (set inline by lyrics_track_view.tsx), so
+       the pitch transforms below collapse to the plain centered lane. */
+    --lyric-pitch-band: 0;
     /* Furigana annotation font size, shared by the `rt` rule and the
        plain-word reserve (`.lyricsBarsRowFurigana`) so the rt's line box
        and the reserved strip stay in lockstep. 0.65em of the 22px base =
@@ -352,6 +356,54 @@
     font-variation-settings:
         'wdth' var(--lyric-wdth),
         'wght' var(--lyric-wght);
+}
+
+/* Pitch mode: the word chip is lifted off the centered lane to a height set
+   by its median pitch (`--lyric-word-pitch-frac`, 0 = bottom of the vocal
+   range, 1 = top) across the row's pitch band. Overrides `.lyricChipBase`'s
+   plain `translateY(-50%)`; must stay after it in source order to win. */
+.lyricWordPitched {
+    transform: translateY(
+        calc(-50% - (var(--lyric-word-pitch-frac) - 0.5) * var(--lyric-pitch-band) * 1px)
+    );
+}
+
+/* The melisma segment bars already trace the note durations, so the sustain
+   trailing rule would just be redundant clutter on a pitched word. */
+.lyricWordPitched::after {
+    display: none;
+}
+
+/* One held-note bar inside a pitched word (see LyricWordChip). Positioned in
+   time from the word's start (`--seg-beat-offset`) and in pitch relative to the
+   word's own height: the parent chip is already lifted by
+   `--lyric-word-pitch-frac`, so the bar re-derives the note's absolute height
+   from the delta to `--seg-pitch-frac`. More than one bar == melisma. */
+.lyricPitchSeg {
+    position: absolute;
+    top: 50%;
+    left: calc(var(--lyric-word-pad-left) + var(--seg-beat-offset) * var(--px-per-beat) * 1px);
+    width: max(2px, calc(var(--seg-beat-width) * var(--px-per-beat) * 1px));
+    height: 3px;
+    border-radius: 2px;
+    background: var(--color-accent);
+    opacity: 0.5;
+    transform: translateY(
+        calc(-50% + (var(--lyric-word-pitch-frac) - var(--seg-pitch-frac)) * var(--lyric-pitch-band) * 1px)
+    );
+    pointer-events: none;
+}
+
+/* Vibrato note: a striped, stronger bar so the modulated sustain reads
+   distinctly from a plain held note. */
+.lyricPitchSegVibrato {
+    height: 4px;
+    opacity: 0.9;
+    background: repeating-linear-gradient(
+        90deg,
+        var(--color-accent-strong) 0 3px,
+        transparent 3px 6px
+    );
 }
 
 /* Group/drag/drop affordances; same visual language as mixer.module.css
