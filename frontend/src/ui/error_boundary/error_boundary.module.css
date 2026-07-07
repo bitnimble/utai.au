@@ -1,0 +1,57 @@
+.overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: var(--color-bg-base);
+}
+
+.card {
+    display: flex;
+    max-width: 480px;
+    flex-direction: column;
+    gap: 12px;
+    padding: 24px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    background: var(--color-bg-neutral);
+    box-shadow: var(--shadow-lg);
+}
+
+.title {
+    composes: heading from '../../typography.module.css';
+    color: var(--color-text);
+}
+
+.message {
+    composes: body from '../../typography.module.css';
+    color: var(--color-text-muted);
+}
+
+.detail {
+    composes: mono from '../../typography.module.css';
+    overflow-wrap: anywhere;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-cream);
+    color: var(--color-text-faint);
+}
+
+.button {
+    composes: bodyEmphasis from '../../typography.module.css';
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 6px 14px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--color-accent);
+    color: var(--color-bg-base);
+    cursor: pointer;
+}
+
+.button:hover {
+    background: var(--color-accent-hover);
+}

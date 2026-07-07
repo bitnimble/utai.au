@@ -4,6 +4,35 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>utai.au</title>
+    <!-- Bricolage Grotesque variable font (opsz / wdth / wght axes), the
+         product font everywhere. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,200..800&display=swap"
+    />
+    <style>
+      html,
+      body {
+        font-family:
+          'Bricolage Grotesque',
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+      }
+      /* Form controls default to their own UA font; make every primitive
+         inherit the product font (backs up the per-component resets). */
+      button,
+      input,
+      select,
+      textarea,
+      optgroup {
+        font-family: inherit;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

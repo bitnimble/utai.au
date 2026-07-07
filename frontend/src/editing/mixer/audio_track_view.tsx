@@ -2,7 +2,7 @@ import classNames from 'classnames';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import type { StructuralPresenter } from 'src/editing/structure/structural_presenter';
-import { AudioTrack } from 'src/editing/playback/audio_tracks';
+import { AudioTrack, AudioTrackId } from 'src/editing/playback/audio_tracks';
 import { waveformWorker, BarSlice } from 'src/editing/playback/waveform_worker_client';
 import { WAVEFORM_PAINT_COLOR } from 'src/editing/utils/waveform_color';
 import { BarBeat, WaveformChunk, buildChunkLayout } from './waveform_chunks';
@@ -15,6 +15,42 @@ import { barsRowWidthSeed } from '../utils/windowing';
 
 /** Row height shared by the gutter label and the bars-row waveform. */
 const AUDIO_TRACK_HEIGHT = 76;
+
+// Trailing debounce (ms) for the expensive per-tile peak recompute + repaint.
+// The tile's CSS box (left/width) tracks zoom live, so during a zoom sweep the
+// bitmap just scales (stretches) and only repaints crisp once the gesture
+// settles, otherwise every intermediate zoom level posts a renderChunk per
+// visible tile, backing up the worker queue so it keeps painting after the
+// slider stops.
+const WAVEFORM_RENDER_DEBOUNCE_MS = 120;
+
+// `HTMLCanvasElement.transferControlToOffscreen()` is one-way and throws
+// ("already transferred") if called twice on the same element. React
+// StrictMode double-invokes effects (setup -> cleanup -> setup) on the SAME
+// canvas, so we guard the transfer and DEFER the release to a microtask that
+// the synchronous re-setup cancels; a transferred canvas can't be re-sent, so a
+// naive release-then-reattach would leave the tile permanently blank. A single
+// throw here otherwise takes down the whole editor (it did, over plain HTTP).
+const transferredCanvases = new WeakSet<HTMLCanvasElement>();
+const pendingChunkReleases = new Set<string>();
+
+function attachWaveformChunk(
+  canvas: HTMLCanvasElement,
+  chunkKey: string,
+  trackId: AudioTrackId,
+): () => void {
+  pendingChunkReleases.delete(chunkKey);
+  if (!transferredCanvases.has(canvas)) {
+    transferredCanvases.add(canvas);
+    waveformWorker.attachChunk(chunkKey, canvas.transferControlToOffscreen(), trackId);
+  }
+  return () => {
+    pendingChunkReleases.add(chunkKey);
+    queueMicrotask(() => {
+      if (pendingChunkReleases.delete(chunkKey)) waveformWorker.releaseChunk(chunkKey);
+    });
+  };
+}
 
 /** Display name: filename with its extension stripped. */
 function audioTrackLabel(filename: string): string {
@@ -175,11 +211,7 @@ const AudioTrackWaveformChunk = observer(
         console.warn('[mixer] OffscreenCanvas not supported; waveform chunk will not render');
         return;
       }
-      const offscreen = canvas.transferControlToOffscreen();
-      waveformWorker.attachChunk(chunkKey, offscreen, track.id);
-      return () => {
-        waveformWorker.releaseChunk(chunkKey);
-      };
+      return attachWaveformChunk(canvas, chunkKey, track.id);
     }, [chunkKey, track.id]);
 
     const isFirstDrawRef = React.useRef(true);
@@ -227,8 +259,8 @@ const AudioTrackWaveformChunk = observer(
         fire();
         return;
       }
-      const id = requestAnimationFrame(fire);
-      return () => cancelAnimationFrame(id);
+      const id = window.setTimeout(fire, WAVEFORM_RENDER_DEBOUNCE_MS);
+      return () => window.clearTimeout(id);
     }, [chunkKey, chunk, bars, height, livePxPerBeat, laneColor, ampScale, chunkLayout.width]);
 
     return (
