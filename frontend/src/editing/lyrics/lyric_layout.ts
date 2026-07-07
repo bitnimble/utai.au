@@ -108,11 +108,14 @@ export function positionLyricLines(
   structuralBeats: readonly number[],
   offsetSec: number,
   layerBeats: number,
+  opts?: { pitch?: boolean },
 ): PositionedLine[] {
   const out: PositionedLine[] = [];
   // One pass over every word to fix the vocal range, so a word's vertical
-  // fraction is stable across the whole track rather than per-line.
-  const range = pitchRange(lines);
+  // fraction is stable across the whole track rather than per-line. With pitch
+  // rendering off (a user setting) there's no range, so every word stays on the
+  // flat centred lane (pitchFrac / segments undefined, like a pitch-less track).
+  const range = opts?.pitch === false ? undefined : pitchRange(lines);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // Blank lines (LRC instrumental gap stamps with no text or words)
@@ -274,6 +277,7 @@ export function buildPitchLine(
   word: PositionedWord,
   trailPx: number,
   wavelengthPx: number,
+  drawVibrato: boolean,
 ): string | undefined {
   const segs = word.segments;
   if (word.pitchFrac === undefined || !segs || segs.length === 0) return undefined;
@@ -298,7 +302,7 @@ export function buildPitchLine(
     const flatStart = Math.min(x0 + transitionX, mid);
     const flatEnd = Math.max(x1 - transitionX, mid);
     const cx = (prevX + flatStart) / 2; // symmetric cubic control for a smooth S
-    if (g.vibrato) {
+    if (g.vibrato && drawVibrato) {
       // cycle count for a constant on-screen wavelength: run's pixel width / λ.
       const runPx = ((flatEnd - flatStart) / 100) * trailPx;
       const cycles = _clamp(runPx / wavelengthPx, 0.75, 40);

@@ -19,22 +19,25 @@ import styles from '../lyrics_track_view.module.css';
  * Mirrors LyricsTrackView's row geometry (px-per-beat, pitch band, row height)
  * minus the player/seek/overflow-menu wiring, which need live stores.
  */
-type DemoArgs = { pxPerBeat: number };
+type DemoArgs = { pitch: boolean; vibrato: boolean; pxPerBeat: number };
 
 const meta: Meta<DemoArgs> = {
   title: 'Editing/LyricsTrack',
   parameters: { layout: 'fullscreen' },
-  // The Zoom slider drives `--px-per-beat` exactly like the app's zoom, so you
-  // can watch the chips + pitch line scale/clip. The range mirrors the app's
-  // zoom bounds (floor ~45, max ~224 px/beat; see lyrics_measure.ts).
+  // These mirror the planned user settings. `Pitch` gates the vertical placement
+  // + the trailing pitch line (off => a flat straight lyrics track); `Vibrato`
+  // gates just the wave on vibrato notes. The Zoom slider drives `--px-per-beat`
+  // like the app's zoom (range mirrors the app's bounds; see lyrics_measure.ts).
   argTypes: {
+    pitch: { name: 'Pitch (vertical + line)', control: 'boolean' },
+    vibrato: { name: 'Vibrato waves', control: 'boolean' },
     pxPerBeat: {
       name: 'Zoom (px per second)',
       control: { type: 'range', min: 40, max: 260, step: 5 },
     },
   },
   // Default wider than the app's ~80 so held notes leave visible sustain slack.
-  args: { pxPerBeat: 130 },
+  args: { pitch: true, vibrato: true, pxPerBeat: 130 },
 };
 export default meta;
 
@@ -98,25 +101,16 @@ const LINES: LyricLine[] = [
   },
 ];
 
-/** Strip the pitch fields so the same lyrics render on the flat single lane
- *  (the pre-pitch / lyrics-only-backend fallback). */
-function withoutPitch(lines: LyricLine[]): LyricLine[] {
-  return lines.map((l) => ({
-    ...l,
-    words: l.words?.map(({ text, startSec, endSec }) => ({ text, startSec, endSec })),
-  }));
-}
-
-function LyricsTrackDemo({ lines, pxPerBeat }: { lines: LyricLine[]; pxPerBeat: number }) {
-  const hasPitch = lines.some((l) => l.words?.some((w) => w.midi != null));
+function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { lines: LyricLine[] }) {
+  const hasPitch = pitch && lines.some((l) => l.words?.some((w) => w.midi != null));
   const rowHeight = hasPitch ? PITCHED_ROW_HEIGHT : LYRICS_ROW_HEIGHT;
   const durationSec = Math.max(...lines.flatMap((l) => l.words?.map((w) => w.endSec) ?? [0])) + 1;
   const timeline = buildLinearTimeline(durationSec);
-  const positioned = positionLyricLines(lines, timeline, 0, [durationSec], 0, durationSec);
+  const positioned = positionLyricLines(lines, timeline, 0, [durationSec], 0, durationSec, { pitch });
   const emptyShifts = React.useMemo(() => new Map<string, number>(), []);
   const pitchPaths = React.useMemo(
-    () => computePitchPaths(positioned, pxPerBeat),
-    [positioned, pxPerBeat],
+    () => computePitchPaths(positioned, pxPerBeat, { vibrato }),
+    [positioned, pxPerBeat, vibrato],
   );
 
   return (
@@ -161,14 +155,10 @@ function LyricsTrackDemo({ lines, pxPerBeat }: { lines: LyricLine[]; pxPerBeat: 
   );
 }
 
-/** Words laid out vertically by pitch, with melisma ("sky") + vibrato accents.
- *  Drag the Zoom control to see scaling / clipping. */
-export const WithPitch: Story = {
-  render: (args) => <LyricsTrackDemo lines={LINES} pxPerBeat={args.pxPerBeat} />,
-};
-
-/** Same lyrics, no pitch data: the flat single-lane fallback (unchanged from
- *  before the pitch feature). */
-export const WithoutPitch: Story = {
-  render: (args) => <LyricsTrackDemo lines={withoutPitch(LINES)} pxPerBeat={args.pxPerBeat} />,
+/** The lyrics track from fixture data. Toggle **Pitch** (vertical placement +
+ *  the trailing pitch line) and **Vibrato waves** in Controls to see the user
+ *  settings; Pitch off gives the flat straight lyrics track. Drag **Zoom** to
+ *  check scaling / clipping. */
+export const Default: Story = {
+  render: (args) => <LyricsTrackDemo lines={LINES} {...args} />,
 };

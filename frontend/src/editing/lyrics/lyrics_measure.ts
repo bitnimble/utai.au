@@ -235,16 +235,18 @@ export function computeLyricShifts(
 export function computePitchPaths(
   lines: readonly PositionedLine[],
   pxPerBeat: number,
+  opts?: { vibrato?: boolean },
 ): Map<LyricShiftKey, string> {
   const out = new Map<LyricShiftKey, string>();
   if (!Number.isFinite(pxPerBeat) || pxPerBeat <= 0) return out;
+  const drawVibrato = opts?.vibrato !== false;
   for (const line of lines) {
     if (!line.wordPositions) continue;
     for (const w of line.wordPositions) {
       if (w.pitchFrac === undefined || !w.segments) continue;
       const textPx = lyricsMeasurer.measureWordPx(w.text, pxPerBeat, false);
       const trailPx = Math.max(0, w.beatWidth * pxPerBeat - textPx);
-      const path = buildPitchLine(w, trailPx, WAVE_WAVELENGTH_PX);
+      const path = buildPitchLine(w, trailPx, WAVE_WAVELENGTH_PX, drawVibrato);
       if (path) out.set(lyricShiftKey(line.i, w.sourceIdx), path);
     }
   }

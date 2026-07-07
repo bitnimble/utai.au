@@ -52,11 +52,18 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   const lines = track.lines;
   const offsetSec = track.offsetSec;
   const sourceLabel = track.sourceLabel;
-  // Grow the row only when there's pitch to show, so pitch-less tracks keep
-  // their compact single-lane layout unchanged.
+  // Pitch rendering toggles. Default on; these become user settings (a user may
+  // turn the row back into a flat straight lyrics track, or keep pitch but drop
+  // the vibrato waves). `pitchEnabled` gates the vertical placement + the pitch
+  // line; `vibratoEnabled` gates only the wave on vibrato notes.
+  // TODO(settings): source these from the user's lyrics settings.
+  const pitchEnabled = true;
+  const vibratoEnabled = true;
+  // Grow the row only when there's pitch to show, so pitch-less tracks (and the
+  // pitch-off setting) keep their compact single-lane layout unchanged.
   const trackHasPitch = React.useMemo(
-    () => lines.some((l) => l.words?.some((w) => w.midi != null)),
-    [lines],
+    () => pitchEnabled && lines.some((l) => l.words?.some((w) => w.midi != null)),
+    [lines, pitchEnabled],
   );
   const rowHeight = trackHasPitch ? PITCHED_ROW_HEIGHT : LYRICS_ROW_HEIGHT;
   const alignPhase = lyricsAlign?.lyricsAlignStatuses.get(id)?.phase;
@@ -80,8 +87,11 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // (none tick per frame) so the active-line/word highlight driven below
   // doesn't pull this walk along with it.
   const positioned = React.useMemo(
-    () => positionLyricLines(lines, timeline, songLeadInSec, structuralBeats, offsetSec, layerBeats),
-    [lines, timeline, songLeadInSec, structuralBeats, offsetSec, layerBeats],
+    () =>
+      positionLyricLines(lines, timeline, songLeadInSec, structuralBeats, offsetSec, layerBeats, {
+        pitch: pitchEnabled,
+      }),
+    [lines, timeline, songLeadInSec, structuralBeats, offsetSec, layerBeats, pitchEnabled],
   );
 
   // Word-collision avoidance: absolutely-positioned word spans can overlap
@@ -116,8 +126,8 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // zoom-dependent glyph measurement (the wave wavelength is derived from each
   // word's sustain pixel width), so this re-derives on zoom / font-load too.
   const pitchPaths = React.useMemo(
-    () => computePitchPaths(positioned, pxPerBeat),
-    [positioned, pxPerBeat, fontReady],
+    () => computePitchPaths(positioned, pxPerBeat, { vibrato: vibratoEnabled }),
+    [positioned, pxPerBeat, fontReady, vibratoEnabled],
   );
 
   // True once any word has a resolved furigana reading; drives the ruby
