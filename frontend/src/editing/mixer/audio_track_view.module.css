@@ -36,7 +36,7 @@
 }
 
 .musicTrackBarsRow {
-    composes: barsRowBase from '../jot_editor.module.css';
+    composes: barsRowBase from '../editor.module.css';
 }
 
 /* One waveform tile. `left`/`width` are set inline from JS (snapped to

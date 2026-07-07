@@ -24,20 +24,20 @@ export type RenderedStructure = {
   layers: { bars: { index: number; tsCount: number }[] }[];
 };
 
-export type JotTimeline = {
+export type UtaiTimeline = {
   totalDurationSec: number;
   bars: BarTiming[];
   rendered: RenderedStructure | undefined;
 };
 
-export const EMPTY_TIMELINE: JotTimeline = {
+export const EMPTY_TIMELINE: UtaiTimeline = {
   totalDurationSec: 0,
   bars: [],
   rendered: undefined,
 };
 
 /** Build the single-span linear timeline for a song of `durationSec`. */
-export function buildLinearTimeline(durationSec: number): JotTimeline {
+export function buildLinearTimeline(durationSec: number): UtaiTimeline {
   if (!(durationSec > 0)) return EMPTY_TIMELINE;
   return {
     totalDurationSec: durationSec,
@@ -47,13 +47,13 @@ export function buildLinearTimeline(durationSec: number): JotTimeline {
 }
 
 /** Map a playback time (seconds) to its pixel x, linearly. */
-export function timeToX(timeline: JotTimeline, seconds: number, pxPerSecond: number): number {
+export function timeToX(timeline: UtaiTimeline, seconds: number, pxPerSecond: number): number {
   const clamped = Math.min(Math.max(seconds, 0), timeline.totalDurationSec);
   return clamped * pxPerSecond;
 }
 
 /** Inverse of {@link timeToX}: pixel x back to a playback time in seconds. */
-export function xToTime(timeline: JotTimeline, x: number, pxPerSecond: number): number {
+export function xToTime(timeline: UtaiTimeline, x: number, pxPerSecond: number): number {
   if (pxPerSecond <= 0) return 0;
   const t = x / pxPerSecond;
   return Math.min(Math.max(t, 0), timeline.totalDurationSec);

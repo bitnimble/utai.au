@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite';
 import React from 'react';
-import { jotPlayer } from 'src/editing/playback/player';
-import { JotTimeline } from 'src/editing/playback/timeline';
+import { playbackEngine } from 'src/editing/playback/player';
+import { UtaiTimeline } from 'src/editing/playback/timeline';
 import styles from './playback.module.css';
 import { formatPlayheadTime, playheadBarBeat } from './playhead_label';
 
@@ -30,13 +30,13 @@ export const Playhead = observer(
     showLabel?: boolean;
     onSeek: (x: number) => void;
   }) => {
-    const timeline = jotPlayer.timeline;
+    const timeline = playbackEngine.timeline;
     const active =
-      jotPlayer.state === 'playing' ||
-      jotPlayer.state === 'paused' ||
+      playbackEngine.state === 'playing' ||
+      playbackEngine.state === 'paused' ||
       // Idle but the user clicked to position the playhead before
       // pressing Play; show it parked at the cued spot.
-      jotPlayer.cued;
+      playbackEngine.cued;
     if (!active || timeline.bars.length === 0) return null;
 
     const onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -74,12 +74,12 @@ export const Playhead = observer(
 /**
  * Time / bar-beat readout shown on top of the timeline-header playhead.
  * Only ONE instance ever mounts (the per-row playheads pass
- * `showLabel={false}`), so reading `jotPlayer.currentTime` here gives
+ * `showLabel={false}`), so reading `playbackEngine.currentTime` here gives
  * us a per-frame re-render of a tiny tree (two text nodes) and nothing
  * else, no shell rerenders, no per-row label rerenders.
  */
-const PlayheadLabel = observer(({ timeline }: { timeline: JotTimeline }) => {
-  const t = jotPlayer.currentTime;
+const PlayheadLabel = observer(({ timeline }: { timeline: UtaiTimeline }) => {
+  const t = playbackEngine.currentTime;
   const pos = playheadBarBeat(timeline, t);
   return (
     <div className={styles.playheadLabel}>

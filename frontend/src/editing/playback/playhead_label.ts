@@ -1,4 +1,4 @@
-import { JotTimeline } from 'src/editing/playback/timeline';
+import { UtaiTimeline } from 'src/editing/playback/timeline';
 
 /**
  * Format a playhead time (seconds) as `M:SS.cc`. Negative times (the
@@ -16,22 +16,22 @@ export function formatPlayheadTime(seconds: number): string {
 }
 
 /**
- * Convert the playhead's jot-time position to `Bar N, X.XXb` for the
+ * Convert the playhead's playback-time position to `Bar N, X.XXb` for the
  * second line of the label. Walks the timeline's per-bar timings to
- * find the bar containing `jotTime`, then computes beat-in-bar in the
+ * find the bar containing `playSec`, then computes beat-in-bar in the
  * bar's time-signature beats (1-indexed at the downbeat). Returns
  * `null` when no bar can be resolved (empty timeline / no rendered
  * layer). Pure; unit-tested in `playhead_label.test.ts`.
  */
-export function playheadBarBeat(timeline: JotTimeline, jotTime: number): string | null {
+export function playheadBarBeat(timeline: UtaiTimeline, playSec: number): string | null {
   const renderedBars = timeline.rendered?.layers[0]?.bars ?? [];
   if (renderedBars.length === 0 || timeline.bars.length === 0) return null;
   for (let i = 0; i < timeline.bars.length; i++) {
     const t = timeline.bars[i]!;
-    if (jotTime < t.startSec + t.durationSec) {
+    if (playSec < t.startSec + t.durationSec) {
       const rb = renderedBars[i];
       if (!rb || t.durationSec <= 0) return null;
-      const beatInBar = 1 + ((jotTime - t.startSec) / t.durationSec) * rb.tsCount;
+      const beatInBar = 1 + ((playSec - t.startSec) / t.durationSec) * rb.tsCount;
       // Truncate (not round) so the tail of a bar never rounds up to the
       // next bar's downbeat, e.g. 4/4 must go 4.99 → 1.00, never 5.00.
       const beatDisplay = (Math.floor(beatInBar * 100) / 100).toFixed(2);

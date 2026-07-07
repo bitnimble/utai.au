@@ -2,7 +2,7 @@ import classNames from 'classnames';
 import { Info } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
-import { jotPlayer } from 'src/editing/playback/player';
+import { playbackEngine } from 'src/editing/playback/player';
 import { Checkbox } from 'src/ui/checkbox/checkbox';
 import { Modal, ModalBody, ModalFooter, ModalHeader, modalStyles } from 'src/ui/modal/modal';
 import styles from './lyrics_text_modal.module.css';
@@ -53,7 +53,7 @@ export const LyricsTextLoadModal = observer(
 
     const trimmed = text.trim();
     const canLoad = trimmed.length > 0;
-    const hasAudioTracks = jotPlayer.audioTracks.size > 0;
+    const hasAudioTracks = playbackEngine.audioTracks.size > 0;
     const effectiveWordLevel = wordLevel && hasAudioTracks;
 
     const onLoad = () => {

@@ -7,7 +7,7 @@
  *  - `layerBeats`, the whole-song span in beats (== `durationSec`).
  *  - `viewGeometry`, one bar spanning the whole song (`beats == durationSec`).
  *  - `config`, the `ViewConfig` (engraving inset 0).
- *  - `timeline`, the single-span linear {@link JotTimeline}.
+ *  - `timeline`, the single-span linear {@link UtaiTimeline}.
  *
  * `makeAutoObservable` turns the getters into MobX computeds, so their
  * identity is stable between renders (only re-derived when `durationSec` /
@@ -16,7 +16,7 @@
 import { makeAutoObservable } from 'mobx';
 import { ViewConfig } from 'src/editing/viewport/view_config';
 import { ViewportStore } from 'src/editing/viewport/viewport_store';
-import { buildLinearTimeline, EMPTY_TIMELINE, JotTimeline } from 'src/editing/playback/timeline';
+import { buildLinearTimeline, EMPTY_TIMELINE, UtaiTimeline } from 'src/editing/playback/timeline';
 import { SongStore } from 'src/karaoke/song_store';
 
 /** Minimal per-bar geometry the lyrics/waveform rows read (`beats` only). */
@@ -55,7 +55,7 @@ export class StructuralPresenter {
   }
 
   /** Single-span linear timeline the lyrics row + playhead read. */
-  get timeline(): JotTimeline {
+  get timeline(): UtaiTimeline {
     return this.song.durationSec > 0 ? buildLinearTimeline(this.song.durationSec) : EMPTY_TIMELINE;
   }
 

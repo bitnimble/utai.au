@@ -1,14 +1,14 @@
 /**
  * Slim karaoke transport. Owns the observable playback state
  * (`state`, `currentTime`, `timeline`, `cued`), the loaded audio tracks,
- * and the rAF playhead loop. Playback runs each track through the
- * Signalsmith Stretch worklet on one shared `AudioContext`.
+ * and the rAF playhead loop. Playback plays each track through a plain
+ * `AudioBufferSourceNode` on one shared `AudioContext` (always 1×).
  *
  * Karaoke has no drums / MIDI / musical grid, so `songLeadInSec` is fixed
  * at 0 (recorded-audio time == playback time) and the timeline is the
  * single-span linear one built from the longest loaded track.
  *
- * One instance is shared app-wide (the `jotPlayer` singleton). The
+ * One instance is shared app-wide (the `utaiPlayer` singleton). The
  * `AudioContext` is created on first `play()` / track load so the module
  * stays side-effect-free at import time and construction can inherit a
  * user-gesture grant.
@@ -21,9 +21,9 @@ import {
   AudioTrackRole,
   decodeAudioTrackFile,
   decodeAudioTrackUrl,
-  preloadStretch,
 } from './audio_tracks';
-import { buildLinearTimeline, EMPTY_TIMELINE, JotTimeline } from './timeline';
+import type { PlaybackEngine } from './playback_engine';
+import { buildLinearTimeline, EMPTY_TIMELINE, UtaiTimeline } from './timeline';
 import { waveformWorker } from './waveform_worker_client';
 
 export type PlayerState = 'idle' | 'loading' | 'playing' | 'paused';
@@ -31,7 +31,7 @@ export type PlayerState = 'idle' | 'loading' | 'playing' | 'paused';
 const SCHEDULE_LEAD_SECONDS = 0.05;
 const PLAYBACK_TAIL_SECONDS = 0.5;
 
-export class JotPlayer {
+export class UtaiPlayer implements PlaybackEngine {
   /** Whether this engine can route output to a chosen device (Chromium's
    *  `AudioContext.setSinkId`). Web-only; a native backend reports its own. */
   static readonly outputSinkSupported =
@@ -42,7 +42,7 @@ export class JotPlayer {
   /** Seconds since the song start (playback == recorded-audio time). */
   currentTime = 0;
   /** Time↔pixel map for the current song. `EMPTY_TIMELINE` when no audio. */
-  timeline: JotTimeline = EMPTY_TIMELINE;
+  timeline: UtaiTimeline = EMPTY_TIMELINE;
   /** True when the user clicked to position the playhead while idle. */
   cued = false;
 
@@ -61,7 +61,7 @@ export class JotPlayer {
   private masterGain: GainNode | undefined;
   private controller: AudioTrackPlaybackController | undefined;
   private startContextTime = 0;
-  private startJotTime = 0;
+  private startPlaySec = 0;
   private rafId: number | undefined;
   private endTimerId: number | undefined;
   private pendingStartSec: number | undefined;
@@ -93,7 +93,6 @@ export class JotPlayer {
     });
     try {
       const ctx = this.ensureAudioContext();
-      preloadStretch(ctx);
       const { buffer, sourceBlob } = await decodeAudioTrackFile(ctx, file);
       const id = this.allocateAudioTrackId();
       this.installAudioTrack(id, file.name, buffer, sourceBlob, role);
@@ -110,7 +109,6 @@ export class JotPlayer {
   /** Same as {@link loadAudioTrack} but fetches from a URL. */
   async loadAudioTrackFromUrl(url: string, filename: string, role?: AudioTrackRole): Promise<AudioTrackId> {
     const ctx = this.ensureAudioContext();
-    preloadStretch(ctx);
     const { buffer, sourceBlob } = await decodeAudioTrackUrl(ctx, url);
     const id = this.allocateAudioTrackId();
     this.installAudioTrack(id, filename, buffer, sourceBlob, role);
@@ -149,7 +147,7 @@ export class JotPlayer {
     const target = Math.min(Math.max(seconds, 0), dur);
     if (this.state === 'idle') {
       this.pendingStartSec = target;
-      this.startJotTime = target;
+      this.startPlaySec = target;
       runInAction(() => {
         this.timeline = buildLinearTimeline(dur);
         this.currentTime = target;
@@ -162,8 +160,8 @@ export class JotPlayer {
     const now = ctx.currentTime;
     this.controller?.cancelSources();
     this.startContextTime = now;
-    this.startJotTime = target;
-    this.controller?.scheduleAll(this.audioTracks.values(), now, target, 1);
+    this.startPlaySec = target;
+    this.controller?.scheduleAll(this.audioTracks.values(), now, target);
     if (this.state === 'playing') this.scheduleTailTimer();
     runInAction(() => {
       this.currentTime = target;
@@ -185,10 +183,10 @@ export class JotPlayer {
       const audioStartTime = ctx.currentTime + SCHEDULE_LEAD_SECONDS;
       const anchor = cueSec !== undefined ? Math.min(Math.max(cueSec, 0), dur) : 0;
       this.startContextTime = audioStartTime;
-      this.startJotTime = anchor;
+      this.startPlaySec = anchor;
       this.controller?.dispose();
       this.controller = new AudioTrackPlaybackController(ctx, this.getOutputNode());
-      this.controller.scheduleAll(this.audioTracks.values(), audioStartTime, anchor, 1);
+      this.controller.scheduleAll(this.audioTracks.values(), audioStartTime, anchor);
       runInAction(() => {
         this.state = 'playing';
         this.timeline = buildLinearTimeline(dur);
@@ -199,7 +197,7 @@ export class JotPlayer {
       this.scheduleTailTimer();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error('[jotPlayer] play failed:', err);
+      console.error('[utaiPlayer] play failed:', err);
       runInAction(() => {
         this.state = 'idle';
         this.errorMessage = message;
@@ -229,10 +227,10 @@ export class JotPlayer {
       this.state = 'playing';
     });
     const now = ctx.currentTime;
-    const jotOffset = this.currentJotTime(now);
+    const offsetSec = this.playSecAt(now);
     this.startContextTime = now;
-    this.startJotTime = jotOffset;
-    this.controller?.scheduleAll(this.audioTracks.values(), now, jotOffset, 1);
+    this.startPlaySec = offsetSec;
+    this.controller?.scheduleAll(this.audioTracks.values(), now, offsetSec);
     this.startRaf();
     this.scheduleTailTimer();
   }
@@ -242,7 +240,7 @@ export class JotPlayer {
     this.stopRaf();
     this.controller?.dispose();
     this.controller = undefined;
-    this.startJotTime = 0;
+    this.startPlaySec = 0;
     this.pendingStartSec = undefined;
     runInAction(() => {
       if (this.state !== 'idle') this.state = 'idle';
@@ -252,9 +250,9 @@ export class JotPlayer {
     });
   }
 
-  /** Map an AudioContext time to its playback (jot) position. */
-  currentJotTime(audioTime: number): number {
-    return this.startJotTime + (audioTime - this.startContextTime);
+  /** Map an AudioContext time to its playback position (seconds). */
+  playSecAt(audioTime: number): number {
+    return this.startPlaySec + (audioTime - this.startContextTime);
   }
 
   private startRaf(): void {
@@ -264,7 +262,7 @@ export class JotPlayer {
         this.rafId = undefined;
         return;
       }
-      const t = this.currentJotTime(ctx.currentTime);
+      const t = this.playSecAt(ctx.currentTime);
       runInAction(() => {
         this.currentTime = Math.max(0, t);
       });
@@ -284,8 +282,8 @@ export class JotPlayer {
     this.clearTailTimer();
     const ctx = this.ctx;
     if (!ctx) return;
-    const remainingJot = this.durationSec - this.currentJotTime(ctx.currentTime);
-    const tailMs = Math.max(0, (remainingJot + PLAYBACK_TAIL_SECONDS) * 1000);
+    const remainingSec = this.durationSec - this.playSecAt(ctx.currentTime);
+    const tailMs = Math.max(0, (remainingSec + PLAYBACK_TAIL_SECONDS) * 1000);
     this.endTimerId = window.setTimeout(() => this.stop(), tailMs);
   }
 
@@ -334,4 +332,8 @@ export class JotPlayer {
   }
 }
 
-export const jotPlayer = new JotPlayer();
+export const utaiPlayer = new UtaiPlayer();
+
+/** The transport the app binds to. Web/Android use the Web Audio
+ *  `utaiPlayer`; the desktop native engine will replace this here. */
+export const playbackEngine: PlaybackEngine = utaiPlayer;

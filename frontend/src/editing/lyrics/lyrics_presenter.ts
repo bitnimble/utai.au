@@ -7,7 +7,7 @@ import {
 import { LyricLine, stripLyricNoise } from 'src/lyrics/lrc';
 import { LyricsSource, LyricsTrackId, lyricsStore } from 'src/lyrics/store';
 import { AudioTrackId } from 'src/editing/playback/audio_tracks';
-import { jotPlayer } from 'src/editing/playback/player';
+import { playbackEngine } from 'src/editing/playback/player';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import { LyricsAlignStore } from './lyrics_align_store';
@@ -118,7 +118,7 @@ export class LyricsPresenter {
 
   /** Best-effort duration to spread untimed lyric lines across. */
   private computeLyricsSpreadSec(): number {
-    const longestAudio = jotPlayer.durationSec;
+    const longestAudio = playbackEngine.durationSec;
     return longestAudio > 0 ? longestAudio : 60;
   }
 
@@ -163,7 +163,7 @@ export class LyricsPresenter {
    * Undefined only when no audio tracks are loaded.
    */
   private pickAudioTrackForAlignment(): { id: AudioTrackId; kind: 'mix' | 'vocals' } | undefined {
-    const tracks = Array.from(jotPlayer.audioTracks.values());
+    const tracks = Array.from(playbackEngine.audioTracks.values());
     if (tracks.length === 0) return undefined;
     for (const t of tracks) {
       if (t.role === 'vocals' || nameLooksLikeVocals(t.filename)) {
@@ -188,7 +188,7 @@ export class LyricsPresenter {
       toastStore.showError('Word-level alignment needs an audio track; load one first.');
       return;
     }
-    const track = jotPlayer.audioTracks.get(pick.id);
+    const track = playbackEngine.audioTracks.get(pick.id);
     if (!track) return;
     const file = new File([track.sourceBlob], track.filename, { type: track.sourceBlob.type });
     const req: AlignLyricsRequest = {

@@ -6,7 +6,7 @@ import { AudioTrack, AudioTrackId } from 'src/editing/playback/audio_tracks';
 import { waveformWorker, BarSlice } from 'src/editing/playback/waveform_worker_client';
 import { WAVEFORM_PAINT_COLOR } from 'src/editing/utils/waveform_color';
 import { BarBeat, WaveformChunk, buildChunkLayout } from './waveform_chunks';
-import { StructuralContext } from '../jot_editor_contexts';
+import { StructuralContext } from '../editor_contexts';
 import { ViewportStoreContext } from '../viewport/viewport_contexts';
 import styles from './audio_track_view.module.css';
 import { Playhead } from '../playback/playhead';

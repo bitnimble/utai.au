@@ -2,7 +2,7 @@ import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
 import { Music, Pause, Play, Search, Settings, Square } from 'lucide-react';
 import React from 'react';
-import { jotPlayer } from 'src/editing/playback/player';
+import { playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
 import { formatPlayheadTime } from 'src/editing/playback/playhead_label';
 import { AudioTrackView } from 'src/editing/mixer/audio_track_view';
@@ -16,7 +16,7 @@ import {
   LyricsPresenterContext,
 } from 'src/editing/lyrics/lyrics_contexts';
 import { StructuralPresenter } from 'src/editing/structure/structural_presenter';
-import { StructuralContext } from 'src/editing/jot_editor_contexts';
+import { StructuralContext } from 'src/editing/editor_contexts';
 import { ViewportStore } from 'src/editing/viewport/viewport_store';
 import { ViewportStoreContext } from 'src/editing/viewport/viewport_contexts';
 import { ViewConfig } from 'src/editing/viewport/view_config';
@@ -127,7 +127,7 @@ export const KaraokePage = observer(function KaraokePage() {
       audioDevice,
       audioDevicePresenter,
       lyricsStore,
-      jotPlayer,
+      playbackEngine,
     };
   }, [
     song,
@@ -188,7 +188,7 @@ const Toolbar = observer(function Toolbar() {
   };
 
   const firstLyricsId = lyricsStore.trackIds[0];
-  const canAlign = firstLyricsId !== undefined && jotPlayer.audioTracks.size > 0;
+  const canAlign = firstLyricsId !== undefined && playbackEngine.audioTracks.size > 0;
 
   return (
     <header className={styles.toolbar}>
@@ -267,7 +267,7 @@ const ScoreArea = observer(function ScoreArea() {
   const presenter = React.useContext(KaraokePresenterContext)!;
   const viewport = React.useContext(ViewportStoreContext)!;
   const scrollRef = React.useRef<HTMLDivElement>(null);
-  const audioTrackIds = Array.from(jotPlayer.audioTracks.keys());
+  const audioTrackIds = Array.from(playbackEngine.audioTracks.keys());
   const lyricsIds = lyricsStore.trackIds;
   const hasContent = audioTrackIds.length > 0 || lyricsIds.length > 0;
 
@@ -287,7 +287,7 @@ const ScoreArea = observer(function ScoreArea() {
   // observable graph (autorun), not a raw rAF, so it quiesces when idle.
   React.useEffect(() => {
     return autorun(() => {
-      const x = jotPlayer.currentTime * viewport.pxPerBeat;
+      const x = playbackEngine.currentTime * viewport.pxPerBeat;
       const nodes = document.querySelectorAll<HTMLElement>('[data-playhead="1"]');
       for (const n of nodes) n.style.setProperty('--playhead-x', `${x}px`);
     });
@@ -308,7 +308,7 @@ const ScoreArea = observer(function ScoreArea() {
         </div>
       )}
       {audioTrackIds.map((id) => {
-        const track = jotPlayer.audioTracks.get(id);
+        const track = playbackEngine.audioTracks.get(id);
         return track ? <AudioTrackView key={id} track={track} onSeek={onSeek} /> : null;
       })}
       {lyricsIds.map((id) => (
@@ -321,7 +321,7 @@ const ScoreArea = observer(function ScoreArea() {
 const TransportBar = observer(function TransportBar() {
   const presenter = React.useContext(KaraokePresenterContext)!;
   const song = React.useContext(SongStoreContext)!;
-  const playing = jotPlayer.state === 'playing';
+  const playing = playbackEngine.state === 'playing';
   const canPlay = song.durationSec > 0;
   return (
     <footer className={styles.transport}>
@@ -338,7 +338,7 @@ const TransportBar = observer(function TransportBar() {
       <button
         type="button"
         className={styles.transportButton}
-        disabled={jotPlayer.state === 'idle'}
+        disabled={playbackEngine.state === 'idle'}
         onClick={() => presenter.stop()}
         aria-label="Stop"
         data-testid="transport-stop"
@@ -346,7 +346,7 @@ const TransportBar = observer(function TransportBar() {
         <Square size={16} aria-hidden="true" />
       </button>
       <span className={styles.transportTime} data-testid="transport-time">
-        {formatPlayheadTime(jotPlayer.currentTime)}
+        {formatPlayheadTime(playbackEngine.currentTime)}
         {song.durationSec > 0 ? ` / ${formatPlayheadTime(song.durationSec)}` : ''}
       </span>
       <HomeAudioControls />

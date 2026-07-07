@@ -1,4 +1,4 @@
-import { JotPlayer, jotPlayer } from 'src/editing/playback/player';
+import { UtaiPlayer, utaiPlayer } from 'src/editing/playback/player';
 import {
   NONE_DEVICE_ID,
   type AudioDevice,
@@ -16,7 +16,7 @@ import {
  * bus so one sink choice routes the track and the monitor together.
  */
 export class WebAudioBackend implements AudioIoBackend {
-  readonly outputSelectable = JotPlayer.outputSinkSupported;
+  readonly outputSelectable = UtaiPlayer.outputSinkSupported;
 
   private stream: MediaStream | undefined;
   private source: MediaStreamAudioSourceNode | undefined;
@@ -79,7 +79,7 @@ export class WebAudioBackend implements AudioIoBackend {
         autoGainControl: false,
       },
     });
-    const ctx = jotPlayer.getAudioContext();
+    const ctx = utaiPlayer.getAudioContext();
     // Best-effort: without a prior user gesture resume() rejects; the graph is
     // built regardless and becomes audible once the context resumes (on play).
     if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
@@ -90,7 +90,7 @@ export class WebAudioBackend implements AudioIoBackend {
     analyser.fftSize = 1024;
     source.connect(analyser);
     source.connect(gainNode);
-    gainNode.connect(jotPlayer.getOutputNode());
+    gainNode.connect(utaiPlayer.getOutputNode());
 
     this.stream = stream;
     this.source = source;
@@ -105,7 +105,7 @@ export class WebAudioBackend implements AudioIoBackend {
   }
 
   setOutputVolume(volume: number): void {
-    jotPlayer.setOutputVolume(volume);
+    utaiPlayer.setOutputVolume(volume);
   }
 
   stopMonitor(): void {
@@ -126,7 +126,7 @@ export class WebAudioBackend implements AudioIoBackend {
 
   async setOutputSink(outputId: string): Promise<void> {
     if (!this.outputSelectable) return;
-    await jotPlayer.setOutputSink(outputId === NONE_DEVICE_ID ? { type: 'none' } : outputId);
+    await utaiPlayer.setOutputSink(outputId === NONE_DEVICE_ID ? { type: 'none' } : outputId);
   }
 
   private runLevelLoop(onLevel: (level: number) => void): void {

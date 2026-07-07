@@ -4,7 +4,7 @@ import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { parseLrc } from 'src/lyrics/lrc';
 import { ciTrimEq, LrclibMatch, searchLrclib } from 'src/lyrics/lrclib';
-import { jotPlayer } from 'src/editing/playback/player';
+import { playbackEngine } from 'src/editing/playback/player';
 import { Checkbox } from 'src/ui/checkbox/checkbox';
 import { Modal, ModalHeader } from 'src/ui/modal/modal';
 import { Spinner } from 'src/ui/spinner/spinner';
@@ -142,7 +142,7 @@ export const LyricsSearchModal = observer(
 
     const matches = phase.kind === 'results' ? phase.matches : [];
     const selectedMatch = matches.find((m) => matchKey(m) === selectedId);
-    const hasAudioTracks = jotPlayer.audioTracks.size > 0;
+    const hasAudioTracks = playbackEngine.audioTracks.size > 0;
     const effectiveWordLevel = wordLevel && hasAudioTracks;
 
     const onPickResult = (match: LrclibMatch) => {

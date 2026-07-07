@@ -1,5 +1,5 @@
 import { makeAutoObservable, runInAction } from 'mobx';
-import { jotPlayer } from 'src/editing/playback/player';
+import { playbackEngine } from 'src/editing/playback/player';
 import { AudioTrackRole } from 'src/editing/playback/audio_tracks';
 import {
   MAX_PX_PER_SECOND,
@@ -46,9 +46,9 @@ export class KaraokePresenter {
    *  duration (the longest track drives the shared time axis). */
   async loadAudioFile(file: File, role?: AudioTrackRole): Promise<void> {
     try {
-      await jotPlayer.loadAudioTrack(file, role);
+      await playbackEngine.loadAudioTrack(file, role);
       runInAction(() => {
-        this.song.durationSec = jotPlayer.durationSec;
+        this.song.durationSec = playbackEngine.durationSec;
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -61,17 +61,17 @@ export class KaraokePresenter {
   /** Space-bar / button transport: play from idle, pause while playing,
    *  resume while paused. */
   togglePlay(): void {
-    if (jotPlayer.state === 'playing') {
-      void jotPlayer.pause();
-    } else if (jotPlayer.state === 'paused') {
-      void jotPlayer.resume();
+    if (playbackEngine.state === 'playing') {
+      void playbackEngine.pause();
+    } else if (playbackEngine.state === 'paused') {
+      void playbackEngine.resume();
     } else {
-      void jotPlayer.play();
+      void playbackEngine.play();
     }
   }
 
   stop(): void {
-    jotPlayer.stop();
+    playbackEngine.stop();
   }
 
   /** Click-to-seek from a bars-row-local pixel x (0 == the row's left edge,
@@ -79,6 +79,6 @@ export class KaraokePresenter {
   seekToX(x: number): void {
     const pxPerSecond = this.viewport.pxPerBeat;
     if (pxPerSecond <= 0) return;
-    jotPlayer.seek(x / pxPerSecond);
+    playbackEngine.seek(x / pxPerSecond);
   }
 }

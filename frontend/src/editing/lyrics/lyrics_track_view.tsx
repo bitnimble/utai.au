@@ -1,11 +1,11 @@
 import classNames from 'classnames';
 import { observer, useLocalObservable } from 'mobx-react-lite';
 import React from 'react';
-import { StructuralContext } from '../jot_editor_contexts';
+import { StructuralContext } from '../editor_contexts';
 import { furiganaAnnotator } from 'src/lyrics/furigana';
 import { activeLineIndexAt, activeWordIndexAt } from 'src/lyrics/lrc';
 import { LyricsTrackId, lyricsStore } from 'src/lyrics/store';
-import { jotPlayer } from 'src/editing/playback/player';
+import { playbackEngine } from 'src/editing/playback/player';
 import { LyricsPresenterContext, LyricsAlignStoreContext } from './lyrics_contexts';
 import { LyricLineMeasureInput, computeLyricShifts, lyricsMeasurer } from './lyrics_measure';
 import { positionLyricLines } from './lyric_layout';
@@ -55,7 +55,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // The song's single-span linear timeline is the canonical audio-sec →
   // beat source. `songLeadInSec` is 0 in karaoke.
   const timeline = structural.timeline;
-  const songLeadInSec = jotPlayer.songLeadInSec;
+  const songLeadInSec = playbackEngine.songLeadInSec;
   const pxPerBeat = structural.pxPerBeat;
 
   // Pre-compute each line's beat positions. Memoised on the pure inputs
@@ -111,7 +111,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // chips are `observer` + memo so only the flipped chips re-run.
   const playhead = useLocalObservable(() => ({
     get audioTimeNow(): number {
-      return jotPlayer.currentTime - jotPlayer.songLeadInSec;
+      return playbackEngine.currentTime - playbackEngine.songLeadInSec;
     },
     get activeLineIdx(): number | undefined {
       const t = lyricsStore.get(id);

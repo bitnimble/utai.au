@@ -77,7 +77,7 @@
 }
 
 .lyricsBarsRow {
-    composes: barsRowBase from '../jot_editor.module.css';
+    composes: barsRowBase from '../editor.module.css';
     /* `--px-per-beat` (px per second) is written inline per row by
        lyrics_track_view.tsx; the chips' zoom-responsive font metrics
        (letter-spacing / wdth / wght below) and word-cell `left` / `width`
