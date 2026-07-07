@@ -26,7 +26,9 @@ export default meta;
 
 type Story = StoryObj;
 
-const PX_PER_BEAT = 100; // pixels per second (1 beat == 1 second in karaoke)
+// Pixels per second (1 beat == 1 second in karaoke). Wider than the app's ~80
+// default so held notes leave visible sustain slack for the pitch line to fill.
+const PX_PER_BEAT = 130;
 const LYRICS_ROW_HEIGHT = 64;
 const PITCHED_ROW_HEIGHT = 140;
 const PITCH_BAND_PX = 84;

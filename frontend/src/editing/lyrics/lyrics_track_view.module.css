@@ -368,42 +368,49 @@
     );
 }
 
-/* The melisma segment bars already trace the note durations, so the sustain
-   trailing rule would just be redundant clutter on a pitched word. */
+/* The pitch line (below) IS the sustain indicator on a pitched word, so hide
+   the default trailing rule that fills a held word's slack. */
 .lyricWordPitched::after {
     display: none;
 }
 
-/* One held-note bar inside a pitched word (see LyricWordChip). Positioned in
-   time from the word's start (`--seg-beat-offset`) and in pitch relative to the
-   word's own height: the parent chip is already lifted by
-   `--lyric-word-pitch-frac`, so the bar re-derives the note's absolute height
-   from the delta to `--seg-pitch-frac`. More than one bar == melisma. */
-.lyricPitchSeg {
-    position: absolute;
-    top: 50%;
-    left: calc(var(--lyric-word-pad-left) + var(--seg-beat-offset) * var(--px-per-beat) * 1px);
-    width: max(2px, calc(var(--seg-beat-width) * var(--px-per-beat) * 1px));
-    height: 3px;
-    border-radius: 2px;
-    background: var(--color-accent);
-    opacity: 0.5;
-    transform: translateY(
-        calc(-50% + (var(--lyric-word-pitch-frac) - var(--seg-pitch-frac)) * var(--lyric-pitch-band) * 1px)
-    );
+/* The sung-pitch line lives in the flex slack AFTER the word's glyphs: it fills
+   from the text's right edge to the word cell's end, so it only shows when the
+   note is held longer than the text takes to read (a quick word leaves no slack
+   -> zero width -> nothing), and never strikes through the glyphs. Zero-height +
+   `align-self: center` anchors it on the text's vertical centre; the SVG then
+   overflows symmetrically to the pitch band. */
+.lyricPitchTrail {
+    flex: 1 1 0;
+    min-width: 0;
+    align-self: center;
+    height: 0;
+    position: relative;
     pointer-events: none;
 }
 
-/* Vibrato note: a striped, stronger bar so the modulated sustain reads
-   distinctly from a plain held note. */
-.lyricPitchSegVibrato {
-    height: 4px;
-    opacity: 0.9;
-    background: repeating-linear-gradient(
-        90deg,
-        var(--color-accent-strong) 0 3px,
-        transparent 3px 6px
-    );
+/* SVG canvas for the pitch contour. Spans the slack width, `--lyric-pitch-band`
+   tall, centred on the text (translateY -50%). The path (see
+   `lyric_layout.pitchContourPath`) draws a continuous line at the median pitch,
+   stepping smoothly to melisma notes and going wavy over vibrato. */
+.lyricPitchLine {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: calc(var(--lyric-pitch-band) * 1px);
+    transform: translateY(-50%);
+    overflow: visible;
+}
+
+.lyricPitchLine path {
+    fill: none;
+    stroke: var(--color-accent);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    /* Keep the stroke an even 2px despite the non-uniform viewBox stretch. */
+    vector-effect: non-scaling-stroke;
 }
 
 /* Group/drag/drop affordances; same visual language as mixer.module.css

@@ -5,7 +5,7 @@ import { RubySegment, furiganaAnnotator } from 'src/lyrics/furigana';
 import { LyricWord } from 'src/lyrics/lrc';
 import { ViewportStoreContext } from '../viewport/viewport_contexts';
 import { intersectsBeatRange } from '../utils/windowing';
-import { PositionedLine, PositionedWord } from './lyric_layout';
+import { PositionedLine, PositionedWord, pitchContourPath } from './lyric_layout';
 import { lyricShiftKey } from './lyrics_measure';
 import styles from './lyrics_track_view.module.css';
 
@@ -183,23 +183,17 @@ const LyricWordChip = observer(
         <span className={styles.lyricWordText}>
           <WordText words={lineWordTexts} index={wordPosIndex} />
         </span>
-        {word.segments?.map((seg, si) => (
-          <span
-            key={si}
-            aria-hidden="true"
-            className={classNames(
-              styles.lyricPitchSeg,
-              seg.vibrato && styles.lyricPitchSegVibrato,
-            )}
-            style={
-              {
-                '--seg-beat-offset': seg.beatOffset,
-                '--seg-beat-width': seg.beatWidth,
-                '--seg-pitch-frac': seg.pitchFrac,
-              } as React.CSSProperties
-            }
-          />
-        ))}
+        {pitched && word.segments && word.segments.length > 0 && (
+          <span className={styles.lyricPitchTrail} aria-hidden="true">
+            <svg
+              className={styles.lyricPitchLine}
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+            >
+              <path d={pitchContourPath(word)} />
+            </svg>
+          </span>
+        )}
       </span>
     );
   },
