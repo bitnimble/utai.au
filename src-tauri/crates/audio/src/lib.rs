@@ -7,4 +7,8 @@
 
 pub mod decode;
 pub mod mixer;
+pub mod resample;
 pub mod transport;
+
+#[cfg(feature = "device")]
+pub mod device;
