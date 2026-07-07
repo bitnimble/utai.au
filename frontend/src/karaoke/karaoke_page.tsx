@@ -2,7 +2,7 @@ import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
 import { Music, Pause, Play, Search, Settings, Square } from 'lucide-react';
 import React from 'react';
-import { playbackEngine } from 'src/editing/playback/player';
+import { nativeAudioEngine, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
 import { formatPlayheadTime } from 'src/editing/playback/playhead_label';
 import { AudioTrackView } from 'src/editing/mixer/audio_track_view';
@@ -33,6 +33,7 @@ import { AudioDeviceStore } from 'src/audio_devices/audio_device_store';
 import { AudioDevicePresenter } from 'src/audio_devices/audio_device_presenter';
 import { NONE_DEVICE_ID } from 'src/audio_devices/audio_io_backend';
 import { WebAudioBackend } from 'src/audio_devices/web_audio_backend';
+import { NativeAudioBackend } from 'src/audio_devices/native_audio_backend';
 import {
   AudioDevicePresenterContext,
   AudioDeviceStoreContext,
@@ -76,7 +77,12 @@ function buildSession(): Session {
   // None so the browser never prompts for the mic on load (the user opts in).
   const isDesktopApp = isTauri() && !__IS_MOBILE__;
   const audioDevice = new AudioDeviceStore(isDesktopApp ? '' : NONE_DEVICE_ID);
-  const audioDevicePresenter = new AudioDevicePresenter(audioDevice, new WebAudioBackend());
+  // Desktop routes the mic/device backend to the one native engine; web uses
+  // the Web Audio backend.
+  const audioBackend = nativeAudioEngine
+    ? new NativeAudioBackend(nativeAudioEngine)
+    : new WebAudioBackend();
+  const audioDevicePresenter = new AudioDevicePresenter(audioDevice, audioBackend);
   return {
     song,
     viewport,
@@ -105,6 +111,12 @@ export const KaraokePage = observer(function KaraokePage() {
     audioDevice,
     audioDevicePresenter,
   } = session;
+
+  // Open the native engine's telemetry stream on desktop (no-op on web).
+  React.useEffect(() => {
+    nativeAudioEngine?.init();
+    return () => nativeAudioEngine?.dispose();
+  }, []);
 
   // Boot the audio-device layer (enumerate, restore prefs, resume a saved
   // monitor) once, and release the mic on unmount.

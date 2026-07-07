@@ -13,6 +13,7 @@
  * stays side-effect-free at import time and construction can inherit a
  * user-gesture grant.
  */
+import { isTauri } from '@tauri-apps/api/core';
 import { makeAutoObservable, runInAction } from 'mobx';
 import {
   AudioTrack,
@@ -22,6 +23,7 @@ import {
   decodeAudioTrackFile,
   decodeAudioTrackUrl,
 } from './audio_tracks';
+import { NativeAudioEngine } from './native_audio_engine';
 import type { PlaybackEngine } from './playback_engine';
 import { buildLinearTimeline, EMPTY_TIMELINE, UtaiTimeline } from './timeline';
 import { waveformWorker } from './waveform_worker_client';
@@ -334,6 +336,12 @@ export class UtaiPlayer implements PlaybackEngine {
 
 export const utaiPlayer = new UtaiPlayer();
 
-/** The transport the app binds to. Web/Android use the Web Audio
- *  `utaiPlayer`; the desktop native engine will replace this here. */
-export const playbackEngine: PlaybackEngine = utaiPlayer;
+/** The native Rust/cpal engine on the desktop app, else `undefined` (web +
+ *  Android use Web Audio). Exposed so the desktop device backend can share the
+ *  one engine instance. Call `.init()` once mounted. */
+export const nativeAudioEngine =
+  isTauri() && !__IS_MOBILE__ ? new NativeAudioEngine() : undefined;
+
+/** The transport the app binds to: the native engine on desktop, else the Web
+ *  Audio `utaiPlayer`. */
+export const playbackEngine: PlaybackEngine = nativeAudioEngine ?? utaiPlayer;
