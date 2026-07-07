@@ -28,8 +28,10 @@ import {
 } from 'src/music_source/music_source_contexts';
 import { MusicSourcePresenter } from 'src/music_source/music_source_presenter';
 import { MusicSourceStore } from 'src/music_source/music_source_store';
+import { isTauri } from '@tauri-apps/api/core';
 import { AudioDeviceStore } from 'src/audio_devices/audio_device_store';
 import { AudioDevicePresenter } from 'src/audio_devices/audio_device_presenter';
+import { NONE_DEVICE_ID } from 'src/audio_devices/audio_io_backend';
 import { WebAudioBackend } from 'src/audio_devices/web_audio_backend';
 import {
   AudioDevicePresenterContext,
@@ -70,7 +72,10 @@ function buildSession(): Session {
   const musicPresenter = new MusicSourcePresenter(musicSource, (file) =>
     presenter.loadAudioFile(file),
   );
-  const audioDevice = new AudioDeviceStore();
+  // Desktop app defaults the mic to the system device; web + mobile default to
+  // None so the browser never prompts for the mic on load (the user opts in).
+  const isDesktopApp = isTauri() && !__IS_MOBILE__;
+  const audioDevice = new AudioDeviceStore(isDesktopApp ? '' : NONE_DEVICE_ID);
   const audioDevicePresenter = new AudioDevicePresenter(audioDevice, new WebAudioBackend());
   return {
     song,

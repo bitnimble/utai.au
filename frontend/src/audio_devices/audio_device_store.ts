@@ -11,15 +11,17 @@ export class AudioDeviceStore {
   inputs: AudioDevice[] = [];
   outputs: AudioDevice[] = [];
 
-  /** Selected devices; `''` = system default, {@link NONE_DEVICE_ID} = none. */
-  selectedInputId = '';
+  /** Selected devices; `''` = system default, {@link NONE_DEVICE_ID} = none.
+   *  The input default is platform-dependent (see the ctor param). */
+  selectedInputId: string;
   selectedOutputId = '';
 
   permission: MicPermission = 'unknown';
 
-  /** Microphone monitor level in [0, 1] (how loud you hear yourself). */
+  /** Microphone monitor level in [0, 1] (how loud you hear yourself). Muted by
+   *  default on every platform, so the mic never goes out unprompted. */
   micVolume = 0.8;
-  micMuted = false;
+  micMuted = true;
   /** Overall output level in [0, 1] (tracks + monitor). */
   outputVolume = 1;
   outputMuted = false;
@@ -30,7 +32,11 @@ export class AudioDeviceStore {
   /** Whether the engine can route output to a chosen device. */
   outputSelectable = false;
 
-  constructor() {
+  /** `defaultInputId` seeds {@link selectedInputId} for a fresh install (no
+   *  saved pref): `''` (system default) on desktop, {@link NONE_DEVICE_ID} on
+   *  web, so the browser build never prompts for the mic unbidden. */
+  constructor(defaultInputId = '') {
+    this.selectedInputId = defaultInputId;
     makeAutoObservable(this);
   }
 

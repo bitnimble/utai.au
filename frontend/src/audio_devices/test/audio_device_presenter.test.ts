@@ -82,6 +82,12 @@ describe('AudioDevicePresenter', () => {
     expect(store.outputSelectable).toBe(true);
   });
 
+  test('seeds the input from the platform default; mic muted by default', () => {
+    expect(new AudioDeviceStore().selectedInputId).toBe(''); // desktop: system default
+    expect(new AudioDeviceStore(NONE_DEVICE_ID).selectedInputId).toBe('none'); // web: none
+    expect(new AudioDeviceStore().micMuted).toBe(true);
+  });
+
   test('refreshDevices splits inputs and outputs', async () => {
     backend.devices = [
       { id: 'mic1', label: 'Mic', kind: 'input' },
@@ -115,16 +121,20 @@ describe('AudioDevicePresenter', () => {
     expect(store.permission).toBe('denied');
   });
 
-  test('mic volume + mute map to the effective monitor gain', () => {
+  test('mic is muted by default; volume + mute map to the effective monitor gain', () => {
+    expect(store.micMuted).toBe(true);
+
+    // muted → gain stays 0 regardless of volume
     presenter.setMicVolume(0.5);
     expect(store.micVolume).toBe(0.5);
-    expect(backend.lastMicGain).toBe(0.5);
-
-    presenter.setMicMuted(true);
     expect(backend.lastMicGain).toBe(0);
+
+    presenter.setMicMuted(false);
+    expect(backend.lastMicGain).toBe(0.5);
 
     presenter.setMicVolume(1.5);
     expect(store.micVolume).toBe(1); // clamped
+    expect(backend.lastMicGain).toBe(1);
   });
 
   test('output volume + mute map to the effective master volume', () => {
