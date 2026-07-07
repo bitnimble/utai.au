@@ -14,9 +14,10 @@
 # system zone) so in-container timestamps (runner logs, `date`, Python
 # localtime) match the host instead of the image's UTC.
 HOST_TZ="${TZ:-$(timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo Etc/UTC)}"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 sudo docker run -d --name utai-sandbox --gpus all --shm-size=2g \
   -e TZ="$HOST_TZ" \
-  -v /home/bitnimble/code/utai.au:/home/bitnimble/code/utai.au \
+  -v "$REPO:$REPO" \
   -v /codebox-workspace:/codebox-workspace \
   -v /codebox-workspace/utai/models-cache:/models \
   utai-sandbox
