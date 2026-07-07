@@ -141,9 +141,9 @@ provisioned it no-ops, leaving alignment untouched.
 
 **Capability-scoped like the rest:** a `pitch` capability (dep-group +
 `provision._capability_assets`) composes separation and pulls only the f0
-model (`settings.pitch_model` / `pitch_model_url`, pinned to a SwiftF0
-commit until mirrored onto `onnx_repo`). The `test_torch_free_runtime`
-guard covers the pitch import graph.
+model (`settings.pitch_model`, resolved off `onnx_repo` like the other
+shipped bodies; mirrored there from upstream SwiftF0). The
+`test_torch_free_runtime` guard covers the pitch import graph.
 
 > **Harmonies (roadmap).** SwiftF0 is monophonic -- it tracks the
 > predominant/lead pitch, which is the right answer for a normal lead
