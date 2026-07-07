@@ -34,6 +34,8 @@ pub struct Telemetry {
     play_sec: f64,
     playing: bool,
     level: f32,
+    /// Measured round-trip monitor latency in ms (0 until streams report it).
+    latency_ms: f32,
 }
 
 #[tauri::command]
@@ -82,6 +84,13 @@ pub fn audio_set_output_volume(volume: f32, state: State<'_, AudioState>) {
     state.0.set_output_volume(volume);
 }
 
+/// Request a stream buffer size in frames (0 == device default). Smaller =
+/// lower latency; rebuilds the streams to apply.
+#[tauri::command]
+pub fn audio_set_buffer_frames(frames: u32, state: State<'_, AudioState>) {
+    state.0.set_buffer_frames(frames);
+}
+
 /// `input`/`output` are device names (`None` = system default); `capture`
 /// is false when the mic is set to "None".
 #[tauri::command]
@@ -109,6 +118,7 @@ pub fn audio_subscribe(channel: Channel<Telemetry>, state: State<'_, AudioState>
             play_sec: engine.position_secs(),
             playing: engine.is_playing(),
             level: engine.level(),
+            latency_ms: engine.latency_ms(),
         };
         if channel.send(msg).is_err() {
             break;

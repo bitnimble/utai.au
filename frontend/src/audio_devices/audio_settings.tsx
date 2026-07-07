@@ -4,6 +4,7 @@ import { Select } from 'src/ui/select/select';
 import { ChannelControls } from './audio_controls';
 import { AudioDevicePresenterContext, AudioDeviceStoreContext } from './audio_device_contexts';
 import { NONE_DEVICE_ID } from './audio_io_backend';
+import { NativeLatencyControls } from './native_latency_controls';
 import styles from './audio_settings.module.css';
 
 /**
@@ -88,6 +89,8 @@ export const AudioSettings = observer(function AudioSettings() {
           </span>
         )}
       </section>
+
+      <NativeLatencyControls />
     </div>
   );
 });

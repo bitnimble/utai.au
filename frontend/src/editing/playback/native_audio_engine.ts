@@ -16,7 +16,7 @@ import { buildLinearTimeline, EMPTY_TIMELINE, UtaiTimeline } from './timeline';
 import { waveformWorker } from './waveform_worker_client';
 
 /** One frame of engine telemetry (see the Rust `Telemetry`), streamed ~33 Hz. */
-type Telemetry = { playSec: number; playing: boolean; level: number };
+type Telemetry = { playSec: number; playing: boolean; level: number; latencyMs: number };
 
 /** Playhead resync anchor: at wall-clock `atMs` the engine was at `playSec`,
  *  advancing iff `playing`. `currentTime` is dead-reckoned from this each frame. */
@@ -42,6 +42,10 @@ export class NativeAudioEngine implements PlaybackEngine {
 
   /** Latest mic RMS in [0, 1], from telemetry (read by the device backend). */
   micLevel = 0;
+  /** Measured round-trip monitor latency (ms), from telemetry. */
+  latencyMs = 0;
+  /** Requested stream buffer size in frames (0 = device default). */
+  bufferFrames = 0;
 
   private ctx: AudioContext | undefined;
   private channel: Channel<Telemetry> | undefined;
@@ -177,6 +181,15 @@ export class NativeAudioEngine implements PlaybackEngine {
     void invoke('audio_set_output_volume', { volume });
   }
 
+  /** Request a stream buffer size in frames (0 = device default); the engine
+   *  rebuilds its streams to apply it. */
+  setBufferFrames(frames: number): void {
+    runInAction(() => {
+      this.bufferFrames = frames;
+    });
+    void invoke('audio_set_buffer_frames', { frames });
+  }
+
   private applyDevices(): Promise<void> {
     // '' = system default (None arg); NONE_DEVICE_ID = no device; else the name.
     const toName = (id: string): string | null => (id === '' || id === NONE_DEVICE_ID ? null : id);
@@ -232,6 +245,7 @@ export class NativeAudioEngine implements PlaybackEngine {
     this.anchor = { playSec: msg.playSec, atMs: performance.now(), playing: msg.playing };
     runInAction(() => {
       if (Math.abs(msg.level - this.micLevel) >= 0.01) this.micLevel = msg.level;
+      if (Math.abs(msg.latencyMs - this.latencyMs) >= 0.1) this.latencyMs = msg.latencyMs;
       // Reconcile a natural end-of-track stop that only the engine knows about.
       if (!msg.playing && this.state === 'playing') this.state = 'idle';
     });

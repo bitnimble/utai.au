@@ -58,6 +58,12 @@ pub struct Shared {
     pub master_gain: AtomicF32,
     /// Latest input RMS in [0, 1].
     pub level: AtomicF32,
+    /// Requested stream buffer size in frames (0 == device default). Smaller =
+    /// lower latency; applied on the next stream (re)build.
+    pub buffer_frames: AtomicU32,
+    /// Measured output / input latency (ms), from the stream callback timestamps.
+    pub out_latency_ms: AtomicF32,
+    pub in_latency_ms: AtomicF32,
 }
 
 impl Shared {
@@ -74,6 +80,17 @@ impl Shared {
             mic_gain: AtomicF32::new(0.0), // muted by default, matching the app
             master_gain: AtomicF32::new(1.0),
             level: AtomicF32::new(0.0),
+            buffer_frames: AtomicU32::new(0),
+            out_latency_ms: AtomicF32::new(0.0),
+            in_latency_ms: AtomicF32::new(0.0),
+        }
+    }
+
+    /// The stream buffer-size request derived from `buffer_frames`.
+    fn buffer_size(&self) -> cpal::BufferSize {
+        match self.buffer_frames.load(Ordering::Relaxed) {
+            0 => cpal::BufferSize::Default,
+            n => cpal::BufferSize::Fixed(n),
         }
     }
 }
@@ -130,6 +147,7 @@ impl Default for DeviceSelection {
 
 enum EngineCmd {
     SetDevices(DeviceSelection),
+    Rebuild,
     Shutdown,
 }
 
@@ -198,11 +216,21 @@ impl AudioEngine {
     pub fn level(&self) -> f32 {
         self.shared.level.load()
     }
+    /// Measured round-trip monitor latency (ms): output + input stream latency.
+    pub fn latency_ms(&self) -> f32 {
+        self.shared.out_latency_ms.load() + self.shared.in_latency_ms.load()
+    }
     pub fn set_mic_gain(&self, g: f32) {
         self.shared.mic_gain.store(g);
     }
     pub fn set_output_volume(&self, v: f32) {
         self.shared.master_gain.store(v);
+    }
+    /// Request a stream buffer size in frames (0 == device default) and rebuild
+    /// the streams to apply it.
+    pub fn set_buffer_frames(&self, frames: u32) {
+        self.shared.buffer_frames.store(frames, Ordering::Relaxed);
+        let _ = self.cmd_tx.send(EngineCmd::Rebuild);
     }
     pub fn set_devices(&self, sel: DeviceSelection) {
         let _ = self.cmd_tx.send(EngineCmd::SetDevices(sel));
@@ -252,6 +280,9 @@ fn audio_thread(shared: Arc<Shared>, cmd_rx: Receiver<EngineCmd>) {
         match cmd {
             EngineCmd::SetDevices(new_sel) => {
                 sel = new_sel;
+                streams = rebuild(&host, &shared, &sel, streams);
+            }
+            EngineCmd::Rebuild => {
                 streams = rebuild(&host, &shared, &sel, streams);
             }
             EngineCmd::Shutdown => break,
@@ -332,7 +363,7 @@ fn build_output(dev: &Device, shared: &Arc<Shared>, cons: Consumer<f32>) -> Opti
     let cfg = StreamConfig {
         channels: supported.channels(),
         sample_rate: supported.sample_rate(),
-        buffer_size: cpal::BufferSize::Default,
+        buffer_size: shared.buffer_size(),
     };
     retune(shared, supported.sample_rate().0);
 
@@ -367,7 +398,11 @@ where
     let mut mix = Vec::<f32>::new();
     dev.build_output_stream(
         cfg,
-        move |out: &mut [T], _: &cpal::OutputCallbackInfo| {
+        move |out: &mut [T], info: &cpal::OutputCallbackInfo| {
+            let ts = info.timestamp();
+            if let Some(d) = ts.playback.duration_since(&ts.callback) {
+                shared.out_latency_ms.store(d.as_secs_f32() * 1000.0);
+            }
             let frames = out.len() / out_ch;
             mix.resize(frames * 2, 0.0);
 
@@ -444,7 +479,7 @@ fn build_input(
     let cfg = StreamConfig {
         channels: supported.channels(),
         sample_rate: SampleRate(rate),
-        buffer_size: cpal::BufferSize::Default,
+        buffer_size: shared.buffer_size(),
     };
     let stream = match supported.sample_format() {
         SampleFormat::F32 => build_input_typed::<f32>(dev, &cfg, shared.clone(), prod, channels),
@@ -477,7 +512,11 @@ where
     let mut stereo = Vec::<f32>::new();
     dev.build_input_stream(
         cfg,
-        move |data: &[T], _: &cpal::InputCallbackInfo| {
+        move |data: &[T], info: &cpal::InputCallbackInfo| {
+            let ts = info.timestamp();
+            if let Some(d) = ts.callback.duration_since(&ts.capture) {
+                shared.in_latency_ms.store(d.as_secs_f32() * 1000.0);
+            }
             let frames = data.len() / in_ch.max(1);
             stereo.clear();
             for f in 0..frames {

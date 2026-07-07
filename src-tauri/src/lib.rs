@@ -116,6 +116,7 @@ pub fn run() {
             audio::audio_seek,
             audio::audio_set_mic_gain,
             audio::audio_set_output_volume,
+            audio::audio_set_buffer_frames,
             audio::audio_set_devices,
             audio::audio_subscribe,
         ]);
