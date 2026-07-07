@@ -35,6 +35,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io
 tauri-plugin-wdio = { version = "1", optional = true }
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 
+# Native audio engine, desktop only: cpal has no clean Android story and audio
+# there stays on Web Audio. Target-gated (not a feature) so the Android cdylib
+# never pulls cpal/alsa; the `audio` module is additionally `#[cfg(desktop)]`.
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+utai-audio = { path = "crates/audio", features = ["device"] }
+
 [features]
 wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
