@@ -182,6 +182,7 @@ const LyricWordChip = observer(
           styles.lyricWord,
           isActive && styles.lyricWordActive,
           pitched && styles.lyricWordPitched,
+          pitchPath && styles.lyricWordLined,
         )}
         style={wordStyle as React.CSSProperties}
         title={buildWordDebugTitle(word.source)}

@@ -112,10 +112,12 @@ export function positionLyricLines(
 ): PositionedLine[] {
   const out: PositionedLine[] = [];
   // One pass over every word to fix the vocal range, so a word's vertical
-  // fraction is stable across the whole track rather than per-line. With pitch
-  // rendering off (a user setting) there's no range, so every word stays on the
-  // flat centred lane (pitchFrac / segments undefined, like a pitch-less track).
-  const range = opts?.pitch === false ? undefined : pitchRange(lines);
+  // fraction is stable across the whole track rather than per-line. Segments are
+  // always resolved (they carry the trailing line + vibrato, which can show even
+  // with pitch off); only the word's vertical `pitchFrac` is gated on the pitch
+  // setting -- off => every word stays on the flat centred lane.
+  const range = pitchRange(lines);
+  const pitchOn = opts?.pitch !== false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // Blank lines (LRC instrumental gap stamps with no text or words)
@@ -174,7 +176,7 @@ export function positionLyricLines(
           beatWidth: w.endBeat - w.startBeat,
           source: w.source,
           pitchFrac:
-            range && w.source.midi != null
+            pitchOn && range && w.source.midi != null
               ? pitchFracOf(w.source.midi, range)
               : undefined,
           segments: range
@@ -272,20 +274,26 @@ export const WAVE_WAVELENGTH_PX = 18;
  *  cubic curves so a melisma reads as one continuous stepping line, and a
  *  vibrato note's run is a smooth wave whose cycle count is set from `trailPx`
  *  so its on-screen wavelength is ~`wavelengthPx` on every chip. Notes are
- *  distributed across x by relative duration. Undefined when no pitch/segments. */
+ *  distributed across x by relative duration.
+ *
+ *  `pitch` off flattens it (every note on the centre line, no vertical stepping)
+ *  so the trailing line + vibrato can still show on a flat track; `vibrato` off
+ *  draws vibrato notes as straight held runs. Undefined when no segments. */
 export function buildPitchLine(
   word: PositionedWord,
   trailPx: number,
   wavelengthPx: number,
-  drawVibrato: boolean,
+  opts: { pitch: boolean; vibrato: boolean },
 ): string | undefined {
   const segs = word.segments;
-  if (word.pitchFrac === undefined || !segs || segs.length === 0) return undefined;
-  const wordFrac = word.pitchFrac;
+  if (!segs || segs.length === 0) return undefined;
+  const wordFrac = word.pitchFrac ?? 0;
+  const flat = !opts.pitch || word.pitchFrac === undefined;
   const total = segs.reduce((s, g) => s + Math.max(g.beatWidth, 1e-4), 0);
   // pitchFrac spans the track's whole range over the pitch band, and the viewBox
-  // height (100) maps to that same band, so a frac delta maps 1:1 to *100.
-  const yOf = (frac: number) => _clamp(50 - (frac - wordFrac) * 100, 5, 95);
+  // height (100) maps to that same band, so a frac delta maps 1:1 to *100. Flat
+  // mode pins every note to the centre line (y=50).
+  const yOf = (frac: number) => (flat ? 50 : _clamp(50 - (frac - wordFrac) * 100, 5, 95));
   const transitionX = 6; // viewBox units reserved on each side of a note for the curve
 
   let x = 0;
@@ -302,7 +310,7 @@ export function buildPitchLine(
     const flatStart = Math.min(x0 + transitionX, mid);
     const flatEnd = Math.max(x1 - transitionX, mid);
     const cx = (prevX + flatStart) / 2; // symmetric cubic control for a smooth S
-    if (g.vibrato && drawVibrato) {
+    if (g.vibrato && opts.vibrato) {
       // cycle count for a constant on-screen wavelength: run's pixel width / λ.
       const runPx = ((flatEnd - flatStart) / 100) * trailPx;
       const cycles = _clamp(runPx / wavelengthPx, 0.75, 40);

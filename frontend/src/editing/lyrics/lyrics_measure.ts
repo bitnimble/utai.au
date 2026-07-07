@@ -235,18 +235,18 @@ export function computeLyricShifts(
 export function computePitchPaths(
   lines: readonly PositionedLine[],
   pxPerBeat: number,
-  opts?: { vibrato?: boolean },
+  opts: { pitch: boolean; vibrato: boolean },
 ): Map<LyricShiftKey, string> {
   const out = new Map<LyricShiftKey, string>();
-  if (!Number.isFinite(pxPerBeat) || pxPerBeat <= 0) return out;
-  const drawVibrato = opts?.vibrato !== false;
+  // No line at all when both are off; the plain trailing-rule sustain shows.
+  if (!Number.isFinite(pxPerBeat) || pxPerBeat <= 0 || (!opts.pitch && !opts.vibrato)) return out;
   for (const line of lines) {
     if (!line.wordPositions) continue;
     for (const w of line.wordPositions) {
-      if (w.pitchFrac === undefined || !w.segments) continue;
+      if (!w.segments) continue;
       const textPx = lyricsMeasurer.measureWordPx(w.text, pxPerBeat, false);
       const trailPx = Math.max(0, w.beatWidth * pxPerBeat - textPx);
-      const path = buildPitchLine(w, trailPx, WAVE_WAVELENGTH_PX, drawVibrato);
+      const path = buildPitchLine(w, trailPx, WAVE_WAVELENGTH_PX, opts);
       if (path) out.set(lyricShiftKey(line.i, w.sourceIdx), path);
     }
   }

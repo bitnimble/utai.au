@@ -59,12 +59,15 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // TODO(settings): source these from the user's lyrics settings.
   const pitchEnabled = true;
   const vibratoEnabled = true;
-  // Grow the row only when there's pitch to show, so pitch-less tracks (and the
-  // pitch-off setting) keep their compact single-lane layout unchanged.
-  const trackHasPitch = React.useMemo(
-    () => pitchEnabled && lines.some((l) => l.words?.some((w) => w.midi != null)),
-    [lines, pitchEnabled],
+  const hasPitchData = React.useMemo(
+    () => lines.some((l) => l.words?.some((w) => w.midi != null)),
+    [lines],
   );
+  // Only the vertical placement needs the tall row; a flat vibrato-only line
+  // fits the compact row. The pitch band (wave/step scale) is needed whenever
+  // the trailing line renders (pitch and/or vibrato on).
+  const trackHasPitch = pitchEnabled && hasPitchData;
+  const lineShows = (pitchEnabled || vibratoEnabled) && hasPitchData;
   const rowHeight = trackHasPitch ? PITCHED_ROW_HEIGHT : LYRICS_ROW_HEIGHT;
   const alignPhase = lyricsAlign?.lyricsAlignStatuses.get(id)?.phase;
   const isAligning = alignPhase === 'aligning' || alignPhase === 'queued';
@@ -126,8 +129,8 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // zoom-dependent glyph measurement (the wave wavelength is derived from each
   // word's sustain pixel width), so this re-derives on zoom / font-load too.
   const pitchPaths = React.useMemo(
-    () => computePitchPaths(positioned, pxPerBeat, { vibrato: vibratoEnabled }),
-    [positioned, pxPerBeat, fontReady, vibratoEnabled],
+    () => computePitchPaths(positioned, pxPerBeat, { pitch: pitchEnabled, vibrato: vibratoEnabled }),
+    [positioned, pxPerBeat, fontReady, pitchEnabled, vibratoEnabled],
   );
 
   // True once any word has a resolved furigana reading; drives the ruby
@@ -188,7 +191,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
             ['--layer-beats' as string]: layerBeats,
             ['--bars-row-width' as string]: barsRowWidthSeed(structural, layerBeats),
             ['--px-per-beat' as string]: pxPerBeat,
-            ['--lyric-pitch-band' as string]: trackHasPitch ? PITCH_BAND_PX : 0,
+            ['--lyric-pitch-band' as string]: lineShows ? PITCH_BAND_PX : 0,
             height: rowHeight,
           } as React.CSSProperties
         }

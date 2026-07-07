@@ -102,15 +102,17 @@ const LINES: LyricLine[] = [
 ];
 
 function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { lines: LyricLine[] }) {
-  const hasPitch = pitch && lines.some((l) => l.words?.some((w) => w.midi != null));
-  const rowHeight = hasPitch ? PITCHED_ROW_HEIGHT : LYRICS_ROW_HEIGHT;
+  const hasPitchData = lines.some((l) => l.words?.some((w) => w.midi != null));
+  const trackHasPitch = pitch && hasPitchData; // vertical placement -> tall row
+  const lineShows = (pitch || vibrato) && hasPitchData; // trailing line renders -> band
+  const rowHeight = trackHasPitch ? PITCHED_ROW_HEIGHT : LYRICS_ROW_HEIGHT;
   const durationSec = Math.max(...lines.flatMap((l) => l.words?.map((w) => w.endSec) ?? [0])) + 1;
   const timeline = buildLinearTimeline(durationSec);
   const positioned = positionLyricLines(lines, timeline, 0, [durationSec], 0, durationSec, { pitch });
   const emptyShifts = React.useMemo(() => new Map<string, number>(), []);
   const pitchPaths = React.useMemo(
-    () => computePitchPaths(positioned, pxPerBeat, { vibrato }),
-    [positioned, pxPerBeat, vibrato],
+    () => computePitchPaths(positioned, pxPerBeat, { pitch, vibrato }),
+    [positioned, pxPerBeat, pitch, vibrato],
   );
 
   return (
@@ -130,7 +132,7 @@ function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { line
               ['--layer-beats' as string]: durationSec,
               ['--bars-row-width' as string]: pxPerBeat * durationSec,
               ['--px-per-beat' as string]: pxPerBeat,
-              ['--lyric-pitch-band' as string]: hasPitch ? PITCH_BAND_PX : 0,
+              ['--lyric-pitch-band' as string]: lineShows ? PITCH_BAND_PX : 0,
               height: rowHeight,
             } as React.CSSProperties
           }

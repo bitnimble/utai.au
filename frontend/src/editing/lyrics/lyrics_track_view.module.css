@@ -368,9 +368,12 @@
     );
 }
 
-/* The pitch line (below) IS the sustain indicator on a pitched word, so hide
-   the default trailing rule that fills a held word's slack. */
-.lyricWordPitched::after {
+/* The pitch line (below) IS the sustain indicator whenever it renders (pitch
+   and/or vibrato on), so hide the default trailing rule that fills a held word's
+   slack. `.lyricWordLined` is set alongside the `<svg>`, independent of the
+   vertical-placement `.lyricWordPitched`, so a flat vibrato-only line still
+   suppresses the rule. */
+.lyricWordLined::after {
     display: none;
 }
 
