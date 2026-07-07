@@ -319,12 +319,16 @@ const _smoothstep = (t: number) => {
   return c * c * (3 - 2 * c);
 };
 
-/** A vibrato run from x0..x1 at height y, as `cycles` smooth quadratic bumps (up
- *  then down, repeating). The amplitude is enveloped so it eases up from the
- *  straight line over the first cycle and back down over the last, instead of
- *  snapping to full depth. */
+/** A vibrato run from x0..x1 at height y, as `cycles` rounded bumps (up then
+ *  down, repeating). Each bump is a cubic with both control points at the peak
+ *  height and inset toward the centre, giving a full, flat-topped "semicircular"
+ *  scallop rather than a pointed sine -- while staying smooth at the baseline
+ *  crossings (unlike true arcs, which meet with vertical tangents). The
+ *  amplitude is enveloped so it eases up from the straight line over the first
+ *  cycle and back down over the last, instead of snapping to full depth. */
 function _wavyRun(x0: number, x1: number, y: number, cycles: number): string {
-  const ampFull = 2.5;
+  const ampFull = 2.2;
+  const inset = 0.12; // control-point inset: smaller = flatter, rounder top
   const width = x1 - x0;
   const bumps = Math.max(2, Math.round(cycles * 2)); // 2 half-cycle bumps per cycle
   const hw = width / bumps;
@@ -334,9 +338,11 @@ function _wavyRun(x0: number, x1: number, y: number, cycles: number): string {
   for (let i = 0; i < bumps; i++) {
     const centerX = xx + hw / 2;
     const env = _smoothstep((centerX - x0) / ramp) * _smoothstep((x1 - centerX) / ramp);
-    const dir = i % 2 === 0 ? -1 : 1; // up (negative y) then down, alternating
-    s += ` Q${_fmt(centerX)} ${_fmt(y + dir * 2 * ampFull * env)} ${_fmt(xx + hw)} ${_fmt(y)}`;
+    const peak = y + (i % 2 === 0 ? -1 : 1) * 2 * ampFull * env; // up then down
+    const c1x = xx + hw * inset;
+    const c2x = xx + hw * (1 - inset);
     xx += hw;
+    s += ` C${_fmt(c1x)} ${_fmt(peak)} ${_fmt(c2x)} ${_fmt(peak)} ${_fmt(xx)} ${_fmt(y)}`;
   }
   return s;
 }
