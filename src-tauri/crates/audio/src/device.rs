@@ -58,9 +58,6 @@ pub struct Shared {
     pub master_gain: AtomicF32,
     /// Latest input RMS in [0, 1].
     pub level: AtomicF32,
-    /// Requested stream buffer size in frames (0 == device default). Smaller =
-    /// lower latency; applied on the next stream (re)build.
-    pub buffer_frames: AtomicU32,
     /// Measured output / input latency (ms), from the stream callback timestamps.
     pub out_latency_ms: AtomicF32,
     pub in_latency_ms: AtomicF32,
@@ -80,17 +77,8 @@ impl Shared {
             mic_gain: AtomicF32::new(0.0), // muted by default, matching the app
             master_gain: AtomicF32::new(1.0),
             level: AtomicF32::new(0.0),
-            buffer_frames: AtomicU32::new(0),
             out_latency_ms: AtomicF32::new(0.0),
             in_latency_ms: AtomicF32::new(0.0),
-        }
-    }
-
-    /// The stream buffer-size request derived from `buffer_frames`.
-    fn buffer_size(&self) -> cpal::BufferSize {
-        match self.buffer_frames.load(Ordering::Relaxed) {
-            0 => cpal::BufferSize::Default,
-            n => cpal::BufferSize::Fixed(n),
         }
     }
 }
@@ -147,7 +135,6 @@ impl Default for DeviceSelection {
 
 enum EngineCmd {
     SetDevices(DeviceSelection),
-    Rebuild,
     Shutdown,
 }
 
@@ -226,12 +213,6 @@ impl AudioEngine {
     pub fn set_output_volume(&self, v: f32) {
         self.shared.master_gain.store(v);
     }
-    /// Request a stream buffer size in frames (0 == device default) and rebuild
-    /// the streams to apply it.
-    pub fn set_buffer_frames(&self, frames: u32) {
-        self.shared.buffer_frames.store(frames, Ordering::Relaxed);
-        let _ = self.cmd_tx.send(EngineCmd::Rebuild);
-    }
     pub fn set_devices(&self, sel: DeviceSelection) {
         let _ = self.cmd_tx.send(EngineCmd::SetDevices(sel));
     }
@@ -280,9 +261,6 @@ fn audio_thread(shared: Arc<Shared>, cmd_rx: Receiver<EngineCmd>) {
         match cmd {
             EngineCmd::SetDevices(new_sel) => {
                 sel = new_sel;
-                streams = rebuild(&host, &shared, &sel, streams);
-            }
-            EngineCmd::Rebuild => {
                 streams = rebuild(&host, &shared, &sel, streams);
             }
             EngineCmd::Shutdown => break,
@@ -363,7 +341,7 @@ fn build_output(dev: &Device, shared: &Arc<Shared>, cons: Consumer<f32>) -> Opti
     let cfg = StreamConfig {
         channels: supported.channels(),
         sample_rate: supported.sample_rate(),
-        buffer_size: shared.buffer_size(),
+        buffer_size: cpal::BufferSize::Default,
     };
     retune(shared, supported.sample_rate().0);
 
@@ -479,7 +457,7 @@ fn build_input(
     let cfg = StreamConfig {
         channels: supported.channels(),
         sample_rate: SampleRate(rate),
-        buffer_size: shared.buffer_size(),
+        buffer_size: cpal::BufferSize::Default,
     };
     let stream = match supported.sample_format() {
         SampleFormat::F32 => build_input_typed::<f32>(dev, &cfg, shared.clone(), prod, channels),

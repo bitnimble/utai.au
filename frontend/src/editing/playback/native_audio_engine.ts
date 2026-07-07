@@ -44,8 +44,6 @@ export class NativeAudioEngine implements PlaybackEngine {
   micLevel = 0;
   /** Measured round-trip monitor latency (ms), from telemetry. */
   latencyMs = 0;
-  /** Requested stream buffer size in frames (0 = device default). */
-  bufferFrames = 0;
 
   private ctx: AudioContext | undefined;
   private channel: Channel<Telemetry> | undefined;
@@ -179,15 +177,6 @@ export class NativeAudioEngine implements PlaybackEngine {
 
   setOutputVolume(volume: number): void {
     void invoke('audio_set_output_volume', { volume });
-  }
-
-  /** Request a stream buffer size in frames (0 = device default); the engine
-   *  rebuilds its streams to apply it. */
-  setBufferFrames(frames: number): void {
-    runInAction(() => {
-      this.bufferFrames = frames;
-    });
-    void invoke('audio_set_buffer_frames', { frames });
   }
 
   private applyDevices(): Promise<void> {
