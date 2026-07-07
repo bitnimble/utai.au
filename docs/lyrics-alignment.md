@@ -112,6 +112,47 @@ kernel is shared by both paths.
   preserved so the UI can show what the model actually claimed vs what
   we rendered.
 
+## [5] Vocal pitch (f0) overlay
+
+After alignment, `pitch.analyze.attach_pitch` runs **SwiftF0** (lars76/
+swift-f0, MIT) over the *same vocals stem* to give each word a pitch, so
+the frontend can lay words out vertically like notes. SwiftF0 is a ~400 kB
+CNN with the STFT folded into the ONNX graph: it maps a 16 kHz mono
+waveform straight to per-frame `pitch_hz` + `confidence` (hop 256 -> 62.5
+fps), so there is nothing to reimplement. It runs **torch-free on the CPU
+EP** (sub-second/song; CPU avoids contending for VRAM with the resident
+CTC aligner).
+
+Pure-numpy DSP (`pitch/features.py`, unit-tested on synthetic contours):
+- **cleanup** -- confidence gate (>=0.6) + range gate, then drop isolated
+  octave slips (a frame >6 semitones off its local median) and tiny voiced
+  islands (<60 ms). This is what tames SwiftF0's occasional single-frame
+  octave errors on breathy onsets.
+- **note segmentation** -- median-smooth, quantise to semitone, run-length
+  encode, drop <100 ms runs. >1 note within a word == **melisma**.
+- **vibrato** -- per note, gate a 4-8 Hz band component on *autocorrelation*
+  (not just band energy, which fires on transitions/noise); emit rate +
+  extent when periodic. Straight-tone passages correctly yield none.
+
+Per word the aligner attaches `midi` (median voiced pitch) and
+`pitchSegments` (held notes, each with optional `vibrato`), serialized
+alongside the existing word fields. Best-effort: if the f0 model isn't
+provisioned it no-ops, leaving alignment untouched.
+
+**Capability-scoped like the rest:** a `pitch` capability (dep-group +
+`provision._capability_assets`) composes separation and pulls only the f0
+model (`settings.pitch_model` / `pitch_model_url`, pinned to a SwiftF0
+commit until mirrored onto `onnx_repo`). The `test_torch_free_runtime`
+guard covers the pitch import graph.
+
+> **Harmonies (roadmap).** SwiftF0 is monophonic -- it tracks the
+> predominant/lead pitch, which is the right answer for a normal lead
+> vocal (case a). Equal-saliency harmony (b, pool all notes) and
+> distinct-voice duets (c, per-part) need a multi-pitch/salience pass
+> (basic-pitch / deep-salience) or a singer-separation step, gated behind
+> a voice-count heuristic. Not built yet; the per-word pitch above is the
+> lead-vocal reference those layers extend.
+
 ## ONNX / acceleration / shipping
 
 - **Everything runs on onnxruntime** (separation + CTC aligner), torch-
@@ -154,7 +195,8 @@ kernel is shared by both paths.
 
 Dep groups mirror capabilities (`aligner/pyproject.toml`, PEP 735):
 `separation`, `lyrics` (adds `ctc-forced-aligner`), `lyrics-ja` (adds
-`cutlet`/`fugashi`/`unidic-lite`).
+`cutlet`/`fugashi`/`unidic-lite`), `pitch` (SwiftF0 f0 overlay; needs no
+packages beyond the separation stack).
 
 ## LRCLIB (getting the lyrics + rough timings)
 
