@@ -2,7 +2,6 @@ import { ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import type { ServiceInfo } from 'src/net/music_source_client';
-import { Checkbox } from 'src/ui/checkbox/checkbox';
 import { Modal, ModalHeader } from 'src/ui/modal/modal';
 import { Select } from 'src/ui/select/select';
 import { MusicSourcePresenterContext, MusicSourceStoreContext } from './music_source_contexts';
@@ -16,7 +15,8 @@ const BITRATES = ['128k', '256k', '320k', 'lossless'] as const;
 /**
  * Music-source settings: sign in to each streaming service (the affordance
  * depends on how the service authenticates), rank services by priority (which
- * one's results appear first), enable/disable them, and pick download quality.
+ * one's results appear first), and pick download quality. Every connected
+ * service is searched; there's no per-service search toggle.
  * Credentials are sent to the local OnTheSpot backend, never persisted here.
  */
 export const MusicSettingsModal = observer(function MusicSettingsModal() {
@@ -57,7 +57,6 @@ export const MusicSettingsModal = observer(function MusicSettingsModal() {
                 service={service}
                 isFirst={i === 0}
                 isLast={i === services.length - 1}
-                store={store}
                 presenter={presenter}
               />
             ))}
@@ -73,13 +72,11 @@ const ServiceRow = observer(function ServiceRow({
   service,
   isFirst,
   isLast,
-  store,
   presenter,
 }: {
   service: ServiceInfo;
   isFirst: boolean;
   isLast: boolean;
-  store: MusicSourceStore;
   presenter: MusicSourcePresenter;
 }) {
   return (
@@ -108,18 +105,13 @@ const ServiceRow = observer(function ServiceRow({
         <div className={styles.serviceName}>
           <span className={styles.serviceLabel}>{service.label}</span>
           <span className={service.configured ? styles.statusOn : styles.statusOff}>
-            {service.configured ? 'Signed in' : 'Not signed in'}
+            {service.authKind === 'anonymous'
+              ? 'No sign-in needed'
+              : service.configured
+                ? 'Signed in'
+                : 'Not signed in'}
           </span>
         </div>
-        <label className={styles.enableLabel} title={service.configured ? '' : 'Sign in first'}>
-          <Checkbox
-            checked={store.isEnabled(service.id) && service.configured}
-            disabled={!service.configured}
-            onChange={(e) => void presenter.setEnabled(service.id, e.target.checked)}
-            data-testid={`music-enable-${service.id}`}
-          />
-          Search
-        </label>
       </div>
       <AccountControls service={service} presenter={presenter} />
     </li>
@@ -137,6 +129,10 @@ const AccountControls = observer(function AccountControls({
   const [password, setPassword] = React.useState('');
   const [token, setToken] = React.useState('');
 
+  // Anonymous services (YouTube Music) need no sign-in and nothing to remove, so
+  // there are no account controls; search seeds their account automatically.
+  if (service.authKind === 'anonymous') return null;
+
   if (service.configured) {
     return (
       <div className={styles.accountControls}>
@@ -153,19 +149,8 @@ const AccountControls = observer(function AccountControls({
     );
   }
 
-  if (service.authKind === 'anonymous') {
-    return (
-      <div className={styles.accountControls}>
-        <button
-          type="button"
-          className={styles.addButton}
-          onClick={() => void presenter.addAccount({ service: service.id })}
-          data-testid={`music-add-${service.id}`}
-        >
-          Enable
-        </button>
-      </div>
-    );
+  if (service.authKind === 'oauth') {
+    return <SpotifyOAuthControls presenter={presenter} />;
   }
 
   if (service.authKind === 'interactive') {
@@ -243,6 +228,88 @@ const AccountControls = observer(function AccountControls({
         Add
       </button>
     </form>
+  );
+});
+
+/**
+ * Spotify's OAuth paste flow. Spotify only allows librespot's loopback redirect
+ * (`127.0.0.1:5588`), which can't reach this server remotely, so after
+ * approving, the user copies the code (or the dead redirect URL) off that page
+ * and pastes it back here.
+ */
+const SpotifyOAuthControls = observer(function SpotifyOAuthControls({
+  presenter,
+}: {
+  presenter: MusicSourcePresenter;
+}) {
+  const [sessionId, setSessionId] = React.useState<string | null>(null);
+  const [code, setCode] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+
+  const begin = async (): Promise<void> => {
+    setBusy(true);
+    const started = await presenter.spotifyOAuthStart();
+    setBusy(false);
+    if (started == null) return;
+    setSessionId(started.sessionId);
+    window.open(started.authUrl, '_blank', 'noopener');
+  };
+
+  const finish = async (): Promise<void> => {
+    if (sessionId == null) return;
+    setBusy(true);
+    const ok = await presenter.spotifyOAuthComplete(sessionId, code);
+    setBusy(false);
+    if (ok) {
+      setSessionId(null);
+      setCode('');
+    }
+  };
+
+  if (sessionId == null) {
+    return (
+      <div className={styles.accountControls}>
+        <button
+          type="button"
+          className={styles.addButton}
+          disabled={busy}
+          onClick={() => void begin()}
+          data-testid="music-add-spotify"
+        >
+          Sign in with Spotify
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className={styles.oauthFlow}>
+      <p className={styles.oauthHint}>
+        Approve in the Spotify tab. Your browser then lands on a{' '}
+        <code>127.0.0.1:5588</code> page that won&rsquo;t load, copy that page&rsquo;s URL (or
+        the <code>code</code> from it) and paste it here.
+      </p>
+      <form
+        className={styles.oauthForm}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void finish();
+        }}
+      >
+        <input
+          type="text"
+          className={styles.credField}
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="Paste code or redirect URL"
+          aria-label="Spotify authorization code"
+          data-testid="music-spotify-code"
+        />
+        <button type="submit" className={styles.addButton} disabled={busy || code.length === 0}>
+          {busy ? 'Finishing…' : 'Finish'}
+        </button>
+      </form>
+    </div>
   );
 });
 

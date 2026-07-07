@@ -10,8 +10,8 @@ import { defineConfig, devices } from '@playwright/test';
 // Defaults to the local Caddy edge from docker-compose.dev.yml. Override
 // E2E_BASE_URL (e.g. in .env, which the script loads) to reach the stack from a
 // sandboxed host that can't see published ports on localhost -- there it's
-// http://host.docker.internal:8080.
-const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:8080';
+// http://host.docker.internal:5175.
+const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5175';
 
 export default defineConfig({
   testDir: './e2e-live',

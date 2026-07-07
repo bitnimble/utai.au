@@ -8,6 +8,8 @@ import {
   removeAccount as apiRemoveAccount,
   searchTracks,
   setMusicConfig,
+  spotifyOAuthComplete as apiSpotifyOAuthComplete,
+  spotifyOAuthStart as apiSpotifyOAuthStart,
   type AddAccountRequest,
   type ConfigPatch,
   type Quality,
@@ -253,14 +255,38 @@ export class MusicSourcePresenter {
     await this.reload();
   }
 
+  /** Begin the Spotify paste-a-code login; the caller opens the returned URL. */
+  async spotifyOAuthStart(): Promise<{ sessionId: string; authUrl: string } | null> {
+    try {
+      return await apiSpotifyOAuthStart();
+    } catch (err) {
+      if (!isBackendUnreachable(err)) toastStore.showError(`Spotify sign-in failed: ${message(err)}`);
+      return null;
+    }
+  }
+
+  /** Finish the Spotify login with the pasted code / URL; true on success. */
+  async spotifyOAuthComplete(sessionId: string, code: string): Promise<boolean> {
+    let result;
+    try {
+      result = await apiSpotifyOAuthComplete(sessionId, code);
+    } catch (err) {
+      if (!isBackendUnreachable(err)) toastStore.showError(`Spotify sign-in failed: ${message(err)}`);
+      return false;
+    }
+    if (result.status === 'added') {
+      toastStore.showSuccess('Spotify account added.');
+      await this.reload();
+      return true;
+    }
+    toastStore.showError(result.message ?? 'Could not add the Spotify account.');
+    return false;
+  }
+
   // --- settings: config ---
 
   async setPriority(order: string[]): Promise<void> {
     await this.patchConfig({ priority: order });
-  }
-
-  async setEnabled(serviceId: string, enabled: boolean): Promise<void> {
-    await this.patchConfig({ enabled: { [serviceId]: enabled } });
   }
 
   async setQuality(quality: Partial<Quality>): Promise<void> {

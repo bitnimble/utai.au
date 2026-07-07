@@ -29,7 +29,7 @@ export class MusicSourceStore {
 
   /** Service catalog with per-service `configured` status (from the backend). */
   services: ServiceInfo[] = [];
-  /** Priority / enabled / quality; null until first load. */
+  /** Priority / quality; null until first load. */
   config: MusicConfig | null = null;
 
   searchQuery = '';
@@ -47,6 +47,10 @@ export class MusicSourceStore {
     return this.results.find((r) => r.id === this.selectedId);
   }
 
+  /** Whether search will query anything: at least one connected (configured)
+   *  service. Drives the search modal's "set one up" prompt. Anonymous services
+   *  (YouTube Music) always count, so this is only false before the catalog
+   *  loads. */
   get anyServiceConfigured(): boolean {
     return this.services.some((s) => s.configured);
   }
@@ -66,9 +70,5 @@ export class MusicSourceStore {
       if (!priority.includes(service.id)) ordered.push(service);
     }
     return ordered;
-  }
-
-  isEnabled(serviceId: string): boolean {
-    return this.config?.enabled[serviceId] === true;
   }
 }

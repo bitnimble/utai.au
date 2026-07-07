@@ -11,7 +11,7 @@
 import { backendFetch } from 'src/net/backend_fetch';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 
-export type AuthKind = 'anonymous' | 'credentials' | 'token' | 'interactive';
+export type AuthKind = 'anonymous' | 'credentials' | 'token' | 'oauth' | 'interactive';
 
 export type ServiceInfo = {
   id: string;
@@ -27,9 +27,9 @@ export type ServiceInfo = {
 export type Quality = { format: string; bitrate: string };
 
 export type MusicConfig = {
-  /** Service ids in descending search priority (index 0 ranks highest). */
+  /** Service ids in descending search priority (index 0 ranks highest). Every
+   *  connected service is searched; priority only orders the merged results. */
   priority: string[];
-  enabled: Record<string, boolean>;
   quality: Quality;
 };
 
@@ -68,7 +68,6 @@ export type FetchTrackOptions = {
 
 export type ConfigPatch = {
   priority?: string[];
-  enabled?: Record<string, boolean>;
   quality?: Partial<Quality>;
 };
 
@@ -142,6 +141,47 @@ export async function removeAccount(uuid: string, signal?: AbortSignal): Promise
     signal,
   });
   if (!res.ok) throw new Error(await errorDetail(res, 'remove account'));
+}
+
+/** Begin the Spotify OAuth paste flow: returns the authorize URL to open and a
+ *  session id to pass back to {@link spotifyOAuthComplete}. */
+export async function spotifyOAuthStart(
+  signal?: AbortSignal,
+): Promise<{ sessionId: string; authUrl: string }> {
+  const body = (await okJson(
+    await backendFetch(musicUrl('spotify/oauth/start'), { method: 'POST', signal }),
+    'Spotify sign-in',
+  )) as Record<string, unknown>;
+  const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : '';
+  const authUrl = typeof body?.authUrl === 'string' ? body.authUrl : '';
+  if (sessionId.length === 0 || authUrl.length === 0) {
+    throw new Error('Malformed Spotify sign-in response');
+  }
+  return { sessionId, authUrl };
+}
+
+/** Finish the Spotify OAuth flow with the pasted code (or full redirect URL). */
+export async function spotifyOAuthComplete(
+  sessionId: string,
+  code: string,
+  signal?: AbortSignal,
+): Promise<AddAccountResult> {
+  const res = await backendFetch(musicUrl('spotify/oauth/complete'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId, code }),
+    signal,
+  });
+  const body = (await okJson(res, 'Spotify sign-in')) as Record<string, unknown>;
+  const status = body?.status;
+  return {
+    status:
+      status === 'added' || status === 'interactive_required' || status === 'error'
+        ? status
+        : 'error',
+    message: typeof body?.message === 'string' ? body.message : null,
+    authUrl: null,
+  };
 }
 
 export async function searchTracks(query: string, signal?: AbortSignal): Promise<TrackResult[]> {
@@ -259,13 +299,9 @@ function parseService(raw: unknown): ServiceInfo | undefined {
 function parseConfig(raw: unknown): MusicConfig {
   const r = (raw ?? {}) as Record<string, unknown>;
   const priority = Array.isArray(r.priority) ? r.priority.filter((s): s is string => typeof s === 'string') : [];
-  const enabledRaw = r.enabled != null && typeof r.enabled === 'object' ? (r.enabled as Record<string, unknown>) : {};
-  const enabled: Record<string, boolean> = {};
-  for (const [k, v] of Object.entries(enabledRaw)) enabled[k] = v === true;
   const q = r.quality != null && typeof r.quality === 'object' ? (r.quality as Record<string, unknown>) : {};
   return {
     priority,
-    enabled,
     quality: {
       format: typeof q.format === 'string' ? q.format : 'mp3',
       bitrate: typeof q.bitrate === 'string' ? q.bitrate : '320k',
@@ -310,7 +346,13 @@ function parseNdjsonLine(line: string): Record<string, unknown> | null {
 }
 
 function isAuthKind(value: unknown): value is AuthKind {
-  return value === 'anonymous' || value === 'credentials' || value === 'token' || value === 'interactive';
+  return (
+    value === 'anonymous' ||
+    value === 'credentials' ||
+    value === 'token' ||
+    value === 'oauth' ||
+    value === 'interactive'
+  );
 }
 
 function isPresent<T>(value: T | undefined): value is T {

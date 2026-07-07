@@ -152,6 +152,14 @@ COPY aligner/pyproject.toml ./
 RUN uv pip install --extra-index-url https://download.pytorch.org/whl/cu128 \
         --group dev --group separation --group lyrics --group lyrics-ja -e .
 
+# The `music` group (librespot, for Spotify OAuth) resolves in its OWN step
+# WITHOUT the pytorch extra-index: librespot needs requests>=2.32.3, but the
+# cu128 flat index only carries requests 2.28.1 and uv's first-index rule would
+# pin requests to that index and fail to resolve. From PyPI it's fine (and just
+# upgrades the older requests the step above pulled in). Nothing here touches
+# the torch / CUDA wheels.
+RUN uv pip install --group music -e .
+
 # Models / weights caches. Pointed at /models (and HF/torch subdirs) so
 # audio-separator, HF transformers, and torch.hub reuse the same cache
 # layout as the aligner. Bind-mount the host's existing models cache

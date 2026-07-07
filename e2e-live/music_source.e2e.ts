@@ -11,30 +11,12 @@ test('music-source: enable YouTube Music, search, fetch', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('music-settings-open')).toBeVisible({ timeout: 30_000 });
 
-  // settings: configure + enable YouTube Music
+  // settings: confirm the service catalog loaded (browser -> caddy -> backend
+  // facade -> OnTheSpot config). YouTube Music needs no sign-in and every
+  // connected service is searched by default, so there's nothing to toggle.
   await page.getByTestId('music-settings-open').click();
   await expect(page.getByTestId('music-settings-modal')).toBeVisible();
-
-  // Services list came from /api/music/services (browser -> caddy -> backend
-  // facade -> OnTheSpot config).
   await expect(page.getByTestId('music-service-youtube_music')).toBeVisible({ timeout: 20_000 });
-
-  // Add the anonymous YouTube Music account if it isn't configured yet (seeds
-  // OnTheSpot's config + restarts it).
-  const addYtm = page.getByTestId('music-add-youtube_music');
-  if (await addYtm.count()) {
-    await addYtm.click();
-  }
-
-  const enableYtm = page.getByTestId('music-enable-youtube_music');
-  await expect(enableYtm).toBeEnabled({ timeout: 45_000 });
-  if (!(await enableYtm.isChecked())) {
-    // Enabling round-trips through PUT /music/config, so click + await the new
-    // state rather than check() (which asserts it synchronously).
-    await enableYtm.click();
-    await expect(enableYtm).toBeChecked({ timeout: 15_000 });
-  }
-
   await page.getByRole('button', { name: 'Close music settings' }).click();
   await expect(page.getByTestId('music-settings-modal')).toBeHidden();
 

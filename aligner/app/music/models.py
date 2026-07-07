@@ -12,9 +12,10 @@ from pydantic import BaseModel, Field
 
 # How a service is authenticated, which tells the settings dialog what input to
 # render: anonymous (YouTube Music, no creds), credentials (email + password),
-# token (a single pasted token, e.g. a Deezer ARL), or interactive (an OAuth /
-# device flow OnTheSpot's headless web API can't drive, e.g. Spotify / Tidal).
-AuthKind = Literal["anonymous", "credentials", "token", "interactive"]
+# token (a single pasted token, e.g. a Deezer ARL), oauth (Spotify's paste-a-code
+# OAuth via librespot; see spotify_oauth.py), or interactive (a login the user
+# finishes in OnTheSpot's own web UI, e.g. Tidal).
+AuthKind = Literal["anonymous", "credentials", "token", "oauth", "interactive"]
 
 
 class ServiceInfo(BaseModel):
@@ -39,9 +40,9 @@ class Quality(BaseModel):
 
 class MusicConfig(BaseModel):
     # Service ids in descending search priority (index 0 ranks highest in merged
-    # results). Only enabled services with a configured account are queried.
+    # results). Every connected (configured) service is searched; priority only
+    # orders the merged results.
     priority: list[str] = Field(default_factory=list)
-    enabled: dict[str, bool] = Field(default_factory=dict)
     quality: Quality = Field(default_factory=Quality)
 
 
@@ -87,6 +88,14 @@ class AddAccountResult(BaseModel):
     # For interactive services, a URL the user must visit to finish login, when
     # OnTheSpot surfaces one.
     authUrl: str | None = None
+
+
+class SpotifyOAuthStart(BaseModel):
+    # Opaque handle tying the pasted code back to this login's PKCE verifier.
+    sessionId: str
+    # Spotify authorize URL to open; after approving, the user pastes the code
+    # (or the redirect URL) back to /music/spotify/oauth/complete.
+    authUrl: str
 
 
 class AudioRef(BaseModel):

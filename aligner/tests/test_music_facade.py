@@ -164,10 +164,7 @@ def test_search_merges_in_priority_order(tmp_path):
     client.search_by_index = {0: [_track_item("t", "tidal")], 1: [_track_item("y", "youtube_music")]}
     pool = FakePool([{"service": "tidal", "uuid": "t"}, {"service": "youtube_music", "uuid": "y"}])
     facade = _facade(tmp_path, client, pool)
-    facade.set_config(
-        priority=["tidal", "youtube_music"],
-        enabled={"tidal": True, "youtube_music": True},
-    )
+    facade.set_config(priority=["tidal", "youtube_music"])
     results = asyncio.run(facade.search("hello"))
     assert [r.service for r in results] == ["tidal", "youtube_music"]
 
@@ -177,23 +174,35 @@ def test_search_merges_in_priority_order(tmp_path):
     assert [r.service for r in results] == ["youtube_music", "tidal"]
 
 
-def test_search_skips_disabled_and_unconfigured(tmp_path):
+def test_search_skips_unconfigured(tmp_path):
     client = FakeClient()
     client.search_by_index = {0: [_track_item("t", "tidal")]}
-    # tidal configured; spotify enabled but has no account -> skipped.
     pool = FakePool([{"service": "tidal", "uuid": "t"}])
     facade = _facade(tmp_path, client, pool)
-    facade.set_config(
-        priority=["spotify", "tidal", "youtube_music"],
-        enabled={"spotify": True, "tidal": False, "youtube_music": True},
-    )
-    # tidal disabled, spotify unconfigured, youtube_music enabled-but-unconfigured
-    # -> no service is both enabled AND configured -> empty.
-    assert asyncio.run(facade.search("hello")) == []
-
-    facade.set_config(enabled={"tidal": True})
+    facade.set_config(priority=["spotify", "tidal", "youtube_music"])
+    # spotify has no account (unconfigured) -> filtered out of the search set.
+    # youtube_music is no-login "configured" and auto-seeded on first search, but
+    # the fake has no results for its index, so only tidal comes back.
     results = asyncio.run(facade.search("hello"))
     assert [r.service for r in results] == ["tidal"]
+
+
+def test_search_seeds_missing_anonymous_account(tmp_path):
+    # OnTheSpot shipped no youtube_music account: search must seed it (+ restart)
+    # so the no-login service becomes searchable with no UI step.
+    client = FakeClient()
+    client.search_by_index = {0: [_track_item("y", "youtube_music")]}
+    pool = FakePool()  # empty, nothing pre-seeded
+    facade = _facade(tmp_path, client, pool)
+    facade.set_config(priority=["youtube_music"])
+    results = asyncio.run(facade.search("hello"))
+    assert client.restarted == 1
+    assert any(a.get("service") == "youtube_music" for a in pool.accounts())
+    assert [r.service for r in results] == ["youtube_music"]
+
+    # Already seeded on a second search -> no extra restart.
+    asyncio.run(facade.search("hello"))
+    assert client.restarted == 1
 
 
 def test_search_empty_query_short_circuits(tmp_path):
@@ -210,34 +219,29 @@ def test_config_roundtrip_and_persist(tmp_path):
     facade = _facade(tmp_path, client, pool)
 
     cfg = facade.get_config()
-    # Every catalog service present once; all disabled by default.
-    assert set(cfg.enabled.values()) == {False}
+    # Every catalog service present once in priority.
     assert "youtube_music" in cfg.priority
 
     facade.set_config(
         priority=["youtube_music"],
-        enabled={"youtube_music": True},
         quality={"format": "flac", "bitrate": "lossless"},
     )
     cfg = facade.get_config()
     assert cfg.priority[0] == "youtube_music"
-    assert cfg.enabled["youtube_music"] is True
     assert cfg.quality.format == "flac"
 
     # A fresh facade over the same file sees the persisted config.
     reloaded = MusicFacade(FakeClient(), FakePool(), tmp_path / "music_config.json")
     cfg2 = reloaded.get_config()
     assert cfg2.priority[0] == "youtube_music"
-    assert cfg2.enabled["youtube_music"] is True
     assert cfg2.quality.format == "flac"
 
 
 def test_config_drops_unknown_services(tmp_path):
     facade = _facade(tmp_path, FakeClient(), FakePool())
-    facade.set_config(priority=["not_a_service", "tidal"], enabled={"bogus": True})
+    facade.set_config(priority=["not_a_service", "tidal"])
     cfg = facade.get_config()
     assert "not_a_service" not in cfg.priority
-    assert "bogus" not in cfg.enabled
     assert cfg.priority[0] == "tidal"
 
 
@@ -247,6 +251,64 @@ def test_services_configured_reflects_pool(tmp_path):
     services = {s.id: s.configured for s in facade.services()}
     assert services["deezer"] is True
     assert services["tidal"] is False
+
+
+def test_services_ignore_placeholder_public_accounts(tmp_path):
+    # OnTheSpot seeds these on a fresh install; none is a real user sign-in.
+    pool = FakePool(
+        [
+            {"service": "deezer", "uuid": "public_deezer", "login": {"arl": "public_deezer"}},
+            {"service": "soundcloud", "uuid": "public_soundcloud"},
+            {"service": "youtube_music", "uuid": "public_youtube_music"},
+        ]
+    )
+    facade = _facade(tmp_path, FakeClient(), pool)
+    by_id = {s.id: s for s in facade.services()}
+    # Credentialed services with only a placeholder -> NOT signed in.
+    assert by_id["deezer"].configured is False
+    assert by_id["deezer"].accountUuid is None
+    assert by_id["soundcloud"].configured is False
+    # Anonymous service needs no login -> always available.
+    assert by_id["youtube_music"].configured is True
+    # A real (non-placeholder) account still counts.
+    pool.append_account({"service": "deezer", "uuid": "real-arl"})
+    by_id = {s.id: s for s in facade.services()}
+    assert by_id["deezer"].configured is True
+    assert by_id["deezer"].accountUuid == "real-arl"
+
+
+def test_youtube_music_searchable_from_placeholder_only(tmp_path):
+    # Fresh install: OnTheSpot ships ONLY its default public YouTube Music
+    # account. It's no-login (always configured), and search must still route to
+    # it via the placeholder fallback -- no utai-side seeding needed.
+    client = FakeClient()
+    client.search_by_index = {0: [_track_item("y", "youtube_music")]}
+    pool = FakePool([{"service": "youtube_music", "uuid": "public_youtube_music"}])
+    facade = _facade(tmp_path, client, pool)
+    assert {s.id: s.configured for s in facade.services()}["youtube_music"] is True
+    facade.set_config(priority=["youtube_music"])
+    results = asyncio.run(facade.search("hello"))
+    assert [r.service for r in results] == ["youtube_music"]
+    assert client.active_index == 0
+
+
+def test_search_prefers_real_account_over_placeholder(tmp_path):
+    # public_deezer sits before the real deezer account; search must switch to
+    # the real one's index, not the placeholder's.
+    client = FakeClient()
+    client.search_by_index = {1: [_track_item("d", "deezer")]}
+    pool = FakePool(
+        [
+            {"service": "deezer", "uuid": "public_deezer"},
+            {"service": "deezer", "uuid": "real"},
+        ]
+    )
+    facade = _facade(tmp_path, client, pool)
+    facade.set_config(priority=["deezer"])
+    results = asyncio.run(facade.search("hello"))
+    # The fake only returns deezer results for the real account's index (1), not
+    # the placeholder's (0), so a deezer result proves the real account was used.
+    assert [r.service for r in results] == ["deezer"]
 
 
 # --- fetch ----------------------------------------------------------------
@@ -307,10 +369,13 @@ def test_fetch_timeout(tmp_path, monkeypatch):
 
 
 def test_add_account_interactive_service(tmp_path):
+    # Tidal is the OnTheSpot-tab interactive flow (Spotify is its own OAuth kind).
     facade = _facade(tmp_path, FakeClient(), FakePool())
-    result = asyncio.run(facade.add_account(AddAccountRequest(service="spotify")))
+    result = asyncio.run(facade.add_account(AddAccountRequest(service="tidal")))
     assert result.status == "interactive_required"
-    assert result.authUrl == "/onthespot/"
+    # The absolute authUrl is filled by the HTTP route (it needs the request
+    # host); the facade stays transport-agnostic.
+    assert result.authUrl is None
 
 
 def test_add_account_token_service(tmp_path):

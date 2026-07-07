@@ -12,7 +12,7 @@ import logging
 from collections.abc import AsyncIterator
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -25,9 +25,11 @@ from .models import (
     MusicConfig,
     SearchResponse,
     ServicesResponse,
+    SpotifyOAuthStart,
 )
 from .onthespot_client import OnTheSpotClient
 from .ots_config import OtsConfigFile
+from .spotify_oauth import SpotifyOAuthUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +56,6 @@ async def aclose_facade() -> None:
 
 class ConfigPatch(BaseModel):
     priority: list[str] | None = None
-    enabled: dict[str, bool] | None = None
     quality: dict[str, str] | None = None
 
 
@@ -62,6 +63,12 @@ class FetchRequest(BaseModel):
     sourceUrl: str
     service: str | None = None
     itemId: str | None = None
+
+
+class SpotifyCompleteRequest(BaseModel):
+    sessionId: str
+    # The code, or the whole redirect URL, the user pasted from the loopback page.
+    code: str
 
 
 @router.get("/services", response_model=ServicesResponse)
@@ -76,14 +83,39 @@ async def get_config() -> MusicConfig:
 
 @router.put("/config", response_model=MusicConfig)
 async def put_config(patch: ConfigPatch) -> MusicConfig:
-    return get_facade().set_config(
-        priority=patch.priority, enabled=patch.enabled, quality=patch.quality
-    )
+    return get_facade().set_config(priority=patch.priority, quality=patch.quality)
 
 
 @router.post("/accounts", response_model=AddAccountResult)
-async def add_account(req: AddAccountRequest) -> AddAccountResult:
-    return await get_facade().add_account(req)
+async def add_account(req: AddAccountRequest, request: Request) -> AddAccountResult:
+    result = await get_facade().add_account(req)
+    if result.status == "interactive_required":
+        result = result.model_copy(update={"authUrl": _onthespot_public_url(request)})
+    return result
+
+
+def _onthespot_public_url(request: Request) -> str:
+    """OnTheSpot's own web UI, at the same host the browser reached us on but on
+    OnTheSpot's dedicated harness port, so the interactive-login tab works over
+    localhost AND over the LAN (the request host is whatever the user typed)."""
+    host = request.headers.get("host", "localhost")
+    hostname = host.rsplit(":", 1)[0]
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    return f"{scheme}://{hostname}:{settings.onthespot_public_port}/"
+
+
+@router.post("/spotify/oauth/start", response_model=SpotifyOAuthStart)
+async def spotify_oauth_start() -> SpotifyOAuthStart:
+    try:
+        session_id, auth_url = get_facade().spotify_oauth_start()
+    except SpotifyOAuthUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return SpotifyOAuthStart(sessionId=session_id, authUrl=auth_url)
+
+
+@router.post("/spotify/oauth/complete", response_model=AddAccountResult)
+async def spotify_oauth_complete(req: SpotifyCompleteRequest) -> AddAccountResult:
+    return await get_facade().spotify_oauth_complete(req.sessionId, req.code)
 
 
 @router.delete("/accounts/{uuid}")

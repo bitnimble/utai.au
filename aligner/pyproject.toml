@@ -94,6 +94,16 @@ lyrics-ja = [
     "unidic-lite>=1.0.8",
 ]
 
+# Music-source (OnTheSpot) Spotify OAuth. librespot logs in with a pasted OAuth
+# code and produces the reusable `{username, credentials, type}` blob OnTheSpot
+# stores for a Spotify account. The SAME fork OnTheSpot depends on, so the blob
+# is byte-compatible with what its own desktop login writes. Imported lazily
+# (app/music/spotify_oauth.py), so the base app + non-Spotify music flows run
+# without it; only a Spotify sign-in needs it.
+music = [
+    "librespot @ git+https://github.com/justin025/librespot-python.git",
+]
+
 # Torch: NOT shipped in the desktop capability install (which runs provisioned
 # fp16 ONNX, torch-free). Needed only for (1) the one-time ONNX export
 # (export_onnx_models.py / separation/export.py + lyrics_onnx.export_ctc_model),
@@ -129,7 +139,7 @@ dev = [
 # `uv sync` installs all groups so dev / Docker keep full parity; the desktop
 # installer pulls capabilities via `uv sync --no-default-groups --group <cap>`
 # (base deps plus the selected group(s)).
-default-groups = ["dev", "lyrics", "lyrics-ja"]
+default-groups = ["dev", "lyrics", "lyrics-ja", "music"]
 # Drop torchvision: unused, and on cu128/WSL its compiled ops fail to load and
 # break transformers model loading. The impossible marker removes it from the
 # resolved graph.

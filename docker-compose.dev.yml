@@ -1,15 +1,18 @@
 # utai.au dev harness for the music-source (OnTheSpot) feature. NOT for production.
 #
-# Brings up four services tied into one origin by Caddy:
+# Brings up four services behind Caddy (the app on one origin, OnTheSpot's UI on
+# a second):
 #   - onthespot : OnTheSpot's headless web API (the thing we wrap)
-#   - backend   : the aligner (music facade), reusing the CUDA sandbox image so
-#                 stem separation can run here later; music runs in the light
-#                 `api` worker role (no model load, no GPU needed)
+#   - backend   : the aligner, reusing the CUDA sandbox image. ONE service for
+#                 both the music facade AND the ML pipeline (vocal separation +
+#                 CTC alignment), `pipeline` role with GPU + a model-cache mount
+#                 (see the backend service). Needs the models present to start.
 #   - web       : the Vite dev server over a repo bind-mount (edit -> refresh)
-#   - caddy     : edge proxy; /api -> backend, /onthespot -> onthespot, / -> web
+#   - caddy     : edge proxy; :5175 /api -> backend + / -> web; :5176 -> onthespot
 #
 # Run:   docker compose -f docker-compose.dev.yml up --build
-# Then:  open http://localhost:8080  (refresh to pick up code changes)
+# Then:  open https://localhost:5175  (self-signed; refresh to pick up changes).
+#        HTTPS is required so AudioWorklet (audio playback) works off localhost.
 #
 # First run is heavy: the backend reuses `utai-sandbox` (sandbox/Dockerfile), a
 # multi-GB CUDA/torch build - the same image `scripts/sandbox-*` already use, so
@@ -51,23 +54,40 @@ services:
     command: sh -c "cd /repo/aligner && exec /opt/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /repo/aligner/app"
     environment:
       PYTHONPATH: /repo/aligner
-      # Music needs no GPU/model load; `api` skips the eager separation-model
-      # load. Switch to `pipeline` (and add GPU access below) to run separation.
-      WORKER_ROLE: api
+      # ONE service runs both the music API and the ML pipeline (vocal
+      # separation + CTC forced alignment), matching the sidecar. The `pipeline`
+      # role eager-loads the separator and serves /lyrics/align; music routes
+      # work in any role. NB: missing models -> the separator load fails and the
+      # container won't start, so keep MODELS_PATH (below) pointed at real weights.
+      WORKER_ROLE: pipeline
+      MODELS_DIR: /models
+      # Runtime is torch-free onnxruntime (the only shipped path). On this box
+      # separation rides the TensorRT EP automatically (the sandbox image carries
+      # the tensorrt-cu12 wheel and UTAI_SEP_TRT defaults on); its engine builds
+      # once and caches under /cache. MODELS_DIR must hold the exported `.onnx`
+      # bodies (`model_mel_band_roformer.fp16.onnx` + `ctc_align__*.fp16.onnx`)
+      # AND the separator's `config_mel_band_roformer.yaml`.
+      HF_HOME: /hf-cache
       ONTHESPOT_BASE_URL: http://onthespot:5000
       ONTHESPOT_CONFIG_PATH: /config/otsconfig.json
       MUSIC_CONFIG_PATH: /config/music_config.json
+    # GPU for separation + CTC (modern Compose; older Compose uses
+    # deploy.resources.reservations.devices with the nvidia driver).
+    gpus: all
     volumes:
       - ${REPO_PATH:-.}:/repo
       - otsconfig:/config
+      # The exported ONNX bodies (separator + CTC) plus the separator yaml.
+      # Point MODELS_PATH at the dir holding them; defaults to the onnx-export
+      # dir on this box. NB the yaml lives under the ckpt cache, so you may need
+      # to drop `config_mel_band_roformer.yaml` into this dir alongside the onnx.
+      - ${MODELS_PATH:-/codebox-workspace/utai/onnx-export}:/models
+      - aligncache:/cache
+      - hfcache:/hf-cache
     expose:
       - "8000"
     depends_on:
       - onthespot
-    # To run stem separation here later: set WORKER_ROLE=pipeline above and give
-    # the container GPU access, e.g.:
-    #   gpus: all
-    # (or, on older Compose: deploy.resources.reservations.devices with nvidia)
 
   web:
     image: oven/bun:1.3.14
@@ -88,7 +108,7 @@ services:
       - ${REPO_PATH:-.}:/repo
     # Reachable by Caddy over the compose network only; NOT published to the host
     # (the host's 5174 is typically taken by a hand-run `bun run dev`). Browse the
-    # app through Caddy on :8080.
+    # app through Caddy on :5175.
     expose:
       - "5174"
 
@@ -99,7 +119,10 @@ services:
     image: utai-caddy
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "5175:5175"
+      # OnTheSpot's own web UI, its own origin (see docker/Caddyfile), used for
+      # the interactive Spotify / Tidal logins.
+      - "5176:5176"
     depends_on:
       - web
       - backend
@@ -108,3 +131,5 @@ services:
 volumes:
   otsconfig:
   otsdownloads:
+  aligncache:
+  hfcache:

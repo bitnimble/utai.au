@@ -7,8 +7,8 @@ Wraps OnTheSpot with the behaviour its raw HTTP API doesn't provide:
   service and merge);
 - a fetch state machine over OnTheSpot's download queue (enqueue -> poll status
   -> stream the finished file);
-- non-secret prefs (priority / enabled / quality) persisted separately from
-  OnTheSpot's own config, which keeps the credentials.
+- non-secret prefs (priority / quality) persisted separately from OnTheSpot's
+  own config, which keeps the credentials.
 
 The facade knows nothing about FastAPI / stdio; `routes.py` adapts it to HTTP,
 and the same core could later back a stdio control-protocol op. Its two
@@ -36,6 +36,7 @@ from .models import (
     TrackResult,
 )
 from .onthespot_client import OnTheSpotApi
+from .spotify_oauth import SpotifyOAuth, SpotifyOAuthUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ SERVICE_CATALOG: list[ServiceInfo] = [
     ServiceInfo(id="tidal", label="Tidal", authKind="interactive"),
     ServiceInfo(id="qobuz", label="Qobuz", authKind="credentials"),
     ServiceInfo(id="deezer", label="Deezer", authKind="token", tokenLabel="ARL"),
-    ServiceInfo(id="spotify", label="Spotify", authKind="interactive"),
+    ServiceInfo(id="spotify", label="Spotify", authKind="oauth"),
     ServiceInfo(
         id="apple_music", label="Apple Music", authKind="token",
         tokenLabel="media-user-token",
@@ -90,6 +91,7 @@ class MusicFacade:
         self._pool = pool
         self._state_path = state_path
         self._state = self._load_state()
+        self._spotify_oauth = SpotifyOAuth()
         # OnTheSpot searches / parses with a single active account, so switching
         # it (per-service search, fetch enqueue) is serialized to avoid two
         # requests racing the shared `active_account_number`.
@@ -99,17 +101,24 @@ class MusicFacade:
 
     def services(self) -> list[ServiceInfo]:
         """The service catalog with `configured` + the account `uuid` reflecting
-        whether OnTheSpot has an account for each."""
-        pool = self._pool.accounts()
-        configured = {acc.get("service") for acc in pool if isinstance(acc.get("service"), str)}
+        whether OnTheSpot has a REAL account for each. OnTheSpot seeds default
+        no-login placeholder accounts (`public_deezer`, `public_soundcloud`, …)
+        on a fresh install; those aren't user sign-ins, so they don't count as
+        configured. Anonymous services (YouTube Music) need no login and are
+        always available."""
+        real = [acc for acc in self._pool.accounts() if not _is_placeholder(acc)]
+        configured = {acc.get("service") for acc in real if isinstance(acc.get("service"), str)}
         uuid_by_service: dict[str, str] = {}
-        for acc in pool:
+        for acc in real:
             svc, uid = acc.get("service"), acc.get("uuid")
             if isinstance(svc, str) and isinstance(uid, str) and svc not in uuid_by_service:
                 uuid_by_service[svc] = uid
         return [
             s.model_copy(
-                update={"configured": s.id in configured, "accountUuid": uuid_by_service.get(s.id)}
+                update={
+                    "configured": s.authKind == "anonymous" or s.id in configured,
+                    "accountUuid": uuid_by_service.get(s.id),
+                }
             )
             for s in SERVICE_CATALOG
         ]
@@ -121,7 +130,6 @@ class MusicFacade:
         self,
         *,
         priority: list[str] | None = None,
-        enabled: dict[str, bool] | None = None,
         quality: dict[str, str] | None = None,
     ) -> MusicConfig:
         cfg = self._state.config
@@ -129,8 +137,6 @@ class MusicFacade:
             # Keep only known services; drop unknowns silently so a stale client
             # can't wedge the order.
             cfg.priority = [s for s in priority if s in _CATALOG_BY_ID]
-        if enabled is not None:
-            cfg.enabled.update({k: bool(v) for k, v in enabled.items() if k in _CATALOG_BY_ID})
         if quality is not None:
             if "format" in quality:
                 cfg.quality.format = quality["format"]
@@ -147,16 +153,17 @@ class MusicFacade:
             return AddAccountResult(status="error", message=f"Unknown service {req.service!r}.")
 
         # Spotify / Tidal use an OAuth / device login OnTheSpot's headless web
-        # API doesn't expose; the user finishes it in OnTheSpot's own settings
-        # page (proxied at /onthespot/ by the dev harness).
+        # API doesn't expose; the user finishes it in OnTheSpot's own web UI,
+        # which the dev harness serves on its own origin. The HTTP route fills in
+        # the absolute `authUrl` (it needs the request host); the facade stays
+        # transport-agnostic.
         if svc.authKind == "interactive":
             return AddAccountResult(
                 status="interactive_required",
                 message=(
-                    f"{svc.label} needs an interactive login. Open OnTheSpot's settings "
-                    "to sign in; the account then appears here."
+                    f"{svc.label} needs an interactive login. Sign in in the OnTheSpot "
+                    "tab that opens, then reload this dialog."
                 ),
-                authUrl="/onthespot/",
             )
 
         payload = self._add_account_payload(svc, req)
@@ -166,11 +173,7 @@ class MusicFacade:
             )
         try:
             if svc.authKind == "anonymous":
-                # YouTube Music has no credentials; OnTheSpot adds it as a public
-                # account. Its headless web API has no add-route for it, so seed
-                # the account into OnTheSpot's config and restart to load it.
-                self._pool.append_account({"uuid": "public_youtube_music", "service": "youtube_music", "active": True})
-                await self._client.restart()
+                await self._seed_anonymous(svc.id)
             else:
                 await self._client.add_account(payload)
         except Exception as exc:  # noqa: BLE001 - surface any OnTheSpot failure as a result
@@ -184,16 +187,37 @@ class MusicFacade:
     async def remove_account(self, uuid: str) -> None:
         await self._client.remove_account(uuid)
 
+    def spotify_oauth_start(self) -> tuple[str, str]:
+        """(session_id, auth_url) for the Spotify paste-a-code login. Raises
+        SpotifyOAuthUnavailable if librespot isn't installed."""
+        return self._spotify_oauth.start()
+
+    async def spotify_oauth_complete(self, session_id: str, code: str) -> AddAccountResult:
+        """Finish the Spotify login from a pasted code / redirect URL: exchange
+        it, log in via librespot, and write the account into OnTheSpot's config."""
+        try:
+            account = await asyncio.to_thread(self._spotify_oauth.complete, session_id, code)
+        except SpotifyOAuthUnavailable as exc:
+            return AddAccountResult(status="error", message=str(exc))
+        except Exception as exc:  # noqa: BLE001 - surface any librespot / Spotify failure as a result
+            log.warning("spotify oauth complete failed: %s", exc)
+            return AddAccountResult(status="error", message=f"Spotify sign-in failed: {exc}")
+        self._pool.append_account(account)
+        await self._client.restart()
+        return AddAccountResult(status="added")
+
     # --- search -----------------------------------------------------------
 
     async def search(self, query: str) -> list[TrackResult]:
-        """Query every enabled + configured service and merge, ranked by the
-        user's priority order (then by each service's own result order)."""
+        """Query every configured service and merge, ranked by the user's
+        priority order (then by each service's own result order)."""
         query = query.strip()
         if not query:
             return []
+        services = self._search_services()
+        await self._ensure_anonymous_seeded(services)
         merged: list[TrackResult] = []
-        for service in self._search_services():
+        for service in services:
             index = self._index_for_service(service)
             if index is None:
                 continue
@@ -269,25 +293,60 @@ class MusicFacade:
 
     def _effective_config(self) -> MusicConfig:
         """The stored config with every catalog service present exactly once in
-        `priority` (stored order first, then any catalog default not yet seen)
-        and a defined `enabled` flag, so the UI always has a complete picture."""
+        `priority` (stored order first, then any catalog default not yet seen),
+        so the UI always has a complete picture."""
         cfg = self._state.config
         seen = [s for s in cfg.priority if s in _CATALOG_BY_ID]
         for s in SERVICE_CATALOG:
             if s.id not in seen:
                 seen.append(s.id)
-        enabled = {s.id: cfg.enabled.get(s.id, False) for s in SERVICE_CATALOG}
-        return MusicConfig(priority=seen, enabled=enabled, quality=cfg.quality)
+        return MusicConfig(priority=seen, quality=cfg.quality)
 
     def _search_services(self) -> list[str]:
-        cfg = self._effective_config()
-        return [s for s in cfg.priority if cfg.enabled.get(s)]
+        """Every connected (configured) service, in priority order, search
+        queries them all, there's no per-service opt-out. A service without a
+        usable account is dropped here; `_index_for_service` skips it too."""
+        configured = {s.id for s in self.services() if s.configured}
+        return [s for s in self._effective_config().priority if s in configured]
+
+    async def _ensure_anonymous_seeded(self, services: list[str]) -> None:
+        """Seed the public account for any anonymous service in `services` that
+        lacks one, so search can select it. Anonymous services need no login but
+        DO need an account row in OnTheSpot's pool; OnTheSpot may or may not ship
+        one, so this makes them self-sufficient with no UI step. Idempotent (the
+        row is keyed on uuid); restarts OnTheSpot once if it added anything."""
+        added = False
+        for svc_id in services:
+            svc = _CATALOG_BY_ID.get(svc_id)
+            if svc is None or svc.authKind != "anonymous":
+                continue
+            if self._index_for_service(svc_id) is None:
+                self._pool.append_account(_anonymous_account(svc_id))
+                added = True
+        if added:
+            await self._client.restart()
+
+    async def _seed_anonymous(self, service: str) -> None:
+        """Seed one anonymous service's public account + restart OnTheSpot to
+        load it. OnTheSpot's headless web API has no add-route for these, so the
+        account is written straight into its config."""
+        self._pool.append_account(_anonymous_account(service))
+        await self._client.restart()
 
     def _index_for_service(self, service: str) -> int | None:
+        """The active-account index OnTheSpot should search/parse with for this
+        service. Prefer a real user account over OnTheSpot's placeholder public
+        one, falling back to the placeholder (YouTube Music only ever has it)."""
+        fallback: int | None = None
         for i, acc in enumerate(self._pool.accounts()):
-            if acc.get("service") == service:
-                return i
-        return None
+            if acc.get("service") != service:
+                continue
+            if _is_placeholder(acc):
+                if fallback is None:
+                    fallback = i
+                continue
+            return i
+        return fallback
 
     def _add_account_payload(self, svc: ServiceInfo, req: AddAccountRequest) -> dict[str, Any] | None:
         if svc.authKind == "anonymous":
@@ -326,6 +385,18 @@ class MusicFacade:
 
 
 # --- module helpers (pure, unit-tested directly) --------------------------
+
+
+def _is_placeholder(acc: dict[str, Any]) -> bool:
+    """OnTheSpot's default no-login accounts (uuid `public_*`), seeded on a fresh
+    install, present but not a real user sign-in."""
+    uuid = acc.get("uuid")
+    return isinstance(uuid, str) and uuid.startswith("public_")
+
+
+def _anonymous_account(service: str) -> dict[str, Any]:
+    """OnTheSpot's no-login public account row for an anonymous service."""
+    return {"uuid": f"public_{service}", "service": service, "active": True}
 
 
 def _normalize_results(raw: list[dict[str, Any]], service_fallback: str) -> list[TrackResult]:

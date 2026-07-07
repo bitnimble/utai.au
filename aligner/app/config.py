@@ -65,10 +65,13 @@ class Settings(BaseSettings):
 
     # --- HTTP ---
     # The hosted web app is same-origin (no CORS needed); these cover the local
-    # dev frontend and the Tauri mobile/desktop shells, whose webview origin is
-    # `http://tauri.localhost` (Android/Linux/Windows) or `tauri://localhost`
-    # (iOS/macOS) and is therefore cross-origin to a remote aligner.
+    # dev (5174) and preview (5173) frontends and the Tauri mobile/desktop
+    # shells, whose webview origin is `http://tauri.localhost`
+    # (Android/Linux/Windows) or `tauri://localhost` (iOS/macOS) and is
+    # therefore cross-origin to a remote aligner.
     cors_origins: list[str] = [
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://tauri.localhost",
@@ -120,6 +123,12 @@ class Settings(BaseSettings):
     # list (service -> active-account index) and seed the anonymous YouTube Music
     # account. This is OnTheSpot's `ONTHESPOTDIR/otsconfig.json`.
     onthespot_config_path: Path = Path("/config/otsconfig.json")
+    # Host port the dev harness publishes OnTheSpot's own web UI on. It gets its
+    # OWN origin (not a sub-path of the app): OnTheSpot's Flask UI emits
+    # root-absolute URLs and a root-relative `/login` redirect that a stripped
+    # sub-path would send to the SPA instead. The `/music/accounts` route builds
+    # the interactive-login `authUrl` from the request host + this port.
+    onthespot_public_port: int = 5176
 
 
 settings = Settings()
