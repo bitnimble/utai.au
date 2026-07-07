@@ -38,10 +38,11 @@ def test_lyrics_composes_separation():
     assert any(f.startswith("ctc_align__") for f in names)
 
 
-def test_pitch_composes_separation_and_pulls_f0_model():
+def test_pitch_composes_separation_and_pulls_f0_models():
     names = _names("pitch")
     assert f"{_sep_stem()}.fp16.onnx" in names  # pitch runs over the vocals stem
-    assert settings.pitch_model in names
+    assert settings.pitch_model_offline in names  # RMVPE (offline)
+    assert settings.pitch_model_live in names  # SwiftF0 (live)
     assert not any("ctc_align" in f for f in names)  # never pulls lyrics weights
 
 

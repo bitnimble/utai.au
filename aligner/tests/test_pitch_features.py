@@ -43,6 +43,13 @@ def test_clean_contour_removes_isolated_octave_spike():
     assert np.count_nonzero(~np.isnan(cleaned)) == len(midi) - 1
 
 
+def test_clean_contour_keeps_octave_leap_when_disabled():
+    midi = _const_note(60.0, 1.0)
+    midi[30] = 72.0  # a real octave leap, not an error (RMVPE path)
+    kept = clean_contour(midi, drop_octave_outliers=False)
+    assert kept[30] == 72.0  # survives: only the min-island pass runs
+
+
 def test_clean_contour_drops_tiny_island():
     midi = np.full(int(FPS), np.nan)
     midi[10:12] = 60.0  # 2-frame (~32 ms) island, below the 60 ms floor

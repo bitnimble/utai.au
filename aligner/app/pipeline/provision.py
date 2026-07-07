@@ -87,8 +87,9 @@ def _lyrics_assets() -> list[_Asset]:
 
 
 def _pitch_assets() -> list[_Asset]:
-    """The SwiftF0 f0 model off `onnx_repo`; shipped as-is (fp32, ~400 kB)."""
-    return [_onnx(settings.pitch_model)]
+    """The f0 models off `onnx_repo`, shipped as-is (fp32): RMVPE (offline stem
+    pass) + SwiftF0 (live-mic path)."""
+    return [_onnx(settings.pitch_model_offline), _onnx(settings.pitch_model_live)]
 
 
 _KNOWN_CAPABILITIES = ("separation", "lyrics", "pitch")

@@ -28,7 +28,8 @@ def test_runtime_import_graph_is_torch_free():
         import app.sidecar                           # stdio sidecar entry
         import app.pipeline.separation.np_inference  # the ONNX separator
         import app.pipeline.lyrics_onnx              # the ONNX CTC aligner
-        import app.pipeline.pitch.analyze            # the ONNX f0 / pitch stage
+        import app.pipeline.pitch.analyze            # the ONNX pitch stage (RMVPE)
+        import app.pipeline.pitch.f0                 # the SwiftF0 extractor (live path)
         leaked = sorted(m for m in sys.modules if m == "torch" or m.startswith("torch."))
         if leaked:
             print("TORCH LEAKED:", leaked, file=sys.stderr)

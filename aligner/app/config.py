@@ -44,12 +44,15 @@ class Settings(BaseSettings):
     lyrics_align_model_default: str = "MahmoudAshraf/mms-300m-1130-forced-aligner"
 
     # --- Pitch (f0) analysis ---
-    # SwiftF0 (lars76/swift-f0, MIT): a ~400 kB CNN mapping a 16 kHz mono
-    # waveform to per-frame pitch (Hz) + confidence, run over the vocals stem to
-    # place lyric words vertically by pitch. `pitch_model` is both the local
-    # filename under models_dir and the name resolved off `onnx_repo`, where it's
-    # mirrored from upstream SwiftF0 (commit 64700fc); shipped as-is (fp32).
-    pitch_model: str = "f0_swiftf0.onnx"
+    # Two f0 models place lyric words vertically by pitch, both resolved off
+    # `onnx_repo` and shipped as-is (fp32):
+    #   - `pitch_model_offline`: RMVPE (RVC-community rmvpe.onnx, MIT, ~360 MB) --
+    #     octave-robust on separated stems (breath/bleed/falsetto); the offline
+    #     stem pass (attach_pitch) uses it.
+    #   - `pitch_model_live`: SwiftF0 (lars76/swift-f0, MIT, ~400 kB) -- fast /
+    #     low-latency, reserved for the live-mic path.
+    pitch_model_offline: str = "rmvpe.onnx"
+    pitch_model_live: str = "f0_swiftf0.onnx"
 
     # --- Paths (Docker volumes mount these) ---
     models_dir: Path = Path("/models")

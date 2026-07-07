@@ -2,7 +2,8 @@
 aggregation. No onnxruntime / torch here, so the whole thing is unit-testable
 against synthetic contours (see tests/test_pitch_features.py).
 
-The frame grid matches SwiftF0's output: 16 kHz audio, hop 256 -> 62.5 fps.
+Frame-rate agnostic: every function takes an explicit `fps`, since the two f0
+extractors run at different hops (RMVPE 100 fps, SwiftF0 62.5 fps).
 """
 from __future__ import annotations
 
@@ -13,15 +14,28 @@ from scipy.ndimage import median_filter
 from scipy.signal import butter, sosfiltfilt
 
 SR = 16000
-HOP = 256
-FPS = SR / HOP  # 62.5
-FRAME_CENTER_OFFSET = 127.5  # SwiftF0 reports frame centers at n*HOP + this
-F0_MIN_HZ = 46.875  # SwiftF0's detection range (G1..C7)
+# Default frame rate for the DSP functions' `fps` defaults and the unit tests.
+# Real callers pass the extractor's own rate (F0Contour.fps).
+FPS = 62.5
+# Valid vocal-pitch window for the range gate (roughly F1..C7); both extractors
+# report within this, and the sub-bass / super-soprano edges are noise.
+F0_MIN_HZ = 46.875
 F0_MAX_HZ = 2093.75
 
 # Vibrato lives in the 4-8 Hz band; a human singer's rate sits in here.
 _VIBRATO_LO_HZ = 4.0
 _VIBRATO_HI_HZ = 8.0
+
+
+@dataclass(frozen=True)
+class F0Contour:
+    """Per-frame f0 from an extractor. `hz` is 0 (or NaN) on unvoiced frames;
+    `confidence` is the extractor's own per-frame reliability."""
+
+    ts: np.ndarray
+    hz: np.ndarray
+    confidence: np.ndarray
+    fps: float
 
 
 @dataclass(frozen=True)
@@ -69,19 +83,23 @@ def clean_contour(
     resid_tol: float = 6.0,
     med_ms: float = 110.0,
     min_island_ms: float = 60.0,
+    drop_octave_outliers: bool = True,
 ) -> np.ndarray:
     """Remove isolated octave slips and tiny voiced islands from a NaN-gapped
     MIDI contour.
 
-    1. A frame more than `resid_tol` (half an octave) off its local rolling
-       median is a single-frame octave error -> unvoice it.
+    1. (when `drop_octave_outliers`) a frame more than `resid_tol` (half an
+       octave) off its local rolling median is a single-frame octave error ->
+       unvoice it. This is a SwiftF0 band-aid; disable it for an octave-robust
+       extractor (RMVPE) where it would only risk trimming a real falsetto leap.
     2. A voiced run shorter than `min_island_ms` is noise -> unvoice it.
     """
     out = midi.copy()
-    k = max(3, int(round(med_ms / 1000 * fps)))
-    filled = np.where(np.isnan(out), -1000.0, out)
-    med = median_filter(filled, size=k, mode="nearest")
-    out[~np.isnan(out) & (np.abs(out - med) > resid_tol)] = np.nan
+    if drop_octave_outliers:
+        k = max(3, int(round(med_ms / 1000 * fps)))
+        filled = np.where(np.isnan(out), -1000.0, out)
+        med = median_filter(filled, size=k, mode="nearest")
+        out[~np.isnan(out) & (np.abs(out - med) > resid_tol)] = np.nan
 
     min_island = max(1, int(round(min_island_ms / 1000 * fps)))
     for i0, i1 in _voiced_runs(out):

@@ -114,20 +114,33 @@ kernel is shared by both paths.
 
 ## [5] Vocal pitch (f0) overlay
 
-After alignment, `pitch.analyze.attach_pitch` runs **SwiftF0** (lars76/
-swift-f0, MIT) over the *same vocals stem* to give each word a pitch, so
-the frontend can lay words out vertically like notes. SwiftF0 is a ~400 kB
-CNN with the STFT folded into the ONNX graph: it maps a 16 kHz mono
-waveform straight to per-frame `pitch_hz` + `confidence` (hop 256 -> 62.5
-fps), so there is nothing to reimplement. It runs **torch-free on the CPU
-EP** (sub-second/song; CPU avoids contending for VRAM with the resident
-CTC aligner).
+After alignment, `pitch.analyze.attach_pitch` runs an f0 extractor over the
+*same vocals stem* to give each word a pitch, so the frontend can lay words
+out vertically like notes. **Two models, one wire shape** (`pitch/`):
 
-Pure-numpy DSP (`pitch/features.py`, unit-tested on synthetic contours):
-- **cleanup** -- confidence gate (>=0.6) + range gate, then drop isolated
-  octave slips (a frame >6 semitones off its local median) and tiny voiced
-  islands (<60 ms). This is what tames SwiftF0's occasional single-frame
-  octave errors on breathy onsets.
+- **Offline stem pass -> RMVPE** (`pitch/rmvpe.py`; RVC-community `rmvpe.onnx`,
+  MIT). A DeepUnet+GRU that takes a log-mel `[1,128,T]` and emits a 360-bin
+  pitch salience (20-cent steps) -> decoded by a 9-bin local weighted average
+  (hop 160 -> **100 fps**). It does its own harmonic-salience reasoning, so
+  unlike a monophonic tracker it **does not octave-double** on separated stems
+  (breath / bleed / falsetto) -- the reason it's the offline (reference-quality)
+  extractor. **Torch-free on the CPU EP** (~35x realtime, a few seconds/song;
+  CPU keeps it off the GPU while the CTC aligner is resident). The mel front-end
+  runs in numpy/librosa; only the DeepUnet is ONNX. **Gotcha:** the mel MUST be
+  the **HTK** scale (`htk=True`) -- a Slaney mel silently shifts every pitch a
+  few semitones.
+- **Live-mic path -> SwiftF0** (`pitch/f0.py`; lars76/swift-f0, MIT). A ~400 kB
+  CNN with the STFT folded into the graph (waveform -> `pitch_hz` + `confidence`,
+  hop 256 -> 62.5 fps). ~225x realtime CPU / sub-4 ms latency; monophonic, so it
+  octave-doubles more on stems but is fine on a single close-mic'd voice where
+  latency is what matters. Not wired into the offline pass; reserved for live.
+
+Pure-numpy DSP (`pitch/features.py`, frame-rate-agnostic, unit-tested on
+synthetic contours):
+- **cleanup** -- confidence + range gate, then tiny-voiced-island removal
+  (<60 ms). An optional octave-outlier drop (a frame >6 semitones off its local
+  median) is a *SwiftF0* band-aid, **disabled for RMVPE** where it would only
+  risk trimming a real falsetto leap.
 - **note segmentation** -- median-smooth, quantise to semitone, run-length
   encode, drop <100 ms runs. >1 note within a word == **melisma**.
 - **vibrato** -- per note, gate a 4-8 Hz band component on *autocorrelation*
@@ -140,18 +153,17 @@ alongside the existing word fields. Best-effort: if the f0 model isn't
 provisioned it no-ops, leaving alignment untouched.
 
 **Capability-scoped like the rest:** a `pitch` capability (dep-group +
-`provision._capability_assets`) composes separation and pulls only the f0
-model (`settings.pitch_model`, resolved off `onnx_repo` like the other
-shipped bodies; mirrored there from upstream SwiftF0). The
-`test_torch_free_runtime` guard covers the pitch import graph.
+`provision._capability_assets`) composes separation and pulls the two f0
+models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
+= SwiftF0), resolved off `onnx_repo` like the other shipped bodies. The
+`test_torch_free_runtime` guard covers both extractors' import graph.
 
-> **Harmonies (roadmap).** SwiftF0 is monophonic -- it tracks the
-> predominant/lead pitch, which is the right answer for a normal lead
-> vocal (case a). Equal-saliency harmony (b, pool all notes) and
-> distinct-voice duets (c, per-part) need a multi-pitch/salience pass
-> (basic-pitch / deep-salience) or a singer-separation step, gated behind
-> a voice-count heuristic. Not built yet; the per-word pitch above is the
-> lead-vocal reference those layers extend.
+> **Harmonies (roadmap).** Both extractors are monophonic -- they track the
+> predominant/lead pitch, the right answer for a normal lead vocal (case a).
+> Equal-saliency harmony (b, pool all notes) and distinct-voice duets (c,
+> per-part) need a multi-pitch/salience pass (basic-pitch / deep-salience) or
+> a singer-separation step, gated behind a voice-count heuristic. Not built
+> yet; the per-word pitch above is the lead-vocal reference those layers extend.
 
 ## ONNX / acceleration / shipping
 

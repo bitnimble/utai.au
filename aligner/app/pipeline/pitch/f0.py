@@ -7,20 +7,15 @@ and runs sub-second per song on CPU.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from app.pipeline.pitch.features import FPS, FRAME_CENTER_OFFSET, HOP, SR
+from app.pipeline.pitch.features import SR, F0Contour
 
-
-@dataclass(frozen=True)
-class F0Contour:
-    ts: np.ndarray  # (T,) frame-center times, seconds
-    hz: np.ndarray  # (T,) fundamental frequency, Hz (0 where unvoiced)
-    confidence: np.ndarray  # (T,) 0..1
-    fps: float
+HOP = 256
+FPS = SR / HOP  # 62.5
+FRAME_CENTER_OFFSET = 127.5  # SwiftF0 reports frame centers at n*HOP + this
 
 
 def _ort_session(onnx_path: str | Path):
