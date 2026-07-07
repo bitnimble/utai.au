@@ -64,15 +64,20 @@ it aligns over the HTTP backend, same as the web build. Desktop-only Rust
   Modern web APIs, no polyfills.
 - **The aligner is pure Python**, no bun/TS in its runtime. It runs vocal
   separation + CTC forced alignment and returns word-timed lyric lines.
-- **Model inference is ONNX; downloads are CAPABILITY-SCOPED.** Every ML
-  model runs torch-free on onnxruntime; torch is only for the one-time
-  `.onnx` export + the `UTAI_*_ONNX=0` opt-outs. Provisioning MUST be
-  capability-scoped (`provision.provision(*capabilities)` +
-  `_capability_assets`): a separation-only install must never pull the
-  aligner weights. Model URLs / HF ids are `settings.*` build fields
-  (config.py), not hardcoded. fp16 is GPU-only. **The HF repo id is a
-  placeholder until the real models are uploaded**, see
-  [docs/lyrics-alignment.md](docs/lyrics-alignment.md).
+- **Model inference is ONNX ONLY; the runtime NEVER imports torch.** Every
+  ML model runs torch-free on onnxruntime, on a CUDA box separation
+  auto-rides the **TensorRT** EP (engine cached under `cache_dir/tensorrt`),
+  CUDA/CoreML otherwise. torch exists SOLELY for the one-time `.onnx` export
+  + the `UTAI_*_ONNX=0` A-B fallback; **never run or configure the runtime on
+  the torch path** (don't set `UTAI_*_ONNX=0` to "make it work"), and keep any
+  torch import lazy (inside the export/fallback branch, not module top).
+  `tests/test_torch_free_runtime.py` fails `scripts/check-py` if the runtime
+  import graph pulls torch in. Downloads are CAPABILITY-SCOPED
+  (`provision.provision(*capabilities)` + `_capability_assets`): a
+  separation-only install must never pull the aligner weights. Model URLs / HF
+  ids are `settings.*` build fields (config.py), not hardcoded. fp16 is
+  GPU-only. **The HF repo id is a placeholder until the real models are
+  uploaded**, see [docs/lyrics-alignment.md](docs/lyrics-alignment.md).
 - **The timeline is linear time**, "beat" collapses onto "second"; there
   is no musical bar/tempo grid (that was Drumjot-specific). The lyrics
   layout maps `word.startSec/endSec → pixels` linearly.
