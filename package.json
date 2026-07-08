@@ -37,6 +37,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",
     "classnames": "^2.5.1",
+    "fflate": "^0.8.2",
     "lucide-react": "^1.16.0",
     "mobx": "^6.13.5",
     "mobx-react-lite": "^4.0.7",

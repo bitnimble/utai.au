@@ -17,14 +17,18 @@
 
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { join, tempDir } from '@tauri-apps/api/path';
-import { mkdir, remove, writeFile } from '@tauri-apps/plugin-fs';
+import { mkdir, readFile, remove, writeFile } from '@tauri-apps/plugin-fs';
 import {
   buildAlignLyricsRequest,
+  buildSeparateStemsRequest,
   newRequestId,
+  type Artifact,
   type RequestMessage,
+  type ResultMessage,
   type ServerMessage,
 } from 'src/net/control_protocol';
 import type { AlignLyricsOptions, AlignLyricsRequest } from 'src/lyrics/forced_align';
+import type { SeparatedStems, SeparateStemsOptions } from 'src/lyrics/separate_stems';
 import type { LyricLine } from 'src/lyrics/lrc';
 
 /** True only on the Tauri desktop build, where the Rust `run_job`/`cancel_job`
@@ -55,7 +59,11 @@ export async function alignLyricsSidecar(
       params.language = req.realign.language;
     }
     const request = buildAlignLyricsRequest(id, { kind: 'path', path: audioPath }, params);
-    return await runAlignJob(id, request, opts);
+    const result = await runJob(id, request, {
+      signal: opts.signal,
+      onRunning: () => opts.onProgress?.({ kind: 'running' }),
+    });
+    return extractLines(result.data);
   } finally {
     // Best-effort cleanup; a leftover temp file is reaped by the sidecar's
     // stale-scratch sweep, so a failure here isn't worth surfacing.
@@ -79,12 +87,14 @@ async function writeTempAudio(id: string, file: File): Promise<string> {
   return path;
 }
 
-function runAlignJob(
-  id: string,
-  request: RequestMessage,
-  opts: AlignLyricsOptions,
-): Promise<LyricLine[]> {
-  return new Promise<LyricLine[]>((resolve, reject) => {
+type RunJobOptions = { signal?: AbortSignal; onRunning?: () => void };
+
+/** Drive one sidecar job to its terminal frame, resolving the whole
+ *  {@link ResultMessage} (so op-specific callers pull either `data` or
+ *  `artifacts`). Rejects on an `error` frame, on abort, or if the stream
+ *  ends without a terminal result. */
+function runJob(id: string, request: RequestMessage, opts: RunJobOptions): Promise<ResultMessage> {
+  return new Promise<ResultMessage>((resolve, reject) => {
     let settled = false;
     let endTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -112,10 +122,9 @@ function runAlignJob(
       if (msg.type === 'progress') {
         // The sidecar is single-tenant (no GPU queue), so any frame means work
         // is actively running; there's no `queued` wait-state to surface.
-        opts.onProgress?.({ kind: 'running' });
+        opts.onRunning?.();
       } else if (msg.type === 'result') {
-        const lines = extractLines(msg.data);
-        finish(() => resolve(lines));
+        finish(() => resolve(msg));
       } else if (msg.type === 'error') {
         finish(() => reject(new Error(msg.message)));
       }
@@ -154,4 +163,49 @@ function extractLines(data: unknown): LyricLine[] {
     if (Array.isArray(lines)) return lines as LyricLine[];
   }
   return [];
+}
+
+/**
+ * Separate a mix into `{ vocals, backing }` through the desktop sidecar.
+ * Same contract as {@link import('src/lyrics/separate_stems').separateStems}.
+ * The sidecar writes both stems under the broker's outputs dir (scoped for
+ * webview reads) and returns them as `role: 'stem'` artifacts; we read each
+ * back off disk into a `File`.
+ */
+export async function separateStemsSidecar(
+  mix: File,
+  opts: SeparateStemsOptions = {},
+): Promise<SeparatedStems> {
+  const id = newRequestId();
+  const audioPath = await writeTempAudio(id, mix);
+  try {
+    const request = buildSeparateStemsRequest(id, { kind: 'path', path: audioPath });
+    const result = await runJob(id, request, {
+      signal: opts.signal,
+      onRunning: () => opts.onProgress?.({ kind: 'running' }),
+    });
+    const vocals = await readStemArtifact(result.artifacts, 'vocals');
+    const backing = await readStemArtifact(result.artifacts, 'accompaniment');
+    return { vocals, backing };
+  } finally {
+    try {
+      await remove(audioPath);
+    } catch {
+      // already gone / unwritable
+    }
+  }
+}
+
+/** Read one named stem artifact (a local {@link PathRef}) off disk into a
+ *  `File`. Throws if the artifact is missing or isn't a filesystem path. */
+async function readStemArtifact(artifacts: Artifact[], name: string): Promise<File> {
+  const artifact = artifacts.find((a) => a.role === 'stem' && a.name === name);
+  if (!artifact) throw new Error(`sidecar did not return a ${name} stem`);
+  if (artifact.ref.kind !== 'path') {
+    throw new Error(`${name} stem artifact is not a local file path`);
+  }
+  const path = artifact.ref.path;
+  const bytes = await readFile(path);
+  const filename = path.split(/[/\\]/).pop() || `${name}.flac`;
+  return new File([bytes], filename, { type: 'audio/flac' });
 }

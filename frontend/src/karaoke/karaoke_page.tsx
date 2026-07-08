@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
-import { Music, Pause, Play, Search, Settings, Square } from 'lucide-react';
+import { FolderOpen, Music, Pause, Play, Save, Search, Settings, Square } from 'lucide-react';
 import React from 'react';
 import { nativeAudioEngine, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
@@ -42,8 +42,14 @@ import { HomeAudioControls } from 'src/audio_devices/audio_controls';
 import { SettingsModal } from 'src/settings/settings_modal';
 import { useSettingsModal } from 'src/settings/settings_modal_context';
 import { KaraokePresenter } from './karaoke_presenter';
-import { KaraokePresenterContext, SongStoreContext } from './karaoke_contexts';
+import {
+  KaraokePresenterContext,
+  SongIoPresenterContext,
+  SongStoreContext,
+} from './karaoke_contexts';
 import { SongStore } from './song_store';
+import { SongIoPresenter } from './song_io_presenter';
+import { SongDetailsModal } from './song_details_modal';
 import styles from './karaoke_page.module.css';
 
 /** Peer stores + presenters, constructed once at the view root and passed
@@ -55,6 +61,7 @@ type Session = {
   lyricsAlign: LyricsAlignStore;
   lyricsPresenter: LyricsPresenter;
   presenter: KaraokePresenter;
+  songIo: SongIoPresenter;
   musicSource: MusicSourceStore;
   musicPresenter: MusicSourcePresenter;
   audioDevice: AudioDeviceStore;
@@ -67,11 +74,12 @@ function buildSession(): Session {
   const viewConfig = new ViewConfig();
   const structural = new StructuralPresenter(song, viewport, viewConfig);
   const lyricsAlign = new LyricsAlignStore();
-  const lyricsPresenter = new LyricsPresenter(lyricsAlign);
   const presenter = new KaraokePresenter(song, viewport);
+  const lyricsPresenter = new LyricsPresenter(lyricsAlign, (meta) => presenter.captureSongMeta(meta));
+  const songIo = new SongIoPresenter(song, presenter, lyricsPresenter);
   const musicSource = new MusicSourceStore();
-  const musicPresenter = new MusicSourcePresenter(musicSource, (file) =>
-    presenter.loadAudioFile(file),
+  const musicPresenter = new MusicSourcePresenter(musicSource, (file, meta) =>
+    songIo.loadMix(file, meta),
   );
   // Desktop app defaults the mic to the system device; web + mobile default to
   // None so the browser never prompts for the mic on load (the user opts in).
@@ -90,6 +98,7 @@ function buildSession(): Session {
     lyricsAlign,
     lyricsPresenter,
     presenter,
+    songIo,
     musicSource,
     musicPresenter,
     audioDevice,
@@ -106,6 +115,7 @@ export const KaraokePage = observer(function KaraokePage() {
     lyricsAlign,
     lyricsPresenter,
     presenter,
+    songIo,
     musicSource,
     musicPresenter,
     audioDevice,
@@ -134,6 +144,7 @@ export const KaraokePage = observer(function KaraokePage() {
       lyricsAlign,
       lyricsPresenter,
       presenter,
+      songIo,
       musicSource,
       musicPresenter,
       audioDevice,
@@ -148,6 +159,7 @@ export const KaraokePage = observer(function KaraokePage() {
     lyricsAlign,
     lyricsPresenter,
     presenter,
+    songIo,
     musicSource,
     musicPresenter,
     audioDevice,
@@ -161,6 +173,7 @@ export const KaraokePage = observer(function KaraokePage() {
       <AudioDeviceStoreContext.Provider value={audioDevice}>
       <AudioDevicePresenterContext.Provider value={audioDevicePresenter}>
       <SongStoreContext.Provider value={song}>
+      <SongIoPresenterContext.Provider value={songIo}>
         <StructuralContext.Provider value={structural}>
           <ViewportStoreContext.Provider value={viewport}>
             <LyricsPresenterContext.Provider value={lyricsPresenter}>
@@ -176,6 +189,7 @@ export const KaraokePage = observer(function KaraokePage() {
             </LyricsPresenterContext.Provider>
           </ViewportStoreContext.Provider>
         </StructuralContext.Provider>
+      </SongIoPresenterContext.Provider>
       </SongStoreContext.Provider>
       </AudioDevicePresenterContext.Provider>
       </AudioDeviceStoreContext.Provider>
@@ -189,15 +203,25 @@ const Toolbar = observer(function Toolbar() {
   const presenter = React.useContext(KaraokePresenterContext)!;
   const lyricsPresenter = React.useContext(LyricsPresenterContext)!;
   const musicPresenter = React.useContext(MusicSourcePresenterContext)!;
+  const songIo = React.useContext(SongIoPresenterContext)!;
   const viewport = React.useContext(ViewportStoreContext)!;
   const settingsModal = useSettingsModal();
   const fileRef = React.useRef<HTMLInputElement>(null);
+  const openSongRef = React.useRef<HTMLInputElement>(null);
 
   const onPickAudio = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (file) void presenter.loadAudioFile(file);
+    if (file) void songIo.loadMix(file);
   };
+
+  const onPickSong = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) void songIo.loadBundleFile(file);
+  };
+
+  const saveLabel = songIo.phase === 'packing' ? 'Saving…' : 'Save song';
 
   const firstLyricsId = lyricsStore.trackIds[0];
   const canAlign = firstLyricsId !== undefined && playbackEngine.audioTracks.size > 0;
@@ -249,6 +273,47 @@ const Toolbar = observer(function Toolbar() {
         Align to vocals
       </button>
       <span className={styles.toolbarSpacer} />
+      {songIo.phase === 'separating' && (
+        <span className={styles.toolStatus} data-testid="separating-status">
+          Separating stems…
+        </span>
+      )}
+      <button
+        type="button"
+        className={styles.toolButton}
+        disabled={!songIo.canSave || songIo.busy}
+        onClick={() => void songIo.saveSong()}
+        title="Save the stems, lyrics, and details as a song bundle (.zip)"
+        data-testid="save-song"
+      >
+        <Save size={14} aria-hidden="true" /> {saveLabel}
+      </button>
+      <button
+        type="button"
+        className={styles.toolButton}
+        disabled={songIo.busy}
+        onClick={() => openSongRef.current?.click()}
+        title="Open a saved song bundle (.zip)"
+        data-testid="open-song"
+      >
+        <FolderOpen size={14} aria-hidden="true" /> Open song
+      </button>
+      <input
+        ref={openSongRef}
+        type="file"
+        accept=".zip,application/zip"
+        className={styles.hiddenInput}
+        onChange={onPickSong}
+      />
+      <button
+        type="button"
+        className={styles.toolButton}
+        onClick={() => songIo.openDetails()}
+        title="Edit song title, artist, and links"
+        data-testid="song-details-open"
+      >
+        Details
+      </button>
       <button
         type="button"
         className={styles.toolButton}
@@ -385,6 +450,7 @@ const Modals = observer(function Modals() {
       />
       <MusicSearchModal />
       <SettingsModal />
+      <SongDetailsModal />
     </>
   );
 });

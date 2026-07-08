@@ -1,7 +1,7 @@
 """Runner registry.
 
-`alignLyrics` -> {@link AlignLyricsRunner}. `EchoRunner` remains as a plumbing
-stub for tests.
+`alignLyrics` -> {@link AlignLyricsRunner}, `separateStems` ->
+{@link SeparateStemsRunner}. `EchoRunner` remains as a plumbing stub for tests.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import asyncio
 from .align_lyrics_runner import AlignLyricsRunner
 from .core import CancelToken, EmitProgress, Registry, RunnerResult
 from .protocol import Artifact, PathRef, RequestMessage
+from .separate_stems_runner import SeparateStemsRunner
 
 
 class EchoRunner:
@@ -36,4 +37,5 @@ class EchoRunner:
 def build_registry() -> Registry:
     return {
         "alignLyrics": AlignLyricsRunner(),
+        "separateStems": SeparateStemsRunner(),
     }

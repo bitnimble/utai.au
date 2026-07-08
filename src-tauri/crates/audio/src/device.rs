@@ -41,19 +41,35 @@ impl AtomicF32 {
     }
 }
 
+/// One playback track as the output callback sees it: interleaved-stereo PCM
+/// resampled to the output rate, plus its effective gain (mute folded in).
+pub struct MixTrack {
+    pub samples: Arc<Vec<f32>>,
+    pub gain: f32,
+}
+
+/// One track as the control thread owns it: the decoded source (kept for
+/// re-resampling on an output-rate change), its resampled playback buffer, and
+/// its effective gain. Keyed by the frontend's track id.
+struct SourceTrack {
+    id: String,
+    decoded: Arc<DecodedTrack>,
+    resampled: Arc<Vec<f32>>,
+    gain: f32,
+}
+
 /// State shared with the real-time callbacks. The callbacks touch only the
-/// lock-free fields; `source` (a Mutex) is control-thread-only.
+/// lock-free fields; `sources` (a Mutex) is control-thread-only.
 pub struct Shared {
     pub transport: Transport,
-    /// Interleaved stereo backing track resampled to `output_rate` (read by the
-    /// output callback, lock-free).
-    pub track: ArcSwap<Vec<f32>>,
-    /// The decoded source track at its own rate; re-resampled into `track`
-    /// whenever the track or the output rate changes. Control threads only.
-    source: Mutex<Arc<DecodedTrack>>,
+    /// The playback track set the output callback mixes (lock-free snapshot,
+    /// summed per-track at each track's gain).
+    pub tracks: ArcSwap<Vec<MixTrack>>,
+    /// The control-thread-owned source tracks; `tracks` is republished from
+    /// these on any change (add / remove / gain / output-rate). Control only.
+    sources: Mutex<Vec<SourceTrack>>,
     /// The active output stream's sample rate (0 before any output opens).
     pub output_rate: AtomicU32,
-    pub track_gain: AtomicF32,
     pub mic_gain: AtomicF32,
     pub master_gain: AtomicF32,
     /// Latest input RMS in [0, 1].
@@ -67,13 +83,9 @@ impl Shared {
     fn new() -> Self {
         Self {
             transport: Transport::new(),
-            track: ArcSwap::from_pointee(Vec::new()),
-            source: Mutex::new(Arc::new(DecodedTrack {
-                samples: Vec::new(),
-                sample_rate: 0,
-            })),
+            tracks: ArcSwap::from_pointee(Vec::new()),
+            sources: Mutex::new(Vec::new()),
             output_rate: AtomicU32::new(0),
-            track_gain: AtomicF32::new(1.0),
             mic_gain: AtomicF32::new(0.0), // muted by default, matching the app
             master_gain: AtomicF32::new(1.0),
             level: AtomicF32::new(0.0),
@@ -83,19 +95,42 @@ impl Shared {
     }
 }
 
-/// Resample the current source track into `track` at the active output rate,
-/// and set the transport's total-frame count. No-op until an output rate is
-/// known. Control-thread only (allocates / not RT-safe).
-fn reapply_track(shared: &Shared) {
+/// Republish the lock-free `tracks` snapshot + total-frame count (the longest
+/// track drives duration) from the current `sources`. Call while holding the
+/// `sources` lock.
+fn publish(shared: &Shared, sources: &[SourceTrack]) {
+    let tracks: Vec<MixTrack> = sources
+        .iter()
+        .map(|s| MixTrack {
+            samples: s.resampled.clone(),
+            gain: s.gain,
+        })
+        .collect();
+    let total = sources
+        .iter()
+        .map(|s| (s.resampled.len() / 2) as u64)
+        .max()
+        .unwrap_or(0);
+    shared.tracks.store(Arc::new(tracks));
+    shared.transport.set_total_frames(total);
+}
+
+/// Re-resample every source track to the active output rate and republish.
+/// No-op until an output rate is known. Control-thread only (allocates).
+fn reresample_all(shared: &Shared) {
     let rate = shared.output_rate.load(Ordering::Relaxed);
     if rate == 0 {
         return;
     }
-    let src = shared.source.lock().unwrap().clone();
-    let resampled = resample::resample_stereo(&src.samples, src.sample_rate, rate);
-    let frames = (resampled.len() / 2) as u64;
-    shared.track.store(Arc::new(resampled));
-    shared.transport.set_total_frames(frames);
+    let mut sources = shared.sources.lock().unwrap();
+    for s in sources.iter_mut() {
+        s.resampled = Arc::new(resample::resample_stereo(
+            &s.decoded.samples,
+            s.decoded.sample_rate,
+            rate,
+        ));
+    }
+    publish(shared, &sources);
 }
 
 /// Switch to a new output rate, preserving the current playback *time* across
@@ -108,7 +143,7 @@ fn retune(shared: &Shared, new_rate: u32) {
         0.0
     };
     shared.output_rate.store(new_rate, Ordering::Relaxed);
-    reapply_track(shared);
+    reresample_all(shared);
     if old_rate > 0 {
         shared.transport.seek_secs(secs, new_rate);
     }
@@ -162,12 +197,58 @@ impl AudioEngine {
         }
     }
 
-    /// Install a decoded track (at its own rate); the engine resamples it to the
-    /// active output rate and resets the playhead to the start.
-    pub fn load_track(&self, decoded: DecodedTrack) {
-        *self.shared.source.lock().unwrap() = Arc::new(decoded);
-        reapply_track(&self.shared);
-        self.shared.transport.stop();
+    /// Install (or replace, by `id`) a decoded track; the engine resamples it to
+    /// the active output rate and adds it to the mix. Loading the FIRST track of
+    /// a fresh song rewinds to the start; adding further tracks (e.g. the
+    /// separated stems) leaves the playhead put.
+    pub fn load_track(&self, id: String, decoded: DecodedTrack) {
+        let rate = self.rate();
+        let decoded = Arc::new(decoded);
+        let resampled = if rate > 0 {
+            Arc::new(resample::resample_stereo(
+                &decoded.samples,
+                decoded.sample_rate,
+                rate,
+            ))
+        } else {
+            Arc::new(Vec::new())
+        };
+        let mut sources = self.shared.sources.lock().unwrap();
+        let fresh_song = sources.is_empty();
+        if let Some(s) = sources.iter_mut().find(|s| s.id == id) {
+            s.decoded = decoded;
+            s.resampled = resampled;
+        } else {
+            sources.push(SourceTrack {
+                id,
+                decoded,
+                resampled,
+                gain: 1.0,
+            });
+        }
+        publish(&self.shared, &sources);
+        drop(sources);
+        if fresh_song {
+            self.shared.transport.stop();
+        }
+    }
+
+    /// Drop the track with `id` from the mix (e.g. the full mix once its stems
+    /// replace it). No-op for an unknown id.
+    pub fn remove_track(&self, id: &str) {
+        let mut sources = self.shared.sources.lock().unwrap();
+        sources.retain(|s| s.id != id);
+        publish(&self.shared, &sources);
+    }
+
+    /// Set one track's effective gain in [0, 1] (mute == 0). No-op for an
+    /// unknown id.
+    pub fn set_track_gain(&self, id: &str, gain: f32) {
+        let mut sources = self.shared.sources.lock().unwrap();
+        if let Some(s) = sources.iter_mut().find(|s| s.id == id) {
+            s.gain = gain.clamp(0.0, 1.0);
+            publish(&self.shared, &sources);
+        }
     }
 
     fn rate(&self) -> u32 {
@@ -395,21 +476,17 @@ where
 
             let playing = shared.transport.is_playing();
             let start = shared.transport.advance_playing(frames as u64) as usize;
-            let track = shared.track.load();
-            let track_gain = if playing {
-                shared.track_gain.load()
-            } else {
-                0.0
-            };
-            mixer::mix_block(
-                &mut mix,
-                track.as_slice(),
-                start,
-                track_gain,
-                &mic,
-                shared.mic_gain.load(),
-                shared.master_gain.load(),
-            );
+            // Sum every track at its own gain, then the mic, then master. Tracks
+            // are gated by `playing` (the mic monitor stays live when stopped).
+            let tracks = shared.tracks.load();
+            mixer::silence(&mut mix);
+            if playing {
+                for t in tracks.iter() {
+                    mixer::add_track(&mut mix, t.samples.as_slice(), start, t.gain);
+                }
+            }
+            mixer::add_mic(&mut mix, &mic, shared.mic_gain.load());
+            mixer::apply_master(&mut mix, shared.master_gain.load());
             write_interleaved(out, &mix, out_ch);
         },
         stream_err,

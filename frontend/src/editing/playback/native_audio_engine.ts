@@ -97,7 +97,26 @@ export class NativeAudioEngine implements PlaybackEngine {
     runInAction(() => {
       this.audioTracks.delete(id);
     });
+    void invoke('audio_remove_track', { id });
     waveformWorker.dropTrack(id);
+  }
+
+  setTrackVolume(id: AudioTrackId, volume: number): void {
+    const track = this.audioTracks.get(id);
+    if (!track) return;
+    runInAction(() => {
+      track.volume = Math.max(0, Math.min(1, volume));
+    });
+    void invoke('audio_set_track_gain', { id, gain: track.outputGain });
+  }
+
+  setTrackMuted(id: AudioTrackId, muted: boolean): void {
+    const track = this.audioTracks.get(id);
+    if (!track) return;
+    runInAction(() => {
+      track.muted = muted;
+    });
+    void invoke('audio_set_track_gain', { id, gain: track.outputGain });
   }
 
   async play(): Promise<void> {
@@ -209,7 +228,7 @@ export class NativeAudioEngine implements PlaybackEngine {
 
       const path = await writeTemp(id, filename, sourceBlob);
       try {
-        await invoke<number>('audio_load_track', { path });
+        await invoke<number>('audio_load_track', { id, path });
       } finally {
         await remove(path).catch(() => {});
       }

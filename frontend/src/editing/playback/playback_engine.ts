@@ -27,6 +27,11 @@ export interface PlaybackEngine {
   loadAudioTrackFromUrl(url: string, filename: string, role?: AudioTrackRole): Promise<AudioTrackId>;
   clearAudioTrack(id: AudioTrackId): void;
 
+  /** Per-track mixer controls. `volume` is clamped to [0, 1]; `muted`
+   *  forces silence without discarding the volume setting. */
+  setTrackVolume(id: AudioTrackId, volume: number): void;
+  setTrackMuted(id: AudioTrackId, muted: boolean): void;
+
   play(): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;

@@ -15,12 +15,43 @@
     z-index: 2;
     flex: 0 0 auto;
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    gap: 6px;
     width: 160px;
     padding: 0 12px;
     box-sizing: border-box;
     border-right: 1px solid var(--color-border);
     background: var(--color-bg-cream);
+}
+
+.trackControls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.muteButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    padding: 2px;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted-alt);
+    cursor: pointer;
+}
+
+.muteButton[aria-pressed='true'] {
+    color: var(--color-accent);
+}
+
+.volumeSlider {
+    flex: 1 1 auto;
+    min-width: 0;
+    accent-color: var(--color-accent);
 }
 
 .musicTrackName {

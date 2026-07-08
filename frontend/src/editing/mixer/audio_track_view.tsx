@@ -1,6 +1,8 @@
 import classNames from 'classnames';
+import { Volume2, VolumeX } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
+import { KaraokePresenterContext } from 'src/karaoke/karaoke_contexts';
 import type { StructuralPresenter } from 'src/editing/structure/structural_presenter';
 import { AudioTrack, AudioTrackId } from 'src/editing/playback/audio_tracks';
 import { waveformWorker, BarSlice } from 'src/editing/playback/waveform_worker_client';
@@ -65,6 +67,7 @@ function audioTrackLabel(filename: string): string {
 export const AudioTrackView = observer(
   ({ track, onSeek }: { track: AudioTrack; onSeek: (x: number) => void }) => {
     const structural = React.useContext(StructuralContext);
+    const presenter = React.useContext(KaraokePresenterContext);
     const layerBeats = structural?.layerBeats ?? 0;
     const label = audioTrackLabel(track.filename);
     return (
@@ -73,6 +76,30 @@ export const AudioTrackView = observer(
           <span className={styles.musicTrackName} title={track.filename}>
             {label}
           </span>
+          <div className={styles.trackControls}>
+            <button
+              type="button"
+              className={styles.muteButton}
+              aria-pressed={track.muted}
+              aria-label={track.muted ? `Unmute ${label}` : `Mute ${label}`}
+              title={track.muted ? 'Unmute' : 'Mute'}
+              onClick={() => presenter?.setTrackMuted(track.id, !track.muted)}
+              data-testid={`audio-track-mute-${track.id}`}
+            >
+              {track.muted ? <VolumeX size={14} aria-hidden="true" /> : <Volume2 size={14} aria-hidden="true" />}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={track.volume}
+              onChange={(e) => presenter?.setTrackVolume(track.id, Number(e.target.value))}
+              className={styles.volumeSlider}
+              aria-label={`${label} volume`}
+              data-testid={`audio-track-volume-${track.id}`}
+            />
+          </div>
         </div>
         <div
           className={styles.musicTrackBarsRow}

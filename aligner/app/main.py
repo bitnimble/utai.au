@@ -29,7 +29,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.cache import BlobCache
 from app.config import settings
@@ -509,6 +509,177 @@ async def _stream_lyrics_align(
     finally:
         # The job's own `finally` releases the GPU lock; here we only own
         # the temp dir.
+        shutil.rmtree(cleanup_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# /lyrics/separate: full-quality stems (vocals + accompaniment) for "save song"
+# ---------------------------------------------------------------------------
+#
+# Content-addressed like the vocals cache, but the artifacts are the FLAC stems
+# themselves (served back over GET /lyrics/stems/{id}/{name}), so a repeat mix
+# reuses the already-separated files and skips the GPU.
+
+_STEM_ROLES = ("vocals", "accompaniment")
+_STEM_FILES = {f"{role}.flac": role for role in _STEM_ROLES}
+_STEM_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _stems_dir(stem_id: str) -> Path:
+    return settings.cache_dir / "stems" / stem_id
+
+
+def _existing_stems(stems_dir: Path) -> bool:
+    """True iff every stem FLAC already exists on disk (a content-hash cache
+    hit), so separation can be skipped."""
+    return all((stems_dir / name).is_file() for name in _STEM_FILES)
+
+
+def _stems_result_envelope(stem_id: str) -> dict[str, Any]:
+    """The terminal NDJSON `result` for /lyrics/separate. `path` is relative to
+    the api base (the frontend prefixes `<origin>/api/`); it lines up with
+    GET /lyrics/stems/{id}/{name}."""
+    return {
+        "type": "result",
+        "data": {
+            "stems": [
+                {
+                    "role": role,
+                    "path": f"lyrics/stems/{stem_id}/{role}.flac",
+                    "filename": f"{role}.flac",
+                    "contentType": "audio/flac",
+                }
+                for role in _STEM_ROLES
+            ]
+        },
+    }
+
+
+@app.post("/lyrics/separate")
+async def lyrics_separate(
+    request: Request,
+    mix: UploadFile = File(...),
+) -> StreamingResponse:
+    """Produce full-quality separated stems (vocals + accompaniment residual)
+    from a full mix, for the frontend "save song" feature.
+
+    Streaming NDJSON response, mirroring /lyrics/align:
+
+        {"type": "queued"}                        # only when the GPU is busy
+        {"type": "running"}                        # GPU acquired, work started
+        {"type": "result", "data": {"stems": [     # terminal success
+            {"role": "vocals", "path": "lyrics/stems/<id>/vocals.flac",
+             "filename": "vocals.flac", "contentType": "audio/flac"},
+            {"role": "accompaniment", ...}]}}
+        {"type": "error", "status_code": 500, "message": "..."}  # terminal
+
+    The stems are served back over GET /lyrics/stems/{id}/{name}. `<id>` is the
+    SHA-256 of the mix bytes, so a repeat mix reuses already-separated files and
+    skips the GPU entirely.
+    """
+    _require_pipeline_role()
+    request_id = new_request_id()
+    set_request_id(request_id)
+
+    separator: Separator = request.app.state.separator
+    if separator is None:
+        raise HTTPException(status_code=503, detail="Separator is not loaded on this worker.")
+
+    mix_bytes = await mix.read()
+    if not mix_bytes:
+        raise HTTPException(status_code=400, detail="`mix` is required.")
+    stem_id = _hash_bytes(mix_bytes)
+    stems_dir = _stems_dir(stem_id)
+
+    if _existing_stems(stems_dir):
+        # Content-hash cache hit: no GPU work, emit the result directly.
+        log.info("lyrics_separate: stems cache HIT (%s)", stem_id)
+        return StreamingResponse(
+            _emit_stems_result(request_id, stem_id),
+            media_type="application/x-ndjson",
+        )
+
+    cleanup_dir = Path(tempfile.mkdtemp(prefix="utai_stems_"))
+    try:
+        mix_path = cleanup_dir / f"input{Path(mix.filename or '').suffix}"
+        mix_path.write_bytes(mix_bytes)
+    except Exception:
+        shutil.rmtree(cleanup_dir, ignore_errors=True)
+        raise
+
+    return StreamingResponse(
+        _stream_lyrics_separate(
+            request_id=request_id,
+            separator=separator,
+            mix_path=mix_path,
+            stem_id=stem_id,
+            stems_dir=stems_dir,
+            cleanup_dir=cleanup_dir,
+        ),
+        media_type="application/x-ndjson",
+    )
+
+
+@app.get("/lyrics/stems/{stem_id}/{name}")
+async def lyrics_stem(stem_id: str, name: str) -> FileResponse:
+    """Stream a separated stem FLAC produced by /lyrics/separate.
+
+    `stem_id` must be a 64-hex SHA-256 and `name` one of the fixed stem
+    filenames; both are validated to foreclose path traversal (no `../`, no
+    absolute paths, no arbitrary reads under the cache dir)."""
+    if not _STEM_ID_RE.match(stem_id) or name not in _STEM_FILES:
+        raise HTTPException(status_code=404, detail="No such stem.")
+    stem_path = _stems_dir(stem_id) / name
+    if not stem_path.is_file():
+        raise HTTPException(status_code=404, detail="No such stem.")
+    return FileResponse(
+        str(stem_path),
+        media_type="audio/flac",
+        filename=name,
+    )
+
+
+async def _emit_stems_result(request_id: str, stem_id: str) -> AsyncIterator[bytes]:
+    """Emit a cached /lyrics/separate result as a single NDJSON `result`
+    envelope (no GPU ran, so no queued/running envelopes)."""
+    set_request_id(request_id)
+    yield _encode_envelope(_stems_result_envelope(stem_id))
+
+
+async def _stream_lyrics_separate(
+    *,
+    request_id: str,
+    separator: Separator,
+    mix_path: Path,
+    stem_id: str,
+    stems_dir: Path,
+    cleanup_dir: Path,
+) -> AsyncIterator[bytes]:
+    """Stream the GPU phase of /lyrics/separate as NDJSON bytes, serialised on
+    the process-wide GPU lock (behind any in-flight /lyrics/align) with the same
+    queued/running/heartbeat envelopes."""
+    set_request_id(request_id)
+
+    async def job() -> AsyncIterator[dict[str, Any]]:
+        try:
+            separator.unpark_vocals()
+            paths = await asyncio.to_thread(separator.run_stems, mix_path, cleanup_dir)
+            stems_dir.mkdir(parents=True, exist_ok=True)
+            for role in _STEM_ROLES:
+                shutil.move(str(paths[role]), str(stems_dir / f"{role}.flac"))
+            log.info("lyrics_separate: stems cache MISS, populated (%s)", stem_id)
+            yield _stems_result_envelope(stem_id)
+        except FileNotFoundError as exc:
+            yield {"type": "error", "status_code": 404, "message": str(exc)}
+        except Exception as exc:
+            log.exception("lyrics_separate failed")
+            yield {"type": "error", "status_code": 500, "message": str(exc)}
+
+    envelopes = _serialized_gpu_stream(_gpu_lock, job).__aiter__()
+    try:
+        async for chunk in _pump_with_heartbeat(envelopes.__anext__, _encode_envelope):
+            yield chunk
+    finally:
         shutil.rmtree(cleanup_dir, ignore_errors=True)
 
 
