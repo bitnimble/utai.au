@@ -22,6 +22,15 @@
 		}
 	}
 
+	# Self-hosted LRCLIB mirror, same-origin under /lrclib (no CORS). handle_path
+	# strips the prefix, so /lrclib/api/search -> lrclib /api/search. The frontend
+	# queries this (VITE_LRCLIB_URL=/lrclib/api) before falling back to public
+	# lrclib.net, so a mirror that's still downloading its dump / has none just
+	# 502s here and the client falls back.
+	handle_path /lrclib/* {
+		reverse_proxy lrclib:3300
+	}
+
 	# Everything else: the Vite dev server (HMR websocket proxied transparently).
 	# Rewrite the upstream Host to one Vite's allowedHosts accepts (localhost), so
 	# the app loads no matter what host the browser used to reach Caddy (localhost,

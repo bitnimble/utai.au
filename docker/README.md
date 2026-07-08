@@ -27,10 +27,32 @@ are picked up on a browser refresh (Vite over a repo bind-mount).
 
 | Service | What | Notes |
 |---|---|---|
-| `caddy` | Edge proxy: app on `:5175` (the origin you use), OnTheSpot's own UI on `:5176` | `:5175` `/api`→backend, `/`→Vite (streams the fetch NDJSON Vite can't); `:5176`→OnTheSpot UI (its own origin, for interactive logins). |
+| `caddy` | Edge proxy: app on `:5175` (the origin you use), OnTheSpot's own UI on `:5176` | `:5175` `/api`→backend, `/lrclib`→lrclib, `/`→Vite (streams the fetch NDJSON Vite can't); `:5176`→OnTheSpot UI (its own origin, for interactive logins). |
 | `web` | Vite dev server | Bind-mounts the repo; hot reload. |
 | `backend` | Aligner (music facade) | Reuses the CUDA `utai-sandbox` image; runs in `WORKER_ROLE=api` (no GPU/model load for music). |
 | `onthespot` | OnTheSpot headless web API | The thing the facade wraps. Config + credentials live in the `otsconfig` volume. |
+| `lrclib` | Self-hosted LRCLIB lyrics mirror | Opt-in; see below. Searched before public lrclib.net; the client falls back if it's missing/down. |
+
+## Local lyrics mirror (LRCLIB)
+
+Public `lrclib.net` search is slow (5–8 s). The `lrclib` service runs a
+self-hosted mirror so lyric search answers in ms; the frontend queries it first
+(`VITE_LRCLIB_URL=/lrclib/api`, proxied same-origin through Caddy) and falls back
+to public `lrclib.net` on a miss or while the mirror is unavailable.
+
+It's **opt-in**: pick a current dump from <https://lrclib.net/db-dumps> and set
+its URL in the `.env` beside the compose file. Without it the `lrclib` container
+exits and everything still works against public lrclib.net.
+
+```sh
+# A specific dump (~5 GB compressed → ~19 GB on disk). Downloaded + decompressed
+# ONCE into the mounted volume (LRCLIB_DATA_PATH, default
+# /codebox-workspace/utai/lrclib), cached across `down`/rebuilds.
+echo "LRCLIB_DUMP_URL=https://lrclib.net/db-dumps/lrclib-db-dump-<timestamp>.sqlite3.gz" >> .env
+```
+
+First `up` builds the Rust server from source and does the multi-GB download, so
+it's slow; until the dump lands the frontend just uses public lrclib.net.
 
 ## First-run checks
 
