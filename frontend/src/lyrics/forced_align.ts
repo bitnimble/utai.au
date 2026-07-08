@@ -1,5 +1,5 @@
 /**
- * Client for the Python backend's `/lyrics/align` endpoint. The endpoint
+ * Client for the Python backend's `/music/align` endpoint. The endpoint
  * always runs in forced-alignment mode: the caller supplies the lyric
  * text + rough line timings (typically pulled straight from LRCLIB) and
  * the backend runs a CTC forced aligner (MMS-300m via
@@ -64,7 +64,7 @@ export function alignLyricsForced(
 }
 
 /**
- * POST to `/lyrics/align` and return the parsed lyric lines.
+ * POST to `/music/align` and return the parsed lyric lines.
  *
  * The endpoint streams NDJSON: one envelope per line, `queued` (only
  * when the request waits behind another GPU job), `running` (alignment
@@ -96,7 +96,7 @@ async function alignLyricsHttp(
   if (req.realign.language !== undefined && req.realign.language.length > 0) {
     form.set('language', req.realign.language);
   }
-  const res = await backendFetch(`${appSettingsStore.apiBase}/lyrics/align`, {
+  const res = await backendFetch(`${appSettingsStore.apiBase}/music/align`, {
     method: 'POST',
     body: form,
     signal: opts.signal,
@@ -109,10 +109,10 @@ async function alignLyricsHttp(
     } catch {
       // Non-JSON body; fall through to the status-text fallback below.
     }
-    throw new Error(detail ?? `lyrics/align failed (${res.status} ${res.statusText})`);
+    throw new Error(detail ?? `music/align failed (${res.status} ${res.statusText})`);
   }
   if (!res.body) {
-    throw new Error('lyrics/align returned no response body');
+    throw new Error('music/align returned no response body');
   }
 
   const reader = res.body.getReader();
@@ -129,7 +129,7 @@ async function alignLyricsHttp(
       const data = event.data as { lines?: LyricLine[] } | undefined;
       lines = Array.isArray(data?.lines) ? data.lines : [];
     } else if (type === 'error') {
-      errorMessage = typeof event.message === 'string' ? event.message : 'lyrics/align failed';
+      errorMessage = typeof event.message === 'string' ? event.message : 'music/align failed';
     }
   };
   const settled = (): boolean => lines !== null || errorMessage !== null;
@@ -172,7 +172,7 @@ async function alignLyricsHttp(
     throw new Error(errorMessage);
   }
   if (lines === null) {
-    throw new Error('lyrics/align stream ended without a terminal result event');
+    throw new Error('music/align stream ended without a terminal result event');
   }
   return lines;
 }
@@ -187,7 +187,7 @@ function parseNdjsonLine(line: string): Record<string, unknown> | null {
       : null;
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.warn('Skipping malformed lyrics/align NDJSON event:', line, err);
+    console.warn('Skipping malformed music/align NDJSON event:', line, err);
     return null;
   }
 }

@@ -7,7 +7,7 @@
  * Same transport split as {@link import('./forced_align').alignLyricsForced}:
  * the Tauri desktop build drives the bundled Python sidecar over the Rust
  * broker ({@link separateStemsSidecar}); web + Android POST to the HTTP
- * `/lyrics/separate` endpoint. Both share this request/progress/result
+ * `/music/separate` endpoint. Both share this request/progress/result
  * contract, so callers don't branch on transport.
  */
 
@@ -46,7 +46,7 @@ export function separateStems(mix: File, opts: SeparateStemsOptions = {}): Promi
 async function separateStemsHttp(mix: File, opts: SeparateStemsOptions): Promise<SeparatedStems> {
   const form = new FormData();
   form.set('mix', mix, mix.name);
-  const res = await backendFetch(`${appSettingsStore.apiBase}/lyrics/separate`, {
+  const res = await backendFetch(`${appSettingsStore.apiBase}/music/separate`, {
     method: 'POST',
     body: form,
     signal: opts.signal,
@@ -59,9 +59,9 @@ async function separateStemsHttp(mix: File, opts: SeparateStemsOptions): Promise
     } catch {
       // Non-JSON body; fall through to the status-text fallback.
     }
-    throw new Error(detail ?? `lyrics/separate failed (${res.status} ${res.statusText})`);
+    throw new Error(detail ?? `music/separate failed (${res.status} ${res.statusText})`);
   }
-  if (!res.body) throw new Error('lyrics/separate returned no response body');
+  if (!res.body) throw new Error('music/separate returned no response body');
 
   const { stems, pitchContour } = await readSeparateStream(res.body, opts.onProgress);
   const vocals = await downloadStem(stems, 'vocals', opts.signal);
@@ -90,7 +90,7 @@ async function readSeparateStream(
       const stems = Array.isArray(data?.stems) ? data.stems.map(parseStemRef).filter(isPresent) : [];
       result = { stems, pitchContour: parsePitchContour(data?.pitch) };
     } else if (type === 'error') {
-      errorMessage = typeof event.message === 'string' ? event.message : 'lyrics/separate failed';
+      errorMessage = typeof event.message === 'string' ? event.message : 'music/separate failed';
     }
   };
   const settled = (): boolean => result !== null || errorMessage !== null;
@@ -125,7 +125,7 @@ async function readSeparateStream(
   }
 
   if (errorMessage !== null) throw new Error(errorMessage);
-  if (result === null) throw new Error('lyrics/separate stream ended without a terminal result');
+  if (result === null) throw new Error('music/separate stream ended without a terminal result');
   return result;
 }
 
@@ -135,7 +135,7 @@ async function downloadStem(
   signal?: AbortSignal,
 ): Promise<File> {
   const stem = stems.find((s) => s.role === role);
-  if (!stem) throw new Error(`lyrics/separate did not return a ${role} stem`);
+  if (!stem) throw new Error(`music/separate did not return a ${role} stem`);
   const res = await backendFetch(`${appSettingsStore.apiBase}/${stem.path}`, { signal });
   if (!res.ok) throw new Error(`Could not download the ${role} stem (${res.status} ${res.statusText})`);
   const bytes = await res.arrayBuffer();

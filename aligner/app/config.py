@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # The vocals separator is NOT in audio-separator's registry;
     # `pipeline/provision.py` injects it and downloads its weights on startup.
     # This value is the *local* filename it writes into `models_dir`.
-    # `model_mel_band_roformer.ckpt` = Mel-Band Roformer (MIT; the /lyrics path
+    # `model_mel_band_roformer.ckpt` = Mel-Band Roformer (MIT; the /music path
     # consumes its `vocals` stem). The field name `demucs_model` is historical
     # (it's a Roformer now, not Demucs).
     demucs_model: str = "model_mel_band_roformer.ckpt"
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # without touching code. Defaults are the canonical Utai repos.
     #   - `onnx_repo`: all shipped runtime assets (the fp16 `.onnx` set + the
     #     separation architecture yamls).
-    #   - `lyrics_align_model_*`: the /lyrics CTC aligner HF ids (also the
+    #   - `lyrics_align_model_*`: the /music CTC aligner HF ids (also the
     #     tokenizer source and the shipped `.onnx` filename stem).
     onnx_repo: str = "https://huggingface.co/bitnimble/utai-onnx/resolve/main"
     lyrics_align_model_english: str = "facebook/wav2vec2-large-robust-ft-libri-960h"
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     # --- Paths (Docker volumes mount these) ---
     models_dir: Path = Path("/models")
 
-    # Content-addressed cache for the /lyrics/align pipeline, two subdirs:
+    # Content-addressed cache for the /music/align pipeline, two subdirs:
     #   - `vocals/`: opus-encoded separated vocals keyed by SHA-256 of the
     #     input mix + the vocals-separator model id, so a repeat alignment
     #     of the same mix skips the separator.
@@ -110,7 +110,7 @@ class Settings(BaseSettings):
 
     # Which role this process is playing inside a multi-process deployment:
     # - `pipeline` (default) = eager-loads the separation model and serves
-    #                          `/lyrics/align`. Single-process local runs
+    #                          `/music/align`. Single-process local runs
     #                          leave it here.
     # - `api`                = no model load; serves the lightweight control
     #                          endpoints (`/health`) so they stay responsive
@@ -122,7 +122,7 @@ class Settings(BaseSettings):
     device: str = "auto"
 
     # --- Lyrics alignment ---
-    # ISO-639-1 language hint for the /lyrics/align endpoint. Empty
+    # ISO-639-1 language hint for the /music/align endpoint. Empty
     # string = detect from the caller's lyric text
     # (`_detect_language_from_text`); set explicitly to override that
     # (e.g. to force a specific same-script language uroman would

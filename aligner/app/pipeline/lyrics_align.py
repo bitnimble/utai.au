@@ -36,7 +36,7 @@ heuristics), so there is no audio-based language detector: every
 script with letters routes to the MMS + uroman path, and only
 genuinely letter-free text falls back to a plain `en` default.
 
-Models are loaded **lazily** on the first /lyrics/align request rather
+Models are loaded **lazily** on the first /music/align request rather
 than eagerly at startup; the existing separator stack already eats most
 of the GPU's wake-up budget, and lyrics alignment is an optional, on-
 demand feature. The aligner keeps the loaded models around for
@@ -1310,7 +1310,7 @@ def _segment_to_json(s: PitchSegment) -> dict[str, Any]:
 def lines_to_json(lines: list[LyricLine]) -> list[dict[str, Any]]:
     """Serialize `LyricLine`s into the frontend's wire shape.
 
-    Mirrors `src/lyrics/lrc.ts::LyricLine` exactly: camelCase keys,
+    Mirrors `src/music/lrc.ts::LyricLine` exactly: camelCase keys,
     `words` omitted (rather than `null`) when alignment didn't succeed.
     The endpoint wraps this into `{lines: [...]}`.
     """

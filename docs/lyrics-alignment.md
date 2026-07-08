@@ -210,7 +210,7 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   an unreachable remote or an untracked-but-size-matching file is left alone.
   `provision_update_check=false` reverts to presence-only (prod, baked models).
   Backend: a lifespan background task provisions + warms the separator and
-  reports progress at `GET /provision/status` (`/lyrics/*` 503 until ready);
+  reports progress at `GET /provision/status` (`/music/*` 503 until ready);
   desktop: the frontend gate drives `capability::ensure_models`
   (`--progress-json`); web polls the status endpoint. See
   `frontend/src/provisioning/`.
@@ -242,7 +242,7 @@ packages beyond the separation stack).
   the horizontal axis is **linear time** (seconds → pixels); we dropped
   Drumjot's musical bar/beat/tempo grid (see the timeline shim, "beat"
   collapses onto "second").
-- `forced_align.ts` is the client for the backend `/lyrics/align`
+- `forced_align.ts` is the client for the backend `/music/align`
   endpoint (NDJSON stream: `queued` → `running` → `result`/`error`),
   plus filename heuristics for auto-picking a vocals stem.
 

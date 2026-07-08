@@ -12,7 +12,7 @@ object that DOES expose a torch-style `.parameters()` / `.to()` (duck-typed, no
 torch import); for an ORT session (no `.parameters()`) they're a clean no-op.
 
 `park_for_lyrics` / `park_vocals_after_extraction` are the coordinator entry
-points the /lyrics/align flow calls around the vocals -> CTC handoff. Callers
+points the /music/align flow calls around the vocals -> CTC handoff. Callers
 must hold the process-wide GPU lock (see main.py::_gpu_lock) so a model isn't
 moved mid-stream. Each helper is idempotent and a no-op when the model isn't
 loaded (lazy-cached models start absent).
@@ -62,11 +62,11 @@ def unpark_module(module: Any, label: str) -> None:
 
 
 def park_for_lyrics(separator: Any, aligner: Any) -> None:
-    """Prepare the GPU for /lyrics/align: unpark the vocals separator and any
+    """Prepare the GPU for /music/align: unpark the vocals separator and any
     previously-loaded CTC aligners so the request runs on a clean GPU. Both are
     no-ops if never loaded.
 
-    Called at the top of /lyrics/align under the process-wide GPU lock, so no
+    Called at the top of /music/align under the process-wide GPU lock, so no
     in-flight stage can be holding a device tensor whose source is about to
     move host-side."""
     separator.unpark_vocals()
@@ -75,7 +75,7 @@ def park_for_lyrics(separator: Any, aligner: Any) -> None:
 
 
 def park_vocals_after_extraction(separator: Any) -> None:
-    """Release the vocals separator's VRAM after /lyrics/align has extracted the
+    """Release the vocals separator's VRAM after /music/align has extracted the
     vocals stem and BEFORE the CTC aligner loads, so the aligner can allocate
     without OOM. Idempotent (no-op when the separator never loaded this
     request -- e.g. a vocals cache hit fed the aligner directly)."""

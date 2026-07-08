@@ -25,7 +25,7 @@ def _ort_session(onnx_path: str | Path):
 
     # CPU EP on purpose: the model is ~400 kB, so CPU inference is sub-second and
     # avoids contending for VRAM with the CTC aligner that is resident when this
-    # runs inside /lyrics/align.
+    # runs inside /music/align.
     sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     log_bound_ep(sess, onnx_path)
     return sess

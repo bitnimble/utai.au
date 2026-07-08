@@ -5,7 +5,7 @@ Two independent, model-free surfaces:
   - `_accompaniment`, the pure numpy residual helper: `mix - vocals`, so
     `vocals + accompaniment == mix`. Imports only the torch-free helper, no
     model / onnxruntime.
-  - the GET /lyrics/stems/{id}/{name} path-traversal guard, driven by calling
+  - the GET /music/stems/{id}/{name} path-traversal guard, driven by calling
     the route handler directly (no TestClient, so the model-warming lifespan
     never runs).
 """
@@ -39,7 +39,7 @@ def test_stems_result_envelope_shape() -> None:
     stems = env["data"]["stems"]
     assert [s["role"] for s in stems] == ["vocals", "accompaniment"]
     for s in stems:
-        assert s["path"] == f"lyrics/stems/abc123/{s['role']}.flac"
+        assert s["path"] == f"music/stems/abc123/{s['role']}.flac"
         assert s["filename"] == f"{s['role']}.flac"
         assert s["contentType"] == "audio/flac"
 

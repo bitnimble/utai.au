@@ -1,6 +1,6 @@
 """Torch-free ONNX inference for the CTC forced-alignment model.
 
-The `/lyrics` aligner runs a wav2vec2-family CTC model over the audio to get
+The `/music` aligner runs a wav2vec2-family CTC model over the audio to get
 per-frame emissions, then a C++ Viterbi (`ctc_forced_aligner.forced_align`, numpy
 in/out) aligns the lyric tokens. Only the model + `log_softmax` were torch; this
 module exports the model to ONNX and reproduces `generate_emissions` /

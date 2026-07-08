@@ -2,14 +2,14 @@
 
 Endpoints:
     GET  /health         - readiness + GPU info
-    POST /lyrics/align   - word-level lyrics alignment (CTC forced alignment)
+    POST /music/align   - word-level lyrics alignment (CTC forced alignment)
 
 The service is intentionally stateless. All temp files live in per-request
 tempdirs. At startup a background task provisions the configured model set
 (with update-detection) and warms the separation model; uvicorn accepts
 connections immediately so GET /provision/status can report progress while it
 runs. /health is a liveness probe (process + GPU); /provision/status is the
-readiness signal (models downloaded + separator loaded). /lyrics/* return 503
+readiness signal (models downloaded + separator loaded). /music/* return 503
 until provisioning finishes.
 """
 from __future__ import annotations
@@ -59,7 +59,7 @@ from app.request_context import (
 HEARTBEAT_INTERVAL_SECONDS = 10.0
 
 
-# Process-wide GPU lock. The heavy endpoint (/lyrics/align) takes this before
+# Process-wide GPU lock. The heavy endpoint (/music/align) takes this before
 # doing any model work so a second request can't move a model to CPU while
 # the first is mid-forward through it. A queued second request waits; the GPU
 # is a single resource, so concurrency wouldn't make either request faster
@@ -287,7 +287,7 @@ def _require_ready(request: Request) -> None:
         )
 
 
-@app.post("/lyrics/align")
+@app.post("/music/align")
 async def lyrics_align(
     request: Request,
     vocals: UploadFile | None = File(default=None),
@@ -453,7 +453,7 @@ async def lyrics_align(
 async def _emit_cached_alignment(
     request_id: str, lines_json_bytes: bytes
 ) -> AsyncIterator[bytes]:
-    """Emit a cached /lyrics/align result as a single NDJSON `result`
+    """Emit a cached /music/align result as a single NDJSON `result`
     envelope. No GPU runs, so there are no `queued`/`running` envelopes;
     the frontend treats those as optional status and acts on `result`."""
     set_request_id(request_id)
@@ -477,7 +477,7 @@ async def _stream_lyrics_align(
     vocals_path: Path | None,
     cleanup_dir: Path,
 ) -> AsyncIterator[bytes]:
-    """Stream the GPU phase of /lyrics/align as NDJSON bytes.
+    """Stream the GPU phase of /music/align as NDJSON bytes.
 
     The upload drain + vocals-cache lookup already ran in the endpoint
     handler; this owns the GPU-serialised work: park the separation model,
@@ -574,7 +574,7 @@ async def _stream_lyrics_align(
                 language,
             )
             # Pitch is extracted once at separation time (a property of the vocal
-            # stem, see /lyrics/separate) and mapped onto these words by the
+            # stem, see /music/separate) and mapped onto these words by the
             # frontend, so alignment never re-runs the f0 model.
             lines_json = lines_to_json(lines)
             # Populate the alignment-result cache so an identical repeat
@@ -613,11 +613,11 @@ async def _stream_lyrics_align(
 
 
 # ---------------------------------------------------------------------------
-# /lyrics/separate: full-quality stems (vocals + accompaniment) for "save song"
+# /music/separate: full-quality stems (vocals + accompaniment) for "save song"
 # ---------------------------------------------------------------------------
 #
 # Content-addressed like the vocals cache, but the artifacts are the FLAC stems
-# themselves (served back over GET /lyrics/stems/{id}/{name}), so a repeat mix
+# themselves (served back over GET /music/stems/{id}/{name}), so a repeat mix
 # reuses the already-separated files and skips the GPU.
 
 _STEM_ROLES = ("vocals", "accompaniment")
@@ -664,15 +664,15 @@ def _read_stems_pitch(stem_id: str) -> Any | None:
 
 
 def _stems_result_envelope(stem_id: str) -> dict[str, Any]:
-    """The terminal NDJSON `result` for /lyrics/separate. `path` is relative to
+    """The terminal NDJSON `result` for /music/separate. `path` is relative to
     the api base (the frontend prefixes `<origin>/api/`); it lines up with
-    GET /lyrics/stems/{id}/{name}. `pitch` (the vocal pitch contour) rides along
+    GET /music/stems/{id}/{name}. `pitch` (the vocal pitch contour) rides along
     when it was extracted; absent when the pitch model wasn't provisioned."""
     data: dict[str, Any] = {
         "stems": [
             {
                 "role": role,
-                "path": f"lyrics/stems/{stem_id}/{role}.flac",
+                "path": f"music/stems/{stem_id}/{role}.flac",
                 "filename": f"{role}.flac",
                 "contentType": "audio/flac",
             }
@@ -685,7 +685,7 @@ def _stems_result_envelope(stem_id: str) -> dict[str, Any]:
     return {"type": "result", "data": data}
 
 
-@app.post("/lyrics/separate")
+@app.post("/music/separate")
 async def lyrics_separate(
     request: Request,
     mix: UploadFile = File(...),
@@ -693,17 +693,17 @@ async def lyrics_separate(
     """Produce full-quality separated stems (vocals + accompaniment residual)
     from a full mix, for the frontend "save song" feature.
 
-    Streaming NDJSON response, mirroring /lyrics/align:
+    Streaming NDJSON response, mirroring /music/align:
 
         {"type": "queued"}                        # only when the GPU is busy
         {"type": "running"}                        # GPU acquired, work started
         {"type": "result", "data": {"stems": [     # terminal success
-            {"role": "vocals", "path": "lyrics/stems/<id>/vocals.flac",
+            {"role": "vocals", "path": "music/stems/<id>/vocals.flac",
              "filename": "vocals.flac", "contentType": "audio/flac"},
             {"role": "accompaniment", ...}]}}
         {"type": "error", "status_code": 500, "message": "..."}  # terminal
 
-    The stems are served back over GET /lyrics/stems/{id}/{name}. `<id>` is the
+    The stems are served back over GET /music/stems/{id}/{name}. `<id>` is the
     SHA-256 of the mix bytes, so a repeat mix reuses already-separated files and
     skips the GPU entirely.
     """
@@ -751,9 +751,9 @@ async def lyrics_separate(
     )
 
 
-@app.get("/lyrics/stems/{stem_id}/{name}")
+@app.get("/music/stems/{stem_id}/{name}")
 async def lyrics_stem(stem_id: str, name: str) -> FileResponse:
-    """Stream a separated stem FLAC produced by /lyrics/separate.
+    """Stream a separated stem FLAC produced by /music/separate.
 
     `stem_id` must be a 64-hex SHA-256 and `name` one of the fixed stem
     filenames; both are validated to foreclose path traversal (no `../`, no
@@ -771,7 +771,7 @@ async def lyrics_stem(stem_id: str, name: str) -> FileResponse:
 
 
 async def _emit_stems_result(request_id: str, stem_id: str) -> AsyncIterator[bytes]:
-    """Emit a cached /lyrics/separate result as a single NDJSON `result`
+    """Emit a cached /music/separate result as a single NDJSON `result`
     envelope (no GPU ran, so no queued/running envelopes)."""
     set_request_id(request_id)
     yield _encode_envelope(_stems_result_envelope(stem_id))
@@ -786,8 +786,8 @@ async def _stream_lyrics_separate(
     stems_dir: Path,
     cleanup_dir: Path,
 ) -> AsyncIterator[bytes]:
-    """Stream the GPU phase of /lyrics/separate as NDJSON bytes, serialised on
-    the process-wide GPU lock (behind any in-flight /lyrics/align) with the same
+    """Stream the GPU phase of /music/separate as NDJSON bytes, serialised on
+    the process-wide GPU lock (behind any in-flight /music/align) with the same
     queued/running/heartbeat envelopes."""
     set_request_id(request_id)
 
@@ -871,7 +871,7 @@ def _extract_vocals_with_separator(
 
 
 # ---------------------------------------------------------------------------
-# /lyrics/align disk caches
+# /music/align disk caches
 # ---------------------------------------------------------------------------
 #
 # Two content-addressed caches back the alignment pipeline:

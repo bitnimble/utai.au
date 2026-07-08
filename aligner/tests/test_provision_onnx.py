@@ -34,7 +34,7 @@ def test_separation_is_scoped_to_separation():
 
 def test_lyrics_composes_separation():
     names = _names("lyrics")
-    assert f"{_sep_stem()}.fp16.onnx" in names  # /lyrics needs the vocals stem
+    assert f"{_sep_stem()}.fp16.onnx" in names  # /music needs the vocals stem
     assert any(f.startswith("ctc_align__") for f in names)
 
 

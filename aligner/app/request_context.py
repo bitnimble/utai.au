@@ -1,7 +1,7 @@
 """Per-request id propagation for log correlation.
 
 Every streaming endpoint (`/transcribe`, `/transcribe/resume`,
-`/lyrics/align`) mints a short request id at the top of the handler and
+`/music/align`) mints a short request id at the top of the handler and
 stashes it in a `ContextVar`. The logging format string then renders
 that id on every record, so an operator can `grep` a single id and see
 the whole request's log trail interleaved across the many loggers the

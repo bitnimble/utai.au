@@ -3,7 +3,7 @@
 Extracts a vocals stem from a full mix with **Mel-Band Roformer** (KJ's
 MIT-licensed vocals model) -- a single-stem Mel-Band RoPE Transformer whose
 `vocals` output feeds alignment; the accompaniment is the residual we don't use.
-`pipeline/lyrics_align.py` then forced-aligns the caller's lyric text against
+`pipeline/music_align.py` then forced-aligns the caller's lyric text against
 that stem.
 
 Inference runs torch-free through `pipeline/separation/np_inference.py` (numpy
@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 
 class Separator:
     """Vocals separator (Mel-Band Roformer). The model is loaded eagerly by
-    `load()` at application startup so the first `/lyrics/align` mix-flow call
+    `load()` at application startup so the first `/music/align` mix-flow call
     doesn't pay model-load latency.
 
     Model weights are downloaded into `settings.models_dir` (mounted as a
@@ -51,7 +51,7 @@ class Separator:
         """Idempotently load the vocals separator (Mel-Band Roformer).
 
         Called once at container startup (FastAPI lifespan) so the first mix-flow
-        /lyrics/align call doesn't pay model-load latency, and again defensively
+        /music/align call doesn't pay model-load latency, and again defensively
         from `run_vocals`.
         """
         if self._stems_all is not None:
@@ -84,7 +84,7 @@ class Separator:
         # weights in the onnxruntime session (GPU memory has no torch nn.Module to
         # move) and has no `.model`, so there is nothing to park for it. Duck-typed
         # on `.model` so this stays torch-free. NOTE: the ONNX session's VRAM is NOT
-        # freed by the /lyrics GPU swap -- releasing the ORT session is a follow-up
+        # freed by the /music GPU swap -- releasing the ORT session is a follow-up
         # if that OOMs.
         return getattr(separator, "model", None)
 

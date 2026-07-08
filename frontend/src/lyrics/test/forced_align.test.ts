@@ -39,7 +39,7 @@ function makeFile(content: string, name = 'audio.mp3'): File {
 }
 
 /** Build a streaming NDJSON response body from a list of envelopes, the
- *  wire shape the backend's /lyrics/align now emits (queued / running /
+ *  wire shape the backend's /music/align now emits (queued / running /
  *  result / error, one JSON object per line). */
 function ndjsonResponse(envelopes: object[], status = 200): Response {
   const body = envelopes.map((e) => JSON.stringify(e)).join('\n') + '\n';
@@ -60,7 +60,7 @@ describe('alignLyricsForced', () => {
       },
     ];
     fetchHandler = (call) => {
-      expect(call.url.endsWith('/lyrics/align')).toBe(true);
+      expect(call.url.endsWith('/music/align')).toBe(true);
       expect(call.method).toBe('POST');
       expect(call.body).toBeInstanceOf(FormData);
       const form = call.body as FormData;

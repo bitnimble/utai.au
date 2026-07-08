@@ -1,4 +1,4 @@
-"""Tests for the /lyrics/align disk-cache key helpers (vocals + result).
+"""Tests for the /music/align disk-cache key helpers (vocals + result).
 
 The helpers live in `app.main` as module-level private functions.
 Importing them is cheap because the lyrics_align module lazy-loads

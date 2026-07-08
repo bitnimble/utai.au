@@ -2,7 +2,7 @@
 
 Every model the packaged app runs on is downloaded into `settings.models_dir`
 here, and downloads are **capability-scoped**: `provision("separation")` fetches
-only the separation assets, `provision("lyrics")` only what /lyrics needs, and so
+only the separation assets, `provision("lyrics")` only what /music needs, and so
 on. This is the whole point of the dependency-group split -- a user who installs
 one capability must never pull another capability's weights (the lyrics models
 alone are >1 GB). The capability -> asset map mirrors the pyproject

@@ -1,4 +1,4 @@
-"""Disk-backed LRU blob cache for the /lyrics/align pipeline.
+"""Disk-backed LRU blob cache for the /music/align pipeline.
 
 Two independent caches live under `settings.cache_dir`:
 
@@ -41,7 +41,7 @@ class BlobCache:
     """LRU-bounded content-addressed cache backed by a single directory.
 
     Thread-safe within one process via `self._lock`. Across processes
-    (Caddy fans `/lyrics/align` to the pipeline worker), each worker
+    (Caddy fans `/music/align` to the pipeline worker), each worker
     holds its own in-memory index. The on-disk files stay consistent
     because writes go through `os.replace`; the per-process indexes
     drift but self-heal via the `get()` hydrate branch and the
