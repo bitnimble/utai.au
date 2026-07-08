@@ -16,6 +16,7 @@ import {
   type TrackResult,
 } from 'src/net/music_source_client';
 import { toastStore } from 'src/ui/toasts/toasts';
+import { cleanStreamingTitle } from 'src/lyrics/auto_lyrics';
 import { SongMeta } from 'src/karaoke/song_schema';
 import { MusicSourceStore } from './music_source_store';
 
@@ -209,7 +210,7 @@ export class MusicSourcePresenter {
       { testId: 'music-fetch-loaded' },
     );
     await this.onAudioFetched(file, {
-      title: track.title,
+      title: cleanStreamingTitle(track.title, track.artists),
       artist: track.artists || undefined,
       album: track.album ?? undefined,
       albumArtUrl: track.coverUrl ?? undefined,

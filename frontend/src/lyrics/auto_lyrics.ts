@@ -201,3 +201,53 @@ export function parseSongFilename(name: string): { title: string; artist: string
   if (sep >= 0) return { artist: base.slice(0, sep).trim(), title: base.slice(sep + 3).trim() };
   return { artist: '', title: base };
 }
+
+/** Qualifiers a streaming (YouTube-style) title tacks on: "Official Music
+ *  Video", "Lyric Video", "(Audio)", "[4K]", … A bracketed group or a trailing
+ *  " - …" segment is dropped only when EVERY one of its words is one of these,
+ *  so a real title word survives ("Video Games", "Blinding Lights - Live"). */
+const TITLE_DESCRIPTOR_WORDS = new Set([
+  'official', 'music', 'video', 'audio', 'lyric', 'lyrics', 'visualizer',
+  'visualiser', 'mv', 'hd', 'hq', 'uhd', 'hdr', '4k', '8k', 'explicit',
+]);
+
+function isDescriptorOnly(text: string): boolean {
+  const words = text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return words.length > 0 && words.every((w) => TITLE_DESCRIPTOR_WORDS.has(w));
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Clean a streaming service's video title into a plain song title: strip the
+ * "Official Music Video" / "Lyric Video" / "(Audio)" junk qualifiers, drop the
+ * uploader/artist when it opens the title as an "Artist - " prefix (the channel
+ * name is kept separately), and tidy any leftover separator/whitespace the
+ * removals leave behind (e.g. a trailing " - "). Best-effort: never blanks the
+ * title (falls back to the trimmed original if everything was stripped).
+ */
+export function cleanStreamingTitle(rawTitle: string, artist?: string): string {
+  // Drop bracketed junk groups: "(Official Music Video)", "[Audio]", "{4K}".
+  let t = rawTitle.replace(/[([{][^)\]}]*[)\]}]/g, (grp) =>
+    isDescriptorOnly(grp.slice(1, -1)) ? '' : grp,
+  );
+  // Drop trailing dash-separated junk: "Artist - Song - Official Music Video".
+  const segs = t.split(/\s+[-–]\s+/);
+  while (segs.length > 1 && isDescriptorOnly(segs[segs.length - 1])) segs.pop();
+  t = segs.join(' - ');
+  // Strip a leading "Artist - " when the uploader/channel opens the title
+  // (normalising the "- Topic" / "VEVO" channel suffixes first).
+  const channel = artist?.trim().replace(/\s*-\s*topic$/i, '').replace(/\s*vevo$/i, '').trim();
+  if (channel && channel.length > 1) {
+    t = t.replace(new RegExp(`^\\s*${escapeRegExp(channel)}\\s*[-–:|]\\s*`, 'i'), '');
+  }
+  // Tidy leftover edge separators / doubled spaces.
+  t = t
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s\-–|:]+/, '')
+    .replace(/[\s\-–|:]+$/, '')
+    .trim();
+  return t || rawTitle.trim();
+}

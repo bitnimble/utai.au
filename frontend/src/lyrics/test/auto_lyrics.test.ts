@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { parseSongFilename, pickConfidentMatch, wordLevelSimilarity } from '../auto_lyrics';
+import {
+  cleanStreamingTitle,
+  parseSongFilename,
+  pickConfidentMatch,
+  wordLevelSimilarity,
+} from '../auto_lyrics';
 import { LrclibMatch } from '../lrclib';
 
 function match(over: Partial<LrclibMatch>): LrclibMatch {
@@ -129,5 +134,43 @@ describe('parseSongFilename', () => {
       artist: '50 Cent',
       title: 'In Da Club',
     });
+  });
+});
+
+describe('cleanStreamingTitle', () => {
+  test('strips a bracketed "Official Music Video" qualifier', () => {
+    expect(cleanStreamingTitle('Never Gonna Give You Up (Official Music Video)')).toBe(
+      'Never Gonna Give You Up',
+    );
+    expect(cleanStreamingTitle('Bad Guy [Official Video]')).toBe('Bad Guy');
+    expect(cleanStreamingTitle('Song {Audio}')).toBe('Song');
+  });
+
+  test('strips a trailing dash-separated qualifier, no leftover separator', () => {
+    expect(cleanStreamingTitle('Artist - Song - Official Music Video')).toBe('Artist - Song');
+    expect(cleanStreamingTitle('Song Title - Lyric Video')).toBe('Song Title');
+  });
+
+  test('cleans up a leftover " - " left by a bracketed qualifier', () => {
+    expect(cleanStreamingTitle('Song - (Official Music Video)')).toBe('Song');
+  });
+
+  test('drops the uploader/channel when it opens the title as "Artist - "', () => {
+    expect(cleanStreamingTitle('Rick Astley - Never Gonna Give You Up', 'Rick Astley')).toBe(
+      'Never Gonna Give You Up',
+    );
+    expect(
+      cleanStreamingTitle('Radiohead - Karma Police (Official Video)', 'Radiohead - Topic'),
+    ).toBe('Karma Police');
+  });
+
+  test('keeps a real title word that collides with a qualifier', () => {
+    expect(cleanStreamingTitle('Lana Del Rey - Video Games', 'Lana Del Rey')).toBe('Video Games');
+    expect(cleanStreamingTitle('Music (Official Video)')).toBe('Music');
+  });
+
+  test('leaves a clean title untouched and never blanks out', () => {
+    expect(cleanStreamingTitle('Karma Police')).toBe('Karma Police');
+    expect(cleanStreamingTitle('(Official Music Video)')).toBe('(Official Music Video)');
   });
 });
