@@ -170,7 +170,7 @@ if (gitSpecs.length === 0) {
   pyproject = mustReplace(
     pyproject,
     `override-dependencies = ["torchvision; sys_platform == 'never'"]`,
-    `override-dependencies = ["torchvision; sys_platform == 'never'", "torch; sys_platform == 'never'", "torchaudio; sys_platform == 'never'"]`,
+    `override-dependencies = ["torchvision; sys_platform == 'never'", "torch; sys_platform == 'never'", "torchaudio; sys_platform == 'never'", "torchcodec; sys_platform == 'never'"]`,
     'torch-free override',
   );
   await writeFile(pyprojectPath, pyproject);
