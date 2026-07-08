@@ -10,6 +10,7 @@
 
 import { makeAutoObservable } from 'mobx';
 import { WAVEFORM_PAINT_COLOR } from 'src/editing/utils/waveform_color';
+import type { PitchContour } from 'src/lyrics/pitch_contour';
 import { backendFetch } from 'src/net/backend_fetch';
 
 /** Opaque per-track id. Every loaded track gets a fresh unique id. */
@@ -44,6 +45,12 @@ export class AudioTrack {
   volume = 1;
   muted = false;
 
+  /** Vocal pitch contour, present on a `vocals` stem once separation extracted
+   *  it. Read imperatively at align time to map pitch onto words, never in a
+   *  render/hot path, so it's deliberately non-observable (the per-frame arrays
+   *  are large and would be pointless to deep-observe). */
+  pitchContour: PitchContour | undefined = undefined;
+
   constructor(fields: {
     id: AudioTrackId;
     filename: string;
@@ -58,9 +65,10 @@ export class AudioTrack {
     this.sourceBlob = fields.sourceBlob;
     this.durationSec = fields.durationSec;
     this.role = fields.role ?? 'unknown';
-    makeAutoObservable<this, 'buffer' | 'sourceBlob'>(this, {
+    makeAutoObservable<this, 'buffer' | 'sourceBlob' | 'pitchContour'>(this, {
       buffer: false,
       sourceBlob: false,
+      pitchContour: false,
     });
   }
 

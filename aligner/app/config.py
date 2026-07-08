@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     # `onnx_repo` and shipped as-is (fp32):
     #   - `pitch_model_offline`: RMVPE (RVC-community rmvpe.onnx, MIT, ~360 MB) --
     #     octave-robust on separated stems (breath/bleed/falsetto); the offline
-    #     stem pass (attach_pitch) uses it.
+    #     stem contour pass (extract_pitch_contour) uses it.
     #   - `pitch_model_live`: SwiftF0 (lars76/swift-f0, MIT, ~400 kB) -- fast /
     #     low-latency, reserved for the live-mic path.
     pitch_model_offline: str = "rmvpe.onnx"

@@ -1,3 +1,4 @@
+import type { PitchContour } from 'src/lyrics/pitch_contour';
 import type { AudioTrack, AudioTrackId, AudioTrackRole } from './audio_tracks';
 import type { PlayerState } from './player';
 import type { UtaiTimeline } from './timeline';
@@ -31,6 +32,7 @@ export interface PlaybackEngine {
    *  forces silence without discarding the volume setting. */
   setTrackVolume(id: AudioTrackId, volume: number): void;
   setTrackMuted(id: AudioTrackId, muted: boolean): void;
+  setTrackPitchContour(id: AudioTrackId, contour: PitchContour): void;
 
   play(): Promise<void>;
   pause(): Promise<void>;

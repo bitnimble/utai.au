@@ -110,12 +110,13 @@ class LyricWord:
     # UI debug tooltip show "displayed 君 / aligned kimi". None for
     # English / Chinese words, where `text` already is the aligned form.
     romaji: str | None = None
-    # Vocal pitch over `start_sec`..`end_sec`, filled by the pitch stage
-    # (`pitch.analyze.attach_pitch`) when the `pitch` capability is present.
-    # `midi` is the median voiced pitch (frontend uses it for vertical
-    # placement); `pitch_segments` are the held notes within the word (>1 ==
-    # melisma), each optionally carrying vibrato. Both None when the word had no
-    # usable pitch (spoken/unvoiced) or the pitch model wasn't provisioned.
+    # Vocal pitch over `start_sec`..`end_sec`. Alignment leaves these None; the
+    # frontend fills them by mapping the vocal stem's pitch contour (extracted at
+    # separation, see `pitch.analyze.extract_pitch_contour`) onto each word.
+    # Retained on the wire type so a caller that DOES carry pitch (or a future
+    # server-side attach) round-trips through `_word_to_json` unchanged. `midi` is
+    # the median voiced pitch; `pitch_segments` are the held notes within the word
+    # (>1 == melisma), each optionally carrying vibrato.
     midi: float | None = None
     pitch_segments: list[PitchSegment] | None = None
 

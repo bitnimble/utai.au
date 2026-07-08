@@ -23,6 +23,7 @@ import {
   decodeAudioTrackFile,
   decodeAudioTrackUrl,
 } from './audio_tracks';
+import type { PitchContour } from 'src/lyrics/pitch_contour';
 import { NativeAudioEngine } from './native_audio_engine';
 import type { PlaybackEngine } from './playback_engine';
 import { buildLinearTimeline, EMPTY_TIMELINE, UtaiTimeline } from './timeline';
@@ -158,6 +159,14 @@ export class UtaiPlayer implements PlaybackEngine {
       track.muted = muted;
     });
     this.controller?.setTrackGain(id, track.outputGain);
+  }
+
+  /** Attach the vocal pitch contour to a track (a `vocals` stem, post-
+   *  separation). Non-observable, so no action wrapper is needed. */
+  setTrackPitchContour(id: AudioTrackId, contour: PitchContour): void {
+    const track = this.audioTracks.get(id);
+    if (!track) return;
+    track.pitchContour = contour;
   }
 
   /** Move the playhead (and playback position, if running) to `seconds`. */

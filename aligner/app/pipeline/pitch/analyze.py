@@ -1,25 +1,27 @@
-"""Attach per-word pitch to aligned lyric lines, over the vocals stem.
+"""Extract the vocal pitch contour from a vocals stem, independent of lyrics.
 
-`attach_pitch` runs the offline f0 extractor (RMVPE -- octave-robust on separated
-stems) once over the whole stem, cleans the contour, then fills each
-`LyricWord`'s `midi` + `pitch_segments` in place. Best-effort: if the f0 model
-isn't provisioned (a `lyrics`-only install without the `pitch` capability), it
-logs and no-ops, leaving alignment untouched. SwiftF0 (fast, low-latency) is
-reserved for the live-mic path, not this offline pass.
+`extract_pitch_contour` runs the offline f0 extractor (RMVPE -- octave-robust on
+separated stems) once over the whole stem, cleans the contour, scans it for
+vibrato, and returns a JSON-serializable per-frame contour. Pitch is a property
+of the vocal stem, so this runs right after separation; the frontend then maps
+the contour onto aligned words (median / melisma / vibrato per word) locally,
+and alignment never re-runs the f0 model.
+
+Best-effort: if the f0 model isn't provisioned (a `separation`-only install
+without the `pitch` capability), it logs and returns None. SwiftF0 (fast,
+low-latency) is reserved for the live-mic path, not this offline pass.
 """
 from __future__ import annotations
 
 import logging
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import numpy as np
 
 from app.config import settings
 from app.pipeline.pitch import features
 from app.pipeline.pitch.rmvpe import Rmvpe
-
-if TYPE_CHECKING:
-    from app.pipeline.lyrics_align import LyricLine
 
 log = logging.getLogger(__name__)
 
@@ -31,17 +33,22 @@ _extractor: Rmvpe | None = None
 _extractor_lock = threading.Lock()
 
 
-def attach_pitch(vocals_path: str | Path, lines: list[LyricLine]) -> None:
-    """Fill `midi` + `pitch_segments` on every word in `lines`, in place."""
+def extract_pitch_contour(vocals_path: str | Path) -> dict | None:
+    """The vocals stem's pitch contour: cleaned per-frame MIDI + track-wide
+    vibrato, as a JSON-serializable dict (`fps` + `midi`/`vibRate`/`vibExtent`
+    arrays, `null` on unvoiced / no-vibrato frames; frame `i`'s time is `i/fps`).
+
+    Returns None when the f0 model isn't provisioned or the stem is too short to
+    yield any frames."""
     extractor = _get_extractor()
     if extractor is None:
-        return
+        return None
     from app.pipeline.lyrics_onnx import load_audio_np
 
     audio = load_audio_np(vocals_path)
     contour = extractor.extract(audio)
     if contour.ts.shape[0] == 0:
-        return
+        return None
     # RMVPE is octave-robust, so skip the octave-outlier drop (it would only risk
     # trimming a real falsetto leap); the min-island pass still removes noise.
     midi = features.clean_contour(
@@ -50,18 +57,21 @@ def attach_pitch(vocals_path: str | Path, lines: list[LyricLine]) -> None:
         drop_octave_outliers=False,
     )
     # Vibrato is scanned track-wide (sliding window) rather than per note, so
-    # delayed-onset / boundary-split vibrato is caught.
+    # delayed-onset / boundary-split vibrato is caught. The per-word slice that
+    # turns these frames into per-note vibrato tags happens on the frontend.
     vib_rate, vib_extent = features.detect_vibrato_frames(midi, fps=contour.fps)
-    for line in lines:
-        if not line.words:
-            continue
-        for word in line.words:
-            wp = features.word_pitch(
-                midi, contour.ts, word.start_sec, word.end_sec, fps=contour.fps,
-                vib_rate=vib_rate, vib_extent=vib_extent,
-            )
-            word.midi = wp.midi
-            word.pitch_segments = wp.segments or None
+    return {
+        "fps": float(contour.fps),
+        "midi": _nan_to_none(midi),
+        "vibRate": _nan_to_none(vib_rate),
+        "vibExtent": _nan_to_none(vib_extent),
+    }
+
+
+def _nan_to_none(arr: np.ndarray) -> list[float | None]:
+    """Per-frame floats with NaN -> null, rounded (0.001 semitone / Hz is well
+    below anything audible) to keep the JSON contour compact on the wire."""
+    return [None if np.isnan(v) else round(float(v), 3) for v in arr]
 
 
 def _get_extractor() -> Rmvpe | None:

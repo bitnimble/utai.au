@@ -82,9 +82,14 @@ export class SongIoPresenter {
       this.phase = 'separating';
     });
     try {
-      const { vocals, backing } = await separateStems(mixFile);
+      const { vocals, backing, pitchContour } = await separateStems(mixFile);
       const backingId = await this.karaoke.loadAudioFile(backing, 'backing');
       const vocalsId = await this.karaoke.loadAudioFile(vocals, 'vocals');
+      if (vocalsId != null && pitchContour) {
+        // Pitch is a property of the vocal stem; keep it on the vocals track so
+        // aligning lyrics later just maps it onto words (no second f0 pass).
+        this.karaoke.setTrackPitchContour(vocalsId, pitchContour);
+      }
       if (backingId == null || vocalsId == null) {
         // Separation succeeded but a stem failed to decode locally: roll back
         // whichever stem did load and keep the mix, so playback isn't left

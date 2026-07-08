@@ -29,6 +29,7 @@ import {
 } from 'src/net/control_protocol';
 import type { AlignLyricsOptions, AlignLyricsRequest } from 'src/lyrics/forced_align';
 import type { SeparatedStems, SeparateStemsOptions } from 'src/lyrics/separate_stems';
+import { parsePitchContour } from 'src/lyrics/pitch_contour';
 import type { LyricLine } from 'src/lyrics/lrc';
 
 /** True only on the Tauri desktop build, where the Rust `run_job`/`cancel_job`
@@ -165,6 +166,13 @@ function extractLines(data: unknown): LyricLine[] {
   return [];
 }
 
+/** Pull the raw `data.pitch` contour payload out of a separate `result` frame,
+ *  for {@link parsePitchContour}; undefined when the sidecar shipped no pitch. */
+function extractPitch(data: unknown): unknown {
+  if (data != null && typeof data === 'object') return (data as { pitch?: unknown }).pitch;
+  return undefined;
+}
+
 /**
  * Separate a mix into `{ vocals, backing }` through the desktop sidecar.
  * Same contract as {@link import('src/lyrics/separate_stems').separateStems}.
@@ -186,7 +194,8 @@ export async function separateStemsSidecar(
     });
     const vocals = await readStemArtifact(result.artifacts, 'vocals');
     const backing = await readStemArtifact(result.artifacts, 'accompaniment');
-    return { vocals, backing };
+    const pitchContour = parsePitchContour(extractPitch(result.data));
+    return { vocals, backing, pitchContour };
   } finally {
     try {
       await remove(audioPath);

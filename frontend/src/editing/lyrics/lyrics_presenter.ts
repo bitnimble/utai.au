@@ -5,6 +5,7 @@ import {
   nameLooksLikeVocals,
 } from 'src/lyrics/forced_align';
 import { LyricLine, stripLyricNoise } from 'src/lyrics/lrc';
+import { attachPitchToLines } from 'src/lyrics/pitch_contour';
 import { LyricsSource, LyricsTrackId, lyricsStore } from 'src/lyrics/store';
 import { AudioTrackId } from 'src/editing/playback/audio_tracks';
 import { playbackEngine } from 'src/editing/playback/player';
@@ -276,6 +277,9 @@ export class LyricsPresenter {
       toastStore.showError(`No lyrics were aligned (the aligner found no speech in ${meta.label}).`);
       return;
     }
+    // Pitch is a property of the vocal stem, extracted at separation; map that
+    // contour onto the freshly-aligned words here rather than re-running f0.
+    if (track.pitchContour) attachPitchToLines(track.pitchContour, result);
     runInAction(() => {
       lyricsStore.replace(targetTrackId, result, { source: meta.source, sourceLabel: meta.sourceLabel });
       this.lyricsAlign.lyricsAlignStatuses.delete(targetTrackId);

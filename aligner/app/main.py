@@ -474,15 +474,9 @@ async def _stream_lyrics_align(
                 input_lines,
                 language,
             )
-            # Overlay vocal pitch (median / melisma / vibrato per word) from the
-            # same stem. Best-effort: a failure or an unprovisioned f0 model
-            # leaves alignment untouched.
-            try:
-                from app.pipeline.pitch.analyze import attach_pitch
-
-                await asyncio.to_thread(attach_pitch, vocals_path, lines)
-            except Exception:
-                log.exception("lyrics_align: pitch analysis failed; continuing without pitch")
+            # Pitch is extracted once at separation time (a property of the vocal
+            # stem, see /lyrics/separate) and mapped onto these words by the
+            # frontend, so alignment never re-runs the f0 model.
             lines_json = lines_to_json(lines)
             # Populate the alignment-result cache so an identical repeat
             # request skips this whole GPU path. Best-effort: a write
@@ -542,24 +536,54 @@ def _existing_stems(stems_dir: Path) -> bool:
     return all((stems_dir / name).is_file() for name in _STEM_FILES)
 
 
+def _write_stems_pitch(stem_id: str, vocals_path: Path) -> None:
+    """Extract the vocal pitch contour and cache it beside the stems as
+    `pitch.json`. Best-effort: an unprovisioned f0 model or any failure just
+    leaves the stems pitch-less (the frontend then renders no pitch)."""
+    try:
+        from app.pipeline.pitch.analyze import extract_pitch_contour
+
+        pitch = extract_pitch_contour(vocals_path)
+        if pitch is None:
+            return
+        (_stems_dir(stem_id) / "pitch.json").write_text(
+            json.dumps(pitch, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        log.exception("lyrics_separate: pitch extraction failed; stems cached without pitch")
+
+
+def _read_stems_pitch(stem_id: str) -> Any | None:
+    """The cached contour beside the stems, or None if absent / unreadable."""
+    path = _stems_dir(stem_id) / "pitch.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def _stems_result_envelope(stem_id: str) -> dict[str, Any]:
     """The terminal NDJSON `result` for /lyrics/separate. `path` is relative to
     the api base (the frontend prefixes `<origin>/api/`); it lines up with
-    GET /lyrics/stems/{id}/{name}."""
-    return {
-        "type": "result",
-        "data": {
-            "stems": [
-                {
-                    "role": role,
-                    "path": f"lyrics/stems/{stem_id}/{role}.flac",
-                    "filename": f"{role}.flac",
-                    "contentType": "audio/flac",
-                }
-                for role in _STEM_ROLES
-            ]
-        },
+    GET /lyrics/stems/{id}/{name}. `pitch` (the vocal pitch contour) rides along
+    when it was extracted; absent when the pitch model wasn't provisioned."""
+    data: dict[str, Any] = {
+        "stems": [
+            {
+                "role": role,
+                "path": f"lyrics/stems/{stem_id}/{role}.flac",
+                "filename": f"{role}.flac",
+                "contentType": "audio/flac",
+            }
+            for role in _STEM_ROLES
+        ]
     }
+    pitch = _read_stems_pitch(stem_id)
+    if pitch is not None:
+        data["pitch"] = pitch
+    return {"type": "result", "data": data}
 
 
 @app.post("/lyrics/separate")
@@ -674,6 +698,10 @@ async def _stream_lyrics_separate(
             stems_dir.mkdir(parents=True, exist_ok=True)
             for role in _STEM_ROLES:
                 shutil.move(str(paths[role]), str(stems_dir / f"{role}.flac"))
+            # Pitch is a property of the vocal stem: extract its contour now (CPU,
+            # off the GPU) and cache it beside the stems so the frontend can
+            # render/align pitch without a second f0 pass. Best-effort.
+            await asyncio.to_thread(_write_stems_pitch, stem_id, stems_dir / "vocals.flac")
             log.info("lyrics_separate: stems cache MISS, populated (%s)", stem_id)
             yield _stems_result_envelope(stem_id)
         except FileNotFoundError as exc:

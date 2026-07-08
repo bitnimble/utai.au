@@ -14,9 +14,12 @@
 import { backendFetch } from 'src/net/backend_fetch';
 import { isSidecarAvailable, separateStemsSidecar } from 'src/net/sidecar_transport';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
+import { parsePitchContour, type PitchContour } from './pitch_contour';
 
-/** Full-quality separated stems, ready to load as audio tracks / bundle. */
-export type SeparatedStems = { vocals: File; backing: File };
+/** Full-quality separated stems, ready to load as audio tracks / bundle. The
+ *  vocal pitch contour rides along when the backend extracted it (a property of
+ *  the vocals stem); absent when the pitch model wasn't provisioned. */
+export type SeparatedStems = { vocals: File; backing: File; pitchContour?: PitchContour };
 
 /** Non-terminal progress: `queued` while waiting behind another GPU job,
  *  `running` once separation actually starts. */
@@ -60,20 +63,22 @@ async function separateStemsHttp(mix: File, opts: SeparateStemsOptions): Promise
   }
   if (!res.body) throw new Error('lyrics/separate returned no response body');
 
-  const stems = await readSeparateStream(res.body, opts.onProgress);
+  const { stems, pitchContour } = await readSeparateStream(res.body, opts.onProgress);
   const vocals = await downloadStem(stems, 'vocals', opts.signal);
   const backing = await downloadStem(stems, 'accompaniment', opts.signal);
-  return { vocals, backing };
+  return { vocals, backing, pitchContour };
 }
+
+type SeparateResult = { stems: StemRef[]; pitchContour?: PitchContour };
 
 async function readSeparateStream(
   body: ReadableStream<Uint8Array>,
   onProgress?: (event: SeparateStemsProgress) => void,
-): Promise<StemRef[]> {
+): Promise<SeparateResult> {
   const reader = body.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
-  let stems: StemRef[] | null = null;
+  let result: SeparateResult | null = null;
   let errorMessage: string | null = null;
 
   const handle = (event: Record<string, unknown>): void => {
@@ -81,13 +86,14 @@ async function readSeparateStream(
     if (type === 'queued' || type === 'running') {
       onProgress?.({ kind: type });
     } else if (type === 'result') {
-      const data = event.data as { stems?: unknown } | undefined;
-      stems = Array.isArray(data?.stems) ? data.stems.map(parseStemRef).filter(isPresent) : [];
+      const data = event.data as { stems?: unknown; pitch?: unknown } | undefined;
+      const stems = Array.isArray(data?.stems) ? data.stems.map(parseStemRef).filter(isPresent) : [];
+      result = { stems, pitchContour: parsePitchContour(data?.pitch) };
     } else if (type === 'error') {
       errorMessage = typeof event.message === 'string' ? event.message : 'lyrics/separate failed';
     }
   };
-  const settled = (): boolean => stems !== null || errorMessage !== null;
+  const settled = (): boolean => result !== null || errorMessage !== null;
 
   try {
     while (!settled()) {
@@ -119,8 +125,8 @@ async function readSeparateStream(
   }
 
   if (errorMessage !== null) throw new Error(errorMessage);
-  if (stems === null) throw new Error('lyrics/separate stream ended without a terminal result');
-  return stems;
+  if (result === null) throw new Error('lyrics/separate stream ended without a terminal result');
+  return result;
 }
 
 async function downloadStem(

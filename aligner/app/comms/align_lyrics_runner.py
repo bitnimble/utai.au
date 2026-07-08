@@ -79,18 +79,10 @@ class AlignLyricsRunner:
                 raise RuntimeError("vocals separator produced no vocals stem")
             vocals_path = vocals
         try:
+            # Pitch is not attached here: it's extracted once at separation time
+            # (a property of the vocal stem) and mapped onto these words by the
+            # frontend, so alignment never re-runs the f0 model.
             lines = get_aligner().realign_text(vocals_path, input_lines, language)
-            # Overlay vocal pitch from the same stem; best-effort (see attach_pitch).
-            try:
-                from app.pipeline.pitch.analyze import attach_pitch
-
-                attach_pitch(vocals_path, lines)
-            except Exception:
-                import logging
-
-                logging.getLogger(__name__).exception(
-                    "alignLyrics: pitch analysis failed; continuing without pitch"
-                )
             return lines_to_json(lines)
         finally:
             if work is not None:

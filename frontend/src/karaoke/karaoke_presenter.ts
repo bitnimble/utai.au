@@ -1,6 +1,7 @@
 import { makeAutoObservable, runInAction } from 'mobx';
 import { playbackEngine } from 'src/editing/playback/player';
 import { AudioTrackId, AudioTrackRole } from 'src/editing/playback/audio_tracks';
+import type { PitchContour } from 'src/lyrics/pitch_contour';
 import {
   MAX_PX_PER_SECOND,
   MIN_PX_PER_SECOND,
@@ -80,6 +81,10 @@ export class KaraokePresenter {
 
   setTrackMuted(id: AudioTrackId, muted: boolean): void {
     playbackEngine.setTrackMuted(id, muted);
+  }
+
+  setTrackPitchContour(id: AudioTrackId, contour: PitchContour): void {
+    playbackEngine.setTrackPitchContour(id, contour);
   }
 
   /** Tear the current song down: stop playback, drop every audio track,

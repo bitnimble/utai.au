@@ -10,6 +10,7 @@ import {
   decodeAudioTrackFile,
   decodeAudioTrackUrl,
 } from './audio_tracks';
+import type { PitchContour } from 'src/lyrics/pitch_contour';
 import type { PlaybackEngine } from './playback_engine';
 import type { PlayerState } from './player';
 import { buildLinearTimeline, EMPTY_TIMELINE, UtaiTimeline } from './timeline';
@@ -134,6 +135,12 @@ export class NativeAudioEngine implements PlaybackEngine {
       track.muted = muted;
     });
     void invoke('audio_set_track_gain', { id, gain: track.outputGain });
+  }
+
+  setTrackPitchContour(id: AudioTrackId, contour: PitchContour): void {
+    const track = this.audioTracks.get(id);
+    if (!track) return;
+    track.pitchContour = contour;
   }
 
   async play(): Promise<void> {
