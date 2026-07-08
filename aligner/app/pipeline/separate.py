@@ -6,12 +6,11 @@ MIT-licensed vocals model) -- a single-stem Mel-Band RoPE Transformer whose
 `pipeline/lyrics_align.py` then forced-aligns the caller's lyric text against
 that stem.
 
-The model runs through a vendored, torch-only separation wrapper
-(`pipeline/separation/`), reimplemented from `audio-separator`'s chunked
-overlap-add (validated bit-exact against it) so we can drop the dependency,
-surface per-chunk progress, keep the stem in memory, and export the model body
-to ONNX for cross-platform GPU backends (the default; opt out with
-`UTAI_SEP_ONNX=0`). `pipeline/provision.py` fetches the weights on startup.
+Inference runs torch-free through `pipeline/separation/np_inference.py` (numpy
+STFT/chunking + an onnxruntime session over the model body). The body is
+reimplemented bit-exact from `audio-separator`'s chunked overlap-add, and is
+either shipped pre-exported via `provision` or exported locally from a ckpt in
+dev (the one torch step). `pipeline/provision.py` fetches the weights on startup.
 """
 
 from __future__ import annotations
@@ -27,10 +26,10 @@ import soundfile as sf
 from app.config import settings
 from app.pipeline.provision import provision_custom_models, yaml_for_ckpt
 
-# NOTE: `loader` / `runner` / `export` all `import torch` at module top, so they
-# are imported lazily (inside the torch fallback + dev-export branches only). The
-# default ONNX path must stay import-torch-free -- the shipped sidecar has no
-# torch. `SAMPLE_RATE` / `ProgressCallback` come from the torch-free `_chunking`.
+# NOTE: `loader` / `export` `import torch` at module top, so they are imported
+# lazily inside the dev-export branch only (`_load_numpy_separator`). The runtime
+# must stay import-torch-free -- the shipped sidecar has no torch. `SAMPLE_RATE` /
+# `ProgressCallback` come from the torch-free `_chunking`.
 from app.pipeline.separation._chunking import SAMPLE_RATE, ProgressCallback
 
 log = logging.getLogger(__name__)
@@ -59,88 +58,34 @@ class Separator:
             return
 
         # The model isn't in audio-separator's registry; inject it and fetch its
-        # weights BEFORE `load_model()` below reads the registry / local files.
+        # weights BEFORE the loader below reads the registry / local files.
         provision_custom_models()
         models_dir = Path(settings.models_dir)
-
-        # The default ONNX path is torch-free: skip the torch import + all of the
-        # bf16 / cuDNN / TF32 / device setup below, which only applies to the
-        # UTAI_SEP_ONNX=0 torch runner. Importing torch here pulled in the whole
-        # CUDA stack the ONNX path never uses, and its CUDA init could hang the
-        # split on Windows. The ONNX runner picks its EP via onnxruntime, so it
-        # needs no `device`.
-        if _onnx_separation_enabled():
-            device = "cpu"
-        else:
-            # Local import: pulls in heavy ML deps; only needed in worker processes.
-            import torch
-
-            # cuDNN benchmark: every chunk in a separation pass is windowed to a
-            # fixed chunk_size, so input shape is fixed across the hot loop.
-            # Autotune is a free win with nothing to re-benchmark mid-pass.
-            torch.backends.cudnn.benchmark = True
-
-            # TF32: lets fp32 matmuls use the Ampere+ tensor-core path (≈2× on the
-            # 3080) WITHOUT changing any tensor dtype, so the models' complex STFT
-            # (view_as_complex) stays fp32 and there's no range/NaN risk. A harmless
-            # no-op on Turing (1660) / older cards. NB autocast is a dead end for
-            # these separators: fp16 overflowed and the drum stem NaN'd out, and bf16
-            # fails outright ("view_as_complex is only supported for half, float and
-            # double"). TF32 is the only tensor-core path compatible with them.
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
-
-            device = _resolve_device()
+        ckpt = models_dir / settings.demucs_model
+        yaml = models_dir / yaml_for_ckpt(settings.demucs_model)
 
         t0 = time.perf_counter()
         log.info("Loading vocals separator (%s) ...", settings.demucs_model)
-        self._stems_all = self._load_runner(settings.demucs_model, models_dir, device)
+        self._stems_all = _load_numpy_separator(ckpt, yaml, models_dir)
         log.info(
             "Separator ready in %.2fs (%s).", time.perf_counter() - t0, settings.demucs_model
         )
 
-    def _load_runner(self, ckpt_filename: str, models_dir: Path, device: str):
-        """Build the separator for one model from its on-disk (ckpt, yaml) pair.
-
-        ONNX path (default): a torch-free `NumpySeparator` (numpy STFT/chunking +
-        onnxruntime body). Opt-out path (`UTAI_SEP_ONNX=0`): the torch
-        `SeparationRunner`. Both expose the same `.separate(...)`.
-        """
-        ckpt = models_dir / ckpt_filename
-        yaml = models_dir / yaml_for_ckpt(ckpt_filename)
-        if _onnx_separation_enabled():
-            return _load_numpy_separator(ckpt, yaml, models_dir)
-        # Torch fallback (UTAI_SEP_ONNX=0): lazy import so the ONNX path is torch-free.
-        from app.pipeline.separation.loader import load_model
-        from app.pipeline.separation.runner import SeparationRunner
-
-        loaded = load_model(ckpt, yaml, device=device)
-        _maybe_compile_model(loaded)
-        return SeparationRunner(loaded, device=device)
-
     # ---- GPU residency control --------------------------------------
-    # `park_*` / `unpark_*` move the wrapped nn.Module between CUDA
-    # and CPU so the two endpoints can swap GPU ownership without
-    # paying a disk-reload. Coordinated by `app.pipeline.gpu_park`;
-    # callers must hold the process-wide GPU lock (see main.py) so an
-    # in-flight stage isn't mid-forward through a model that's about
-    # to move host-side. Each is idempotent and a no-op when the
-    # wrapped model hasn't been loaded yet.
-    #
-    # The wrapped model lives at `model_instance.model_run`; after
-    # `_maybe_compile_model` that's the torch.compile OptimizedModule,
-    # which still routes `.to()` through to the underlying nn.Module.
+    # `park_*` / `unpark_*` exist so the vocals + CTC endpoints can swap GPU
+    # ownership without a disk-reload, coordinated by `app.pipeline.gpu_park`.
+    # For the ONNX `NumpySeparator` there's no torch nn.Module to move, so these
+    # are runtime no-ops today (the ORT session holds its own VRAM); the hooks
+    # stay for the gpu_park primitive and in case a movable module is wrapped.
 
     @staticmethod
     def _inner_module(separator: object) -> object | None:
-        # The torch SeparationRunner exposes an nn.Module (`.model`) to park
-        # CPU-side; the ONNX NumpySeparator keeps its weights in the onnxruntime
-        # session (GPU memory torch can't move) and has no `.model`, so there is
-        # nothing to park for it. Duck-typed on `.model` rather than an
-        # `isinstance(SeparationRunner)` check so this stays torch-free (importing
-        # `runner` would pull torch into the default ONNX path). NOTE: the ONNX
-        # session's VRAM is NOT freed by the /lyrics GPU swap -- releasing the ORT
-        # session is a follow-up if that OOMs.
+        # The runtime separator is the ONNX `NumpySeparator`, which keeps its
+        # weights in the onnxruntime session (GPU memory has no torch nn.Module to
+        # move) and has no `.model`, so there is nothing to park for it. Duck-typed
+        # on `.model` so this stays torch-free. NOTE: the ONNX session's VRAM is NOT
+        # freed by the /lyrics GPU swap -- releasing the ORT session is a follow-up
+        # if that OOMs.
         return getattr(separator, "model", None)
 
     def park_vocals(self) -> None:
@@ -223,15 +168,6 @@ class Separator:
         return paths
 
 
-def _resolve_device() -> str:
-    """`settings.device` ("auto" by default) resolved to a concrete device."""
-    import torch
-
-    if settings.device and settings.device != "auto":
-        return settings.device
-    return "cuda" if torch.cuda.is_available() else "cpu"
-
-
 def _log_progress(stage: str) -> ProgressCallback:
     """Per-chunk(-batch) progress hook for a separation pass. INFO (not DEBUG):
     the sidecar's default log level is INFO, and this is the one signal that
@@ -258,52 +194,15 @@ def _write_stem(path: Path, wave: np.ndarray, subtype: str = "PCM_16") -> None:
     sf.write(str(path), np.ascontiguousarray(wave.T), SAMPLE_RATE, subtype=subtype)
 
 
-def _maybe_compile_model(loaded: object) -> None:
-    """Wrap the model's inner module in `torch.compile` when on CUDA.
-
-    The separation loop calls the model in a tight, fixed-input-shape loop,
-    exactly the pattern Inductor optimises best. Guarded on CUDA because
-    compile cost on CPU often outweighs the win, and skipped silently on any
-    compile failure so a torch/version mismatch can't break the pipeline.
-    Mutates `loaded.model` in place, before the runner reads it.
-    """
-    import torch
-
-    model = getattr(loaded, "model", None)
-    if model is None:
-        return
-    try:
-        device = next(model.parameters()).device
-    except StopIteration:
-        return
-    if device.type != "cuda":
-        return
-    log.info("Compiling %s with torch.compile", type(model).__name__)
-    try:
-        loaded.model = torch.compile(model, dynamic=False)
-    except Exception as exc:
-        log.warning("torch.compile failed (%s); continuing in eager mode.", exc)
-
-
-def _onnx_separation_enabled() -> bool:
-    """Route the separator BODIES through onnxruntime instead of torch (the
-    STFT/iSTFT stay fp32). DEFAULT ON (the cross-platform path); opt OUT with
-    UTAI_SEP_ONNX=0 to use the torch path, kept as a fallback / A-B reference
-    (e.g. on NVIDIA where torch+bf16 may still be faster).
-
-    onnxruntime dispatches the body to whatever execution provider the installed
-    build supports (CUDA / TensorRT / DirectML / CoreML / ROCm, else CPU)."""
-    return os.environ.get("UTAI_SEP_ONNX", "1").strip().lower() not in (
-        "0", "false", "no", "off", "torch",
+def _export_fp16() -> bool:
+    """UTAI_SEP_EXPORT_FP16 -> the dev local export emits an fp16 body (~half the
+    file, GPU tensor / NPU fp16 path) instead of fp32. CUDA/TensorRT gets the mixed
+    fp16/fp32 body (RMSNorm reductions kept fp32 -> transparent vs fp32); macOS gets
+    plain fp16. The STFT/iSTFT stay fp32 outside the graph regardless. Export-only:
+    the shipped body is already the provisioned fp16 onnx."""
+    return os.environ.get("UTAI_SEP_EXPORT_FP16", "").strip().lower() in (
+        "1", "true", "yes", "on", "fp16", "16", "half",
     )
-
-
-def _onnx_separation_fp16() -> bool:
-    """UTAI_SEP_ONNX=fp16 -> export an fp16 body (~half the file, GPU tensor /
-    NPU fp16 path). CUDA/TensorRT gets the mixed fp16/fp32 body (RMSNorm reductions
-    kept fp32 -> transparent vs fp32); macOS gets plain fp16. The STFT/iSTFT stay
-    fp32 outside the graph regardless."""
-    return os.environ.get("UTAI_SEP_ONNX", "").strip().lower() in ("fp16", "16", "half")
 
 
 def _load_numpy_separator(ckpt_path: Path, yaml_path: Path, models_dir: Path):
@@ -322,7 +221,7 @@ def _load_numpy_separator(ckpt_path: Path, yaml_path: Path, models_dir: Path):
         if not allow_local_export():
             raise missing_shipped_onnx(ckpt_path.stem)
         # Dev fallback: export the body next to the ckpt (needs torch).
-        fp16 = _onnx_separation_fp16()
+        fp16 = _export_fp16()
         onnx_path = models_dir / (ckpt_path.stem + (".fp16.onnx" if fp16 else ".onnx"))
         if not onnx_path.exists():
             from app.pipeline.separation.export import export_body

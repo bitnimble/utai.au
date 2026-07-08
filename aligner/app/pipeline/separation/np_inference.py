@@ -127,7 +127,7 @@ def _ort_session(onnx_path, providers):
             raise RuntimeError(
                 f"ONNX session create failed for fp16 model {onnx_path} on {providers}; "
                 "refusing a silent CPU-EP fallback (unvalidated fp16 numerics). Use a GPU EP "
-                "or the UTAI_SEP_ONNX=0 torch path."
+                "or provision the fp32 body."
             ) from e
         sess = ort.InferenceSession(str(onnx_path), sess_options=so, providers=["CPUExecutionProvider"])
         log_bound_ep(sess, onnx_path)

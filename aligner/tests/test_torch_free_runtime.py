@@ -1,9 +1,9 @@
 """Build guard: the shipped ONNX runtime must import torch-free.
 
-torch is an EXPORT/dev-only dependency (the one-time `.onnx` export + the
-`UTAI_*_ONNX=0` A-B fallback); the runtime import graph must NEVER pull it in,
-or the torch-free capability install / bundled sidecar breaks. Keep any torch
-import lazy, inside the export/fallback branch (see the note in `separate.py`).
+torch is an EXPORT/dev-only dependency (the one-time `.onnx` export + the offline
+parity checks); the runtime import graph must NEVER pull it in, or the torch-free
+capability install / bundled sidecar breaks. Keep any torch import lazy, inside
+the dev-export branch (see the note in `separate.py`).
 
 Runs in a SUBPROCESS so an unrelated test (or transformers) importing torch in
 the main pytest process can't mask a regression here.
@@ -21,9 +21,7 @@ def test_runtime_import_graph_is_torch_free():
     # (instead of a lazy import inside a fallback/export branch) trips this.
     probe = textwrap.dedent(
         """
-        import os, sys
-        os.environ["UTAI_SEP_ONNX"] = "1"
-        os.environ["UTAI_LYRICS_ONNX"] = "1"
+        import sys
         import app.main                              # HTTP app (routes + pipeline graph)
         import app.sidecar                           # stdio sidecar entry
         import app.pipeline.separation.np_inference  # the ONNX separator

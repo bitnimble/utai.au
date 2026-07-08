@@ -91,14 +91,14 @@ We use **[ctc-forced-aligner](https://github.com/MahmoudAshraf97/ctc-forced-alig
   `MahmoudAshraf/mms-300m-1130-forced-aligner` (MMS-300m, **CC-BY-NC**).
   Must run **fp32**, fp16 NaN-poisons its emissions.
 
-**Runtime: torch-free ONNX by default** (`lyrics_onnx.py`,
-`OnnxCtcAligner`). The HF `AutoModelForCTC` (waveform → logits) is
-exported to ONNX once (`export_ctc_model`), and the emissions +
-alignment maths are reimplemented in numpy (`generate_emissions_np`,
-`get_alignments_np`) plus vendored torch-free copies of the package's
+**Runtime: torch-free ONNX** (`lyrics_onnx.py`, `OnnxCtcAligner`). The
+HF `AutoModelForCTC` (waveform → logits) is exported to ONNX once
+(`export_ctc_model`), and the emissions + alignment maths are
+reimplemented in numpy (`generate_emissions_np`, `get_alignments_np`)
+plus vendored torch-free copies of the package's
 `merge_repeats`/`get_spans`/`forced_align`. torch is only used for the
-one-time export and the `UTAI_LYRICS_ONNX=0` opt-out. The C++ Viterbi
-kernel is shared by both paths.
+one-time export (never on the runtime path). The C++ Viterbi kernel
+runs from the vendored torch-free build.
 
 ## [4] Post-processing
 

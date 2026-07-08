@@ -67,10 +67,11 @@ it aligns over the HTTP backend, same as the web build. Desktop-only Rust
 - **Model inference is ONNX ONLY; the runtime NEVER imports torch.** Every
   ML model runs torch-free on onnxruntime, on a CUDA box separation
   auto-rides the **TensorRT** EP (engine cached under `cache_dir/tensorrt`),
-  CUDA/CoreML otherwise. torch exists SOLELY for the one-time `.onnx` export
-  + the `UTAI_*_ONNX=0` A-B fallback; **never run or configure the runtime on
-  the torch path** (don't set `UTAI_*_ONNX=0` to "make it work"), and keep any
-  torch import lazy (inside the export/fallback branch, not module top).
+  CUDA/CoreML otherwise. torch exists SOLELY for the BUILD side: the one-time
+  `.onnx` export (`separation/export.py`, `lyrics_onnx.export_ctc_model`) and the
+  offline torch<->ONNX parity checks (`tests/test_separation_parity.py` via
+  `separation/loader.py` + `runner.py`). There is NO runtime torch path anymore;
+  keep any torch import lazy (inside the export branch, not module top).
   `tests/test_torch_free_runtime.py` fails `scripts/check-py` if the runtime
   import graph pulls torch in. Downloads are CAPABILITY-SCOPED
   (`provision.provision(*capabilities)` + `_capability_assets`): a

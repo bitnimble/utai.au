@@ -179,17 +179,6 @@ _SIMPLIFIED_CHINESE_MARKERS = frozenset(
 # aligner (adapters pre-merged, romanized).
 
 
-def _lyrics_onnx_enabled() -> bool:
-    """Default ON: run the CTC acoustic model through onnxruntime (torch-free
-    inference). Opt out with UTAI_LYRICS_ONNX in {0,false,no,off,torch}
-    (mirrors UTAI_SEP_ONNX)."""
-    import os
-
-    return os.environ.get("UTAI_LYRICS_ONNX", "1").strip().lower() not in (
-        "0", "false", "no", "off", "torch",
-    )
-
-
 def _onnx_providers():
     """onnxruntime providers from settings.device (no torch import): CPU-pinned
     when CPU/MPS is forced, else the available set (+ CPU fallback in the loader)."""
@@ -197,17 +186,7 @@ def _onnx_providers():
     return ["CPUExecutionProvider"] if dev in ("cpu", "mps") else None
 
 
-def _is_torch_tensor(x: Any) -> bool:
-    """True for a torch tensor, False for a numpy array (duck-typed, no import).
-    Used to skip the torch-only emission diagnostics on the numpy/ONNX path."""
-    return hasattr(x, "is_cpu")
-
-
 def _all_finite(emissions: Any) -> bool:
-    if _is_torch_tensor(emissions):
-        import torch
-
-        return bool(torch.isfinite(emissions).all())
     import numpy as np
 
     return bool(np.isfinite(emissions).all())
@@ -231,107 +210,12 @@ class LyricsAligner:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # Lazy-loaded CTC aligners keyed by HuggingFace model path
-        # (`None` selects the package's built-in default = MMS-300m).
-        # Each entry is built on first request that routes to it; both
-        # English (wav2vec2-large-robust) and the multilingual MMS-300m
-        # can be resident simultaneously, ~1-1.2 GB each at fp16 / fp32
-        # respectively, well within the alignment-stage VRAM budget.
-        self._align_models: dict[str | None, tuple[Any, Any]] = {}
-        # Torch-free ONNX aligners (OnnxCtcAligner), keyed the same way.
+        # Lazy-loaded torch-free ONNX aligners (OnnxCtcAligner) keyed by
+        # HuggingFace model path (`None` selects the package default = MMS-300m).
+        # Each is built on the first request that routes to it and stays warm for
+        # the process lifetime; both the English (wav2vec2-large-robust) and the
+        # multilingual MMS-300m aligner can be resident simultaneously.
         self._onnx_aligners: dict[str | None, Any] = {}
-        self._device: str | None = None
-
-    def _resolve_device(self) -> str:
-        """Pick the device the CTC alignment models run on. `auto` ≡
-        `cuda` if available, else `cpu`. MPS isn't exercised for the
-        aligner today, so an `mps` setting silently downgrades to CPU."""
-        if self._device is not None:
-            return self._device
-        configured = settings.device.lower()
-        if configured in {"cuda", "cpu"}:
-            self._device = configured
-        elif configured == "mps":
-            log.warning(
-                "lyrics: device=mps not supported; falling back to CPU"
-            )
-            self._device = "cpu"
-        else:  # auto
-            try:
-                import torch
-
-                self._device = "cuda" if torch.cuda.is_available() else "cpu"
-            except Exception:
-                self._device = "cpu"
-        return self._device
-
-    def _load_ctc_aligner(
-        self, model_path: str | None = None,
-    ) -> tuple[Any, Any]:
-        """Load (or return cached) a forced-alignment model + tokenizer.
-
-        `model_path=None` -> the package's default
-        `MahmoudAshraf/mms-300m-1130-forced-aligner` (CC-BY-NC 4.0,
-        multilingual, ~1.2 GB at fp32). Any other value is a
-        HuggingFace model id passed straight through to
-        `load_alignment_model`; the package accepts any wav2vec2-family
-        CTC checkpoint there. Used today by `_pick_alignment_model` to
-        route English requests to `settings.lyrics_align_model_english`
-        (wav2vec2-large-robust-ft-libri-960h, Apache 2.0, ~317M).
-
-        Caching: per-model-path; each unique path loads once and stays
-        warm for the process lifetime. The same lock that gates
-        `realign_text` serialises model loads, so concurrent first-hit
-        requests for the same model path can't race.
-
-        Precision is per-checkpoint, not per-device. The English head
-        (`wav2vec2-large-robust`) runs fp16 on CUDA - it's numerically
-        stable there and fp16 halves activation memory + roughly doubles
-        throughput with no observable hit to word-alignment accuracy on
-        our inputs. MMS-300m (the multilingual default, `model_path is
-        None`) runs fp32 everywhere: at fp16 it overflows in the feature-
-        encoder LayerNorm/GELU on loud vocal frames, poisoning the whole
-        emissions tensor with inf -> NaN so Viterbi collapses every frame
-        to `<blank>` (observed as `emissions_stats: nan=~all mean=nan`
-        and a downstream `get_spans` divergence). The overflow sits right
-        at the fp16 threshold, so it's flaky run-to-run (cuDNN picks
-        different conv algorithms) and was masked while the only
-        exercised path was the stable English head; the new Japanese path
-        routes through MMS-300m and trips it reliably. CPU always gets
-        fp32 (no fp16 kernel coverage). The gpu_park machinery parks the
-        drum + vocals models off-GPU before alignment, so MMS-300m's
-        ~1.2 GB fp32 footprint fits the 6 GB budget. The returned model
-        has `.dtype` / `.device` attributes that `load_audio` reads to
-        materialise the waveform on the same device + precision as the
-        model."""
-        cached = self._align_models.get(model_path)
-        if cached is not None:
-            return cached
-        # Lazy import so a process that never touches /lyrics/align
-        # doesn't pull in `transformers` + the alignment package's
-        # ~1.2 GB model on boot.
-        import torch
-        from ctc_forced_aligner import (  # type: ignore[import-not-found]
-            load_alignment_model,
-        )
-
-        device = self._resolve_device()
-        # fp16 only for the stable English head on CUDA; MMS-300m (and CPU)
-        # must stay fp32 or fp16 NaN-poisons its emissions (see docstring).
-        use_fp16 = device == "cuda" and model_path == settings.lyrics_align_model_english
-        dtype = torch.float16 if use_fp16 else torch.float32
-        log.info(
-            "lyrics: loading CTC aligner (model=%s, device=%s, dtype=%s)",
-            model_path or "<package default (MMS-300m)>", device, dtype,
-        )
-        if model_path is None:
-            model, tokenizer = load_alignment_model(device, dtype=dtype)
-        else:
-            model, tokenizer = load_alignment_model(
-                device, model_path=model_path, dtype=dtype,
-            )
-        self._align_models[model_path] = (model, tokenizer)
-        return model, tokenizer
 
     def _load_ctc_onnx(self, model_path: str | None):
         """Torch-free `OnnxCtcAligner` for `model_path` (None -> the MMS default).
@@ -369,28 +253,19 @@ class LyricsAligner:
         return None
 
     def park(self) -> None:
-        """Move every loaded CTC aligner to CPU. Idempotent and a
-        no-op when no aligner has been loaded yet.
+        """Free the CTC aligners' GPU memory before another stage takes the GPU.
+        Idempotent and a no-op when no aligner has been loaded yet.
 
-        Callers must hold the process-wide GPU lock so an in-flight
-        `realign_text` isn't mid-`generate_emissions` on the model
-        being moved. See `app.pipeline.gpu_park.park_for_lyrics`."""
-        from app.pipeline.gpu_park import park_module
-
-        for key, entry in list(self._align_models.items()):
-            label = f"ctc_align[{key or 'mms-default'}]"
-            park_module(entry[0], label)
-        # ONNX aligners hold their VRAM in the ORT session; drop them (they reload
-        # lazily from the cached .onnx) so the swap frees it.
+        The ONNX aligners hold their VRAM in the ORT session, so parking drops
+        them; they reload lazily from the cached `.onnx` on the next request.
+        Callers must hold the process-wide GPU lock so an in-flight `realign_text`
+        isn't mid-`generate_emissions`. See `app.pipeline.gpu_park.park_for_lyrics`."""
         self._onnx_aligners.clear()
 
     def unpark(self) -> None:
-        """Move every loaded CTC aligner back to CUDA. Idempotent."""
-        from app.pipeline.gpu_park import unpark_module
-
-        for key, entry in list(self._align_models.items()):
-            label = f"ctc_align[{key or 'mms-default'}]"
-            unpark_module(entry[0], label)
+        """No-op: ONNX aligners reload lazily from their cached `.onnx` on the
+        next request, so there's nothing to move back onto the GPU. Kept for
+        symmetry with `park` and the `gpu_park.park_for_lyrics` call sequence."""
 
     def realign_text(
         self,
@@ -443,50 +318,25 @@ class LyricsAligner:
             iso3 = _iso1_to_iso3(language_code)
 
             model_path = self._pick_alignment_model(language_code)
-            # Default: torch-free ONNX (acoustic model on onnxruntime, the Viterbi
-            # + everything else numpy); opt out with UTAI_LYRICS_ONNX=0. Each
-            # branch binds `alignments_fn(emissions, tokens, tokenizer)`; the
-            # emissions call itself is inside the try (below) so a failure degrades
-            # gracefully. get_spans / postprocess_results / _repair are shared.
-            # `preprocess_text` / `get_spans` / `postprocess_results` are pure
-            # numpy/python. On the ONNX path they come from `lyrics_onnx` (which
-            # loads the package's torch-free pieces WITHOUT its torch-importing
-            # __init__), keeping the whole path torch-free; the torch path imports
-            # them (and generate_emissions/get_alignments/load_audio) from the
-            # package as before.
-            use_onnx = _lyrics_onnx_enabled()
-            aligner = model = None
-            if use_onnx:
-                from app.pipeline.lyrics_onnx import (
-                    get_alignments_np,
-                    get_spans,
-                    load_audio_np,
-                    postprocess_results,
-                    preprocess_text,
-                )
+            # Torch-free ONNX: the acoustic model runs on onnxruntime, the Viterbi
+            # + everything else in numpy. `preprocess_text` / `get_spans` /
+            # `postprocess_results` are pure numpy/python, loaded via `lyrics_onnx`
+            # (which pulls the package's torch-free pieces WITHOUT its torch-importing
+            # __init__), keeping the whole path torch-free. `alignments_fn` binds
+            # `get_alignments_np(emissions, tokens, tokenizer)`; the emissions call
+            # itself is inside the try (below) so a failure degrades gracefully.
+            from app.pipeline.lyrics_onnx import (
+                get_alignments_np,
+                get_spans,
+                load_audio_np,
+                postprocess_results,
+                preprocess_text,
+            )
 
-                aligner = self._load_ctc_onnx(model_path)
-                tokenizer = aligner.tokenizer
-                audio_waveform = load_audio_np(str(audio_path))
-                alignments_fn = get_alignments_np
-            else:
-                from ctc_forced_aligner import (  # type: ignore[import-not-found]
-                    generate_emissions,
-                    get_alignments,
-                    get_spans,
-                    load_audio,
-                    postprocess_results,
-                    preprocess_text,
-                )
-
-                model, tokenizer = self._load_ctc_aligner(model_path)
-                # load_audio materialises the waveform on the same device +
-                # dtype as the model so generate_emissions can run without
-                # an extra copy / cast inside its inner loop.
-                audio_waveform = load_audio(str(audio_path), model.dtype, model.device)
-                alignments_fn = get_alignments
-
-            _log_audio_stats(audio_waveform, audio_path)
+            aligner = self._load_ctc_onnx(model_path)
+            tokenizer = aligner.tokenizer
+            audio_waveform = load_audio_np(str(audio_path))
+            alignments_fn = get_alignments_np
 
             # Decide Japanese-aware romanization. cutlet/fugashi reads
             # kanji with Japanese readings (vs uroman's Chinese inside
@@ -538,14 +388,9 @@ class LyricsAligner:
             _log_token_sequence(all_tokens, all_text)
 
             try:
-                if use_onnx:
-                    emissions, stride = aligner.generate_emissions(
-                        audio_waveform, batch_size=_CTC_BATCH_SIZE,
-                    )
-                else:
-                    emissions, stride = generate_emissions(
-                        model, audio_waveform, batch_size=_CTC_BATCH_SIZE,
-                    )
+                emissions, stride = aligner.generate_emissions(
+                    audio_waveform, batch_size=_CTC_BATCH_SIZE,
+                )
                 # `stride`'s unit is package-internal (seen as ms or samples
                 # per frame depending on version) so it's not safe to use
                 # for our diagnostic time axis. Derive sec/frame from the
@@ -558,27 +403,18 @@ class LyricsAligner:
                 audio_seconds = (
                     int(audio_waveform.shape[-1]) / _AUDIO_SAMPLE_RATE
                 )
-                _log_emissions_stats(emissions, tokenizer)
-                # Fail fast + actionable on poisoned emissions. A non-finite
-                # tensor (fp16 overflow on an unstable head, corrupt weights,
-                # broken audio) otherwise flows into Viterbi, which collapses
-                # to one all-`<blank>` segment and surfaces as a cryptic
-                # `get_spans` AssertionError far from the real cause. The
-                # `except Exception` below catches this and degrades to
-                # returning the caller's lines unchanged.
-                # Fail fast on poisoned emissions: a non-finite tensor (fp16
-                # overflow on an unstable head, corrupt weights, broken audio)
-                # otherwise flows into Viterbi, which collapses to one all-blank
-                # segment and surfaces as a cryptic `get_spans` AssertionError far
-                # from the cause. The `except Exception` below then degrades to
-                # returning the caller's lines unchanged.
+                # Fail fast on poisoned emissions: a non-finite tensor (corrupt
+                # weights, broken audio) otherwise flows into Viterbi, which
+                # collapses to one all-blank segment and surfaces as a cryptic
+                # `get_spans` AssertionError far from the cause. The `except
+                # Exception` below then degrades to returning the caller's lines
+                # unchanged.
                 if not _all_finite(emissions):
                     raise ValueError(
                         f"acoustic model emitted non-finite emissions; "
                         f"model={model_path or 'MMS-300m'} - likely numerical "
                         f"instability (load this head in fp32)"
                     )
-                _log_emissions_windowed(emissions, audio_seconds, tokenizer)
                 segments, scores, blank_token = alignments_fn(
                     emissions, all_tokens, tokenizer,
                 )
@@ -592,9 +428,6 @@ class LyricsAligner:
                 word_timestamps = postprocess_results(
                     all_text, spans, stride, scores,
                 )
-                _log_word_score_diagnostics(
-                    word_timestamps, emissions, audio_seconds, tokenizer,
-                )
                 word_timestamps = _repair_low_score_words(
                     word_timestamps,
                     emissions=emissions,
@@ -606,9 +439,6 @@ class LyricsAligner:
                     get_alignments=alignments_fn,
                     get_spans=get_spans,
                     postprocess_results=postprocess_results,
-                )
-                _log_word_score_diagnostics(
-                    word_timestamps, emissions, audio_seconds, tokenizer,
                 )
             except Exception as exc:
                 log.warning(
@@ -834,44 +664,6 @@ def _detect_language_from_text(input_lines: list[InputLine]) -> str | None:
 # --------------------------------------------------------------------
 
 
-def _log_audio_stats(audio_waveform: Any, audio_path: Path) -> None:
-    """Summarise the vocals-stem waveform fed to the aligner so we can
-    tell at a glance whether the upstream separator produced sane audio.
-    NaN/Inf counts catch upstream numerical tainting; `near_silent`
-    catches the case where the separator zeroed out quiet regions and
-    the model is being asked to align text against a near-flat signal."""
-    if not _is_torch_tensor(audio_waveform):
-        return  # numpy/ONNX path: this torch-only diagnostic is skipped
-    import torch  # type: ignore[import-not-found]
-
-    numel = audio_waveform.numel()
-    if numel == 0:
-        log.warning("lyrics: audio_stats: %s is empty", audio_path.name)
-        return
-    nan = int(torch.isnan(audio_waveform).sum())
-    inf = int(torch.isinf(audio_waveform).sum())
-    finite = audio_waveform[torch.isfinite(audio_waveform)]
-    if finite.numel() == 0:
-        log.warning(
-            "lyrics: audio_stats: %s shape=%s dtype=%s ALL NON-FINITE "
-            "(nan=%d inf=%d)",
-            audio_path.name, tuple(audio_waveform.shape), audio_waveform.dtype,
-            nan, inf,
-        )
-        return
-    finite_f32 = finite.float()
-    abs_max = float(finite_f32.abs().max())
-    rms = float(finite_f32.pow(2).mean().sqrt())
-    near_silent = float((audio_waveform.float().abs() < 1e-3).float().mean())
-    duration_sec = int(audio_waveform.shape[-1]) / _AUDIO_SAMPLE_RATE
-    log.info(
-        "lyrics: audio_stats: %s shape=%s dtype=%s duration=%.2fs "
-        "nan=%d inf=%d abs_max=%.4f rms=%.4f near_silent_frac=%.3f",
-        audio_path.name, tuple(audio_waveform.shape), audio_waveform.dtype,
-        duration_sec, nan, inf, abs_max, rms, near_silent,
-    )
-
-
 def _repair_low_score_words(
     word_timestamps: list[dict[str, Any]],
     *,
@@ -933,7 +725,7 @@ def _repair_low_score_words(
         )
         return word_timestamps
 
-    em_dim = int(emissions.ndim)  # .ndim works for both torch tensors and numpy
+    em_dim = int(emissions.ndim)
     total_frames = int(emissions.shape[1 if em_dim == 3 else 0])
     sec_per_frame = audio_seconds / max(total_frames, 1)
 
@@ -1089,312 +881,6 @@ def _log_token_sequence(all_tokens: list[str], all_text: list[str]) -> None:
     )
     head = all_text[:40]
     log.info("lyrics:   head[:40] = %r", head)
-
-
-def _log_emissions_stats(emissions: Any, tokenizer: Any) -> None:
-    """Summarise MMS-300m's per-frame log-probs before forced alignment.
-
-    Three failure modes we're trying to catch:
-      - `nan` / `inf` > 0 -> fp16 instability in the aligner itself
-        (LayerNorm / softmax over fp16 activations); Viterbi degenerates
-        to whatever the C++ kernel does with NaN log-probs.
-      - `top_label_frac` near 1.0 -> the model is predicting the same
-        class at every frame (the failure mode we already observed:
-        every frame -> 'r', producing one giant segment). Indicates
-        either fp16 NaN that collapsed softmax to a default class or a
-        broken input waveform.
-      - `<star>` argmax dominant + `star_margin` > 5 -> the appended
-        wildcard column is winning by miles (>150x prob ratio over the
-        runner-up). Distinguishes "model genuinely thinks audio is OOV"
-        (margin 0-2 logp; possibly real instrumental input) from
-        "<star> column was initialized to ~+inf or model load is
-        corrupt" (margin large and uniform across all frames).
-
-    Decodes the dominant argmax index via the tokenizer vocab so the
-    log line reads "top=r 0.92" rather than just a bare integer. The
-    `<star>` column appended by `generate_emissions` lives at index
-    `vocab_size` and shows up as '<star-col>' since it isn't in the
-    tokenizer's own vocab map."""
-    if not _is_torch_tensor(emissions):
-        return  # numpy/ONNX path: this torch-only diagnostic is skipped
-    import torch  # type: ignore[import-not-found]
-
-    nan = int(torch.isnan(emissions).sum())
-    inf = int(torch.isinf(emissions).sum())
-    em_f32 = emissions.float()
-    mean = float(em_f32.mean())
-    std = float(em_f32.std())
-
-    argmax = em_f32.argmax(dim=-1).view(-1)
-    total = argmax.numel()
-    counts = torch.bincount(argmax)
-    k = min(3, counts.numel())
-    top_counts, top_indices = torch.topk(counts, k=k)
-    vocab = tokenizer.get_vocab()
-    vocab_inv = {v: k_ for k_, v in vocab.items()}
-    star_col = len(vocab)  # `generate_emissions` appends this column
-
-    # Global star-vs-runner-up margin. We always compute it, not just
-    # when star dominates, so a non-dominant star with a large margin
-    # over an obscure runner-up still surfaces in the log.
-    if star_col < em_f32.shape[-1]:
-        flat = em_f32.view(-1, em_f32.shape[-1])
-        star_logp = float(flat[:, star_col].mean())
-        mask = torch.ones(flat.shape[-1], dtype=torch.bool, device=flat.device)
-        mask[star_col] = False
-        runner_up_logp = float(flat[:, mask].max(dim=-1).values.mean())
-        star_margin = star_logp - runner_up_logp
-        star_summary = (
-            f" star_logp={star_logp:.2f} "
-            f"runner_up_logp={runner_up_logp:.2f} "
-            f"star_margin={star_margin:+.2f}"
-        )
-    else:
-        star_summary = ""
-
-    def _label(idx: int) -> str:
-        if idx == star_col:
-            return "<star-col>"
-        return vocab_inv.get(idx, f"?{idx}")
-
-    top_summary = ", ".join(
-        f"{_label(int(i))}={int(c)}({int(c) / total:.2f})"
-        for i, c in zip(top_indices, top_counts, strict=True)
-    )
-    log.info(
-        "lyrics: emissions_stats: shape=%s dtype=%s nan=%d inf=%d "
-        "mean=%.3f std=%.3f top_argmax=[%s]%s",
-        tuple(emissions.shape), emissions.dtype, nan, inf, mean, std,
-        top_summary, star_summary,
-    )
-
-
-def _log_emissions_windowed(
-    emissions: Any, audio_seconds: float, tokenizer: Any,
-    window_seconds: float = 5.0,
-) -> None:
-    """Per-time-window summary of MMS-300m's posteriors so we can
-    correlate a bad-alignment span to "the model was confident here"
-    vs. "the model was mush here".
-
-    Cascade triage matrix (read alongside `_log_word_score_diagnostics`):
-
-      - low `max_phoneme_prob` + low word score in same window
-            -> model lost the audio (separator artifact, off-mic vocal,
-               or genuinely no speech). Fix is upstream: better vocals
-               separator, or VAD-gating the posteriors to discourage
-               Viterbi from placing words in dead frames.
-      - high `max_phoneme_prob` + low word score in same window
-            -> model heard a phoneme but it doesn't match the text token
-               Viterbi was forced to consume. Fix is text-side: wrong
-               language pick, missing `<star>` tokens around ad-libs /
-               harmonies, or the LRC text disagrees with what's actually
-               sung.
-      - high `star_frac` over many consecutive windows
-            -> the aligner found nothing it wanted to commit to; usually
-               an instrumental section. Words placed in this span are
-               cascade victims by definition; VAD-gating fixes it.
-
-    Reports `max_phoneme_prob` (avg-over-frames of the max non-blank,
-    non-`<star>` probability in linear space) rather than raw log-probs
-    so the numbers read as "0.84 = confident, 0.05 = mush" instead of
-    requiring an exp() in your head. Top-3 argmax classes ride the same
-    `<star-col>` label vocabulary as `_log_emissions_stats` for
-    cross-line greppability."""
-    if not _is_torch_tensor(emissions):
-        return  # numpy/ONNX path: this torch-only diagnostic is skipped
-    import torch  # type: ignore[import-not-found]
-
-    em = emissions.float()
-    if em.dim() == 3:
-        # `generate_emissions` returns shape (1, T, V+1) in some versions;
-        # flatten the leading batch dim so the rest of this function can
-        # treat emissions as a 2D (T, V+1) matrix unconditionally.
-        em = em[0]
-    total_frames = em.shape[0]
-    # Seconds per emission frame derived from the known input duration so
-    # we don't have to know `generate_emissions`'s `stride` unit (it's
-    # been observed in ms in this version, samples in others). Robust
-    # to package version drift.
-    sec_per_frame = audio_seconds / max(total_frames, 1)
-    frames_per_window = max(1, int(round(window_seconds / max(sec_per_frame, 1e-9))))
-    vocab = tokenizer.get_vocab()
-    vocab_inv = {v: k_ for k_, v in vocab.items()}
-    star_col = len(vocab)
-    # CTC blank for wav2vec2-style models is conventionally index 0;
-    # excluding it from "phoneme confidence" keeps the metric focused on
-    # whether the model is committing to *any* real phoneme in the window.
-    # Mis-identifying blank only slightly skews `max_phoneme_prob` (the
-    # max over a long axis is dominated by the actual peak phoneme), so
-    # diagnostics stay informative even if a future model uses a
-    # different blank index.
-    blank_col = 0
-    real_phoneme_mask = torch.ones(em.shape[1], dtype=torch.bool, device=em.device)
-    real_phoneme_mask[blank_col] = False
-    if star_col < em.shape[1]:
-        real_phoneme_mask[star_col] = False
-
-    log.info(
-        "lyrics: emissions_windowed: T=%d audio=%.2fs sec/frame=%.4f "
-        "window=%.1fs frames/win=%d",
-        total_frames, audio_seconds, sec_per_frame, window_seconds,
-        frames_per_window,
-    )
-    for w_start in range(0, total_frames, frames_per_window):
-        w_end = min(total_frames, w_start + frames_per_window)
-        window = em[w_start:w_end]
-        t_start = w_start * sec_per_frame
-        t_end = w_end * sec_per_frame
-        # Per-frame max log-prob over real phoneme classes; mean across
-        # frames in the window, then exp -> linear avg "how confident
-        # was the model about *some* phoneme each frame".
-        non_special = window[:, real_phoneme_mask]
-        max_phoneme_logp = non_special.max(dim=-1).values
-        max_phoneme_prob = float(max_phoneme_logp.exp().mean())
-        # Argmax-only stats: fraction of frames where star / blank won,
-        # and top-3 classes by argmax count. Together these distinguish
-        # "model picked a phoneme but the wrong one" from "model couldn't
-        # commit to anything but blank/star".
-        argmax = window.argmax(dim=-1)
-        argmax_n = argmax.numel()
-        star_frac = float((argmax == star_col).float().mean())
-        blank_frac = float((argmax == blank_col).float().mean())
-        counts = torch.bincount(argmax, minlength=star_col + 1)
-        top_k = min(3, int((counts > 0).sum()))
-        if top_k > 0:
-            top_counts, top_indices = torch.topk(counts, k=top_k)
-            top_summary = ", ".join(
-                _label_argmax_class(int(i), vocab_inv, star_col)
-                + f"={int(c) / argmax_n:.2f}"
-                for i, c in zip(top_indices, top_counts, strict=True)
-            )
-        else:
-            top_summary = "(empty)"
-        # When <star> dominates, also report HOW dominant. A small margin
-        # (1-2 logp) over the runner-up means the model is genuinely
-        # uncertain and slightly preferring star ("I don't know what
-        # this audio is"). A huge margin (>5 logp ~= >150x prob ratio)
-        # means star is winning for non-modelling reasons (corrupt
-        # weights, mis-loaded model, broken audio preprocessing) and
-        # the model never actually evaluated this window.
-        star_extra = ""
-        if star_col < em.shape[1] and star_frac > 0.5:
-            star_logp = float(window[:, star_col].mean())
-            runner_up_logp = float(
-                window[:, real_phoneme_mask].max(dim=-1).values.mean()
-            )
-            star_extra = (
-                f" star_logp={star_logp:.2f} "
-                f"runner_up_logp={runner_up_logp:.2f} "
-                f"star_margin={star_logp - runner_up_logp:+.2f}"
-            )
-        log.info(
-            "lyrics:   t=[%6.2f,%6.2f]s max_phoneme_prob=%.3f "
-            "blank_frac=%.2f star_frac=%.2f top=[%s]%s",
-            t_start, t_end, max_phoneme_prob, blank_frac, star_frac,
-            top_summary, star_extra,
-        )
-
-
-def _log_word_score_diagnostics(
-    word_timestamps: list[dict[str, Any]],
-    emissions: Any,
-    audio_seconds: float,
-    tokenizer: Any,
-) -> None:
-    """Distribution + worst-N report for per-word alignment scores.
-
-    `score` from `postprocess_results` is the mean log-prob along the
-    Viterbi path for that word's frames. Sharply negative scores mean
-    Viterbi traversed low-probability frames to land the word there -
-    the canonical signature of a *forced* placement: either the word
-    sits in an instrumental section (no phoneme matched), or it was
-    shifted by an upstream cascade and ended up on the wrong phonemes.
-
-    For each of the worst-N words we also re-read the emissions inside
-    that word's frame range and report `max_phoneme_prob` there. This
-    is the cross-correlation the per-window logger above lets you do by
-    eye, baked in:
-
-      - low score + low max_phoneme_prob
-            -> word placed in a dead-audio span (cascade victim or
-               instrumental). VAD-gating / better separator fixes it.
-      - low score + high max_phoneme_prob
-            -> model heard *something* there but it disagreed with the
-               text token Viterbi was forced to consume. Wrong language,
-               missing `<star>` for ad-libs, or LRC text mismatch.
-    """
-    import torch  # type: ignore[import-not-found]
-
-    if not word_timestamps:
-        log.info("lyrics: word_scores: no words (skipping)")
-        return
-    if not _is_torch_tensor(emissions):
-        return  # numpy/ONNX path: this torch-only diagnostic is skipped
-    em = emissions.float()
-    if em.dim() == 3:
-        em = em[0]
-    total_frames = em.shape[0]
-    # Same audio-derived sec/frame as `_log_emissions_windowed`; package
-    # `stride` units differ across versions so we don't trust it here.
-    sec_per_frame = audio_seconds / max(total_frames, 1)
-    vocab = tokenizer.get_vocab()
-    star_col = len(vocab)
-    blank_col = 0
-    real_phoneme_mask = torch.ones(em.shape[1], dtype=torch.bool, device=em.device)
-    real_phoneme_mask[blank_col] = False
-    if star_col < em.shape[1]:
-        real_phoneme_mask[star_col] = False
-
-    scores = [float(w.get("score", 0.0)) for w in word_timestamps]
-    scores_sorted = sorted(scores)
-    n = len(scores)
-
-    def _percentile(p: float) -> float:
-        idx = max(0, min(n - 1, int(round(p * (n - 1)))))
-        return scores_sorted[idx]
-
-    # Threshold of -1.5 is a coarse heuristic: forced-aligner scores on
-    # cleanly-recognised words usually sit between -0.5 and 0; below
-    # ~-1.5 the path is averaging blank / wrong-phoneme frames. Re-tune
-    # once we have a few real songs' baselines logged.
-    threshold = -1.5
-    below = sum(1 for s in scores if s < threshold)
-    log.info(
-        "lyrics: word_scores: n=%d min=%.2f p10=%.2f median=%.2f p90=%.2f max=%.2f below_%.1f=%d",
-        n, scores_sorted[0], _percentile(0.10), _percentile(0.50),
-        _percentile(0.90), scores_sorted[-1], threshold, below,
-    )
-
-    worst = sorted(
-        ((float(w.get("score", 0.0)), w) for w in word_timestamps),
-        key=lambda t: t[0],
-    )[:10]
-    log.info("lyrics:   worst 10 words by alignment score:")
-    for score, w in worst:
-        start = float(w.get("start", 0.0))
-        end = float(w.get("end", start))
-        f_start = max(0, min(total_frames - 1, int(start / max(sec_per_frame, 1e-9))))
-        f_end = max(f_start + 1, min(total_frames, int(end / max(sec_per_frame, 1e-9))))
-        window = em[f_start:f_end]
-        if window.numel() > 0:
-            non_special = window[:, real_phoneme_mask]
-            max_phoneme_prob = float(non_special.max(dim=-1).values.exp().mean())
-        else:
-            max_phoneme_prob = float("nan")
-        log.info(
-            "lyrics:     t=[%7.3f,%7.3f]s score=%6.2f max_phoneme_prob=%.3f text=%r",
-            start, end, score, max_phoneme_prob, w.get("text", ""),
-        )
-
-
-def _label_argmax_class(idx: int, vocab_inv: dict[int, str], star_col: int) -> str:
-    """Decode an argmax index to the same label vocabulary
-    `_log_emissions_stats` uses (`<star-col>` for the appended wildcard,
-    `?N` for genuinely unknown indices)."""
-    if idx == star_col:
-        return "<star-col>"
-    return vocab_inv.get(idx, f"?{idx}")
 
 
 def _diagnose_get_spans_failure(

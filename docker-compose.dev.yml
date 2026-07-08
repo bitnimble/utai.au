@@ -3,10 +3,11 @@
 # Brings up four services behind Caddy (the app on one origin, OnTheSpot's UI on
 # a second):
 #   - onthespot : OnTheSpot's headless web API (the thing we wrap)
-#   - backend   : the aligner, reusing the CUDA sandbox image. ONE service for
-#                 both the music facade AND the ML pipeline (vocal separation +
+#   - backend   : the aligner (torch-free `docker/backend.Dockerfile`). ONE service
+#                 for both the music facade AND the ML pipeline (vocal separation +
 #                 CTC alignment), `pipeline` role with GPU + a model-cache mount
-#                 (see the backend service). Needs the models present to start.
+#                 (see the backend service). Runs only pre-exported onnx, so it
+#                 needs the models present to start (can't export -- no torch).
 #   - web       : the Vite dev server over a repo bind-mount (edit -> refresh)
 #   - caddy     : edge proxy; :5175 /api -> backend + / -> web; :5176 -> onthespot
 #
@@ -14,9 +15,10 @@
 # Then:  open https://localhost:5175  (self-signed; refresh to pick up changes).
 #        HTTPS is required so AudioWorklet (audio playback) works off localhost.
 #
-# First run is heavy: the backend reuses `utai-sandbox` (sandbox/Dockerfile), a
-# multi-GB CUDA/torch build - the same image `scripts/sandbox-*` already use, so
-# it's likely cached. Accounts/credentials live only in the `otsconfig` volume.
+# First run is heavy: the backend builds `docker/backend.Dockerfile`, a CUDA image
+# carrying the aligner's torch-free onnxruntime stack (no torch, unlike the
+# `utai-sandbox` image `scripts/sandbox-*` use). Accounts/credentials live only in
+# the `otsconfig` volume.
 
 services:
   onthespot:
@@ -36,8 +38,8 @@ services:
   backend:
     build:
       context: .
-      dockerfile: sandbox/Dockerfile
-    image: utai-sandbox
+      dockerfile: docker/backend.Dockerfile
+    image: utai-backend
     restart: unless-stopped
     working_dir: /repo/aligner
     # Run as root (the sandbox image defaults to uid 1000): the `otsconfig`
@@ -48,7 +50,7 @@ services:
     user: "0:0"
     # Mount the whole repo (a subdir bind of ./aligner came up EMPTY on this
     # Docker) and run uvicorn as a module from /repo/aligner so cwd + PYTHONPATH
-    # put the app source on sys.path; the sandbox image installs the deps only.
+    # put the app source on sys.path; the backend image installs the deps only.
     # --reload-dir app: watch ONLY the source, not the huge mounted .venv/ or
     # tests/ (watching those thrashes watchfiles into an OOM).
     command: sh -c "cd /repo/aligner && exec /opt/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /repo/aligner/app"
@@ -62,7 +64,7 @@ services:
       WORKER_ROLE: pipeline
       MODELS_DIR: /models
       # Runtime is torch-free onnxruntime (the only shipped path). On this box
-      # separation rides the TensorRT EP automatically (the sandbox image carries
+      # separation rides the TensorRT EP automatically (the backend image carries
       # the tensorrt-cu12 wheel and UTAI_SEP_TRT defaults on); its engine builds
       # once and caches under /cache. MODELS_DIR must hold the exported `.onnx`
       # bodies (`model_mel_band_roformer.fp16.onnx` + `ctc_align__*.fp16.onnx`)

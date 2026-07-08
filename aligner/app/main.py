@@ -168,13 +168,20 @@ async def health() -> HealthResponse:
     gpu_name: str | None = None
     gpu_available = False
     try:
-        import torch
+        import onnxruntime as ort
 
-        gpu_available = bool(torch.cuda.is_available())
+        # Torch-free probe: the runtime runs on onnxruntime, so "GPU" means an
+        # accelerated execution provider is available. Report the first one as the
+        # name (e.g. CUDA/Tensorrt/CoreML/DirectML EP) rather than a device string.
+        gpu_eps = [
+            ep for ep in ort.get_available_providers()
+            if ep != "CPUExecutionProvider"
+        ]
+        gpu_available = bool(gpu_eps)
         if gpu_available:
-            gpu_name = torch.cuda.get_device_name(0)
-    except Exception as exc:  # pragma: no cover - torch optional at runtime
-        log.debug("torch GPU probe failed: %s", exc)
+            gpu_name = gpu_eps[0]
+    except Exception as exc:  # pragma: no cover - onnxruntime probe is best-effort
+        log.debug("onnxruntime GPU probe failed: %s", exc)
     return HealthResponse(
         status="ok",
         gpu_available=gpu_available,

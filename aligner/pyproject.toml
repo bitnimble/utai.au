@@ -35,11 +35,11 @@ runtime = [
 
 # Stem separation runtime: Mel-Band Roformer vocals stem via the torch-free ONNX path
 # (NumpySeparator + onnxruntime). Its own capability so a user can stem-split
-# without the lyrics stack. NO torch -- the shipped inference path is onnxruntime
-# only; torch is opt-in via the `torch` group (export + UTAI_SEP_ONNX=0 fallback).
+# without the lyrics stack. NO torch -- the inference path is onnxruntime only;
+# torch is opt-in via the `torch` group (ONNX export + the offline parity checks).
 separation = [
     { include-group = "runtime" },
-    # Cross-platform ONNX inference path (UTAI_SEP_ONNX). `onnxruntime-gpu`
+    # Cross-platform ONNX inference path. `onnxruntime-gpu`
     # (CUDA / DirectML) ships Linux + Windows wheels only; on macOS the standard
     # `onnxruntime` arm64 wheel carries the CoreML EP (Apple GPU/ANE). Pin the
     # CUDA-12 line: 1.26 moved to a CUDA-13 build (libcudart.so.13); the CUDA libs
@@ -112,9 +112,10 @@ music = [
 ]
 
 # Torch: NOT shipped in the desktop capability install (which runs provisioned
-# fp16 ONNX, torch-free). Needed only for (1) the one-time ONNX export
-# (export_onnx_models.py / separation/export.py + lyrics_onnx.export_ctc_model),
-# (2) the UTAI_SEP_ONNX=0 / UTAI_LYRICS_ONNX=0 torch fallback + A-B paths, and
+# fp16 ONNX, torch-free) and NEVER on the runtime path. Needed only for the BUILD
+# side: (1) the one-time ONNX export (separation/export.py +
+# lyrics_onnx.export_ctc_model), (2) the offline torch<->ONNX parity checks
+# (tests/test_separation_parity.py, via separation/loader.py + runner.py), and
 # (3) the vendored Roformer model classes (einops / rotary-embedding-torch /
 # ml-collections are imported only on that torch path).
 torch = [
@@ -126,9 +127,9 @@ torch = [
 ]
 
 # Dev-only: linters, tests, and the ONNX export/fp16-convert toolchain (needs
-# torch, so this pulls the `torch` group -- dev / Docker keep full parity: both
-# runtime paths + export). Not shipped in the desktop install (the shipped runtime
-# downloads pre-built fp16 onnx via provision and never exports; see
+# torch, so this pulls the `torch` group -- dev keeps the torch-free runtime plus
+# the export + parity toolchain). Not shipped in the desktop install (the shipped
+# runtime downloads pre-built fp16 onnx via provision and never exports; see
 # allow_local_export). `onnxsim` (onnx-simplifier) is export-only: coreml_optimize
 # uses it to fold the Roformer graph.
 dev = [

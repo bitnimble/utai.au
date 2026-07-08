@@ -1,0 +1,14 @@
+# uv override file: drop torch from the resolved graph for the torch-free backend
+# image (docker/backend.Dockerfile). `ctc-forced-aligner` declares torch as a
+# dependency, so a plain install of the `lyrics` group would pull the multi-GB
+# CUDA torch wheel even though the runtime never imports torch. An impossible
+# marker (`sys_platform == 'never'`) removes each package from the graph, mirroring
+# the desktop capability install (see prepare-desktop-resources.ts, which rewrites
+# pyproject's override-dependencies the same way). The vendored torch-free CTC path
+# only needs the package's C++ `forced_align` kernel + text_utils, not torch.
+# `torchcodec` (ctc-forced-aligner's audio decoder) needs torch and is unused --
+# we decode audio via librosa (`load_audio_np`) -- so drop it too.
+torch; sys_platform == 'never'
+torchaudio; sys_platform == 'never'
+torchvision; sys_platform == 'never'
+torchcodec; sys_platform == 'never'
