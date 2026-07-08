@@ -1,4 +1,4 @@
-import { LyricLine, LyricWord } from 'src/lyrics/lrc';
+import { isBlankLyricLine, LyricLine, LyricWord } from 'src/lyrics/lrc';
 import { audioSecToBeat } from 'src/lyrics/store';
 import { UtaiTimeline } from 'src/editing/playback/timeline';
 
@@ -123,9 +123,7 @@ export function positionLyricLines(
     // Blank lines (LRC instrumental gap stamps with no text or words)
     // produce no visible chip - rendering an empty span just leaves a
     // bare start-beat tick floating above the audio waveform.
-    if (line.text.trim() === '' && (!line.words || line.words.length === 0)) {
-      continue;
-    }
+    if (isBlankLyricLine(line)) continue;
     const lineSec = line.startSec + offsetSec;
 
     let startBeat: number | undefined;

@@ -149,4 +149,18 @@ describe('activeLineIndexAt', () => {
     expect(activeLineIndexAt(lines, 7.99, -2)).toBe(0);
     expect(activeLineIndexAt(lines, 8, -2)).toBe(1);
   });
+
+  test('skips a blank gap-stamp that falls inside the previous line', () => {
+    // A word-timed line whose words run to t=9, then a blank stamp at t=5
+    // (LRCLIB enhanced quirk), then the next line at t=10. At t=6 the first
+    // line is still being sung, so it, not the blank, stays active.
+    const withBlank = [
+      { startSec: 0, text: 'still singing', words: [{ startSec: 0, endSec: 9, text: 'x' }] },
+      { startSec: 5, text: '' },
+      { startSec: 10, text: 'next' },
+    ];
+    expect(activeLineIndexAt(withBlank, 6, 0)).toBe(0);
+    expect(activeLineIndexAt(withBlank, 4, 0)).toBe(0);
+    expect(activeLineIndexAt(withBlank, 10, 0)).toBe(2);
+  });
 });

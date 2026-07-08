@@ -152,10 +152,22 @@ function stampToSeconds(mm: string, ss: string, frac: string | undefined): numbe
   return minutes * 60 + seconds + fractional;
 }
 
+/** A blank LRC line: an instrumental-gap stamp with no text and no words. It
+ *  renders nothing, so it must never be picked as the active line. */
+export function isBlankLyricLine(line: LyricLine): boolean {
+  return line.text.trim() === '' && (!line.words || line.words.length === 0);
+}
+
 /**
- * Index of the last line whose `startSec + offsetSec <= audioTimeSec`,
- * or `undefined` if the playhead is before the first line. Linear scan
- * since LRC files are typically under a few hundred lines.
+ * Index of the last non-blank line whose `startSec + offsetSec <=
+ * audioTimeSec`, or `undefined` if the playhead is before the first line.
+ * Linear scan since LRC files are typically under a few hundred lines.
+ *
+ * Blank stamps are skipped: LRCLIB enhanced files sometimes place a blank
+ * gap-line at a timestamp that falls WITHIN the preceding vocal line's words
+ * (it's stamped before that line's last word ends). Picking it would blank the
+ * highlight mid-line, so the current vocal line stops lighting up its words
+ * even though it's still being sung.
  */
 export function activeLineIndexAt(
   lines: readonly LyricLine[],
@@ -164,8 +176,9 @@ export function activeLineIndexAt(
 ): number | undefined {
   let active: number | undefined;
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].startSec + offsetSec <= audioTimeSec) active = i;
-    else break;
+    if (lines[i].startSec + offsetSec <= audioTimeSec) {
+      if (!isBlankLyricLine(lines[i])) active = i;
+    } else break;
   }
   return active;
 }
