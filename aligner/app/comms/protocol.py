@@ -41,21 +41,24 @@ ResultRef = Annotated[PathRef | UrlRef | InlineRef, Field(discriminator="kind")]
 
 
 class Artifact(BaseModel):
-    role: Literal["stem", "audio"]
+    role: Literal["stem", "audio", "video"]
     ref: ResultRef
     # Semantic label for multi-artifact results; lets the frontend distinguish
     # one artifact from another.
     name: str | None = None
 
 
-Op = Literal["alignLyrics", "separateStems", "analyzeBeats"]
+Op = Literal["alignLyrics", "separateStems", "analyzeBeats", "fetchVideo"]
 
 
 # ---- client -> backend ----------------------------------------------------
 
 
 class RequestArgs(BaseModel):
-    audio: SourceRef
+    # Optional: the audio ops (alignLyrics / separateStems / analyzeBeats) each
+    # require it and raise if it's missing, but fetchVideo has no audio input
+    # (the id rides in `params`).
+    audio: SourceRef | None = None
     params: dict[str, object] = Field(default_factory=dict)
 
 

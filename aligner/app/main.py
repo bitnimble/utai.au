@@ -41,6 +41,7 @@ from app.music.routes import router as music_router
 from app.pipeline.lyrics_align import InputLine, get_aligner, lines_to_json
 from app.pipeline.provision import ProvisionEvent, planned_assets, provision
 from app.pipeline.separate import Separator
+from app.pipeline.video.fetch import fetch_video, is_valid_video_id
 from app.request_context import (
     RequestIdLogFilter,
     new_request_id,
@@ -752,6 +753,29 @@ async def lyrics_stem(stem_id: str, name: str) -> FileResponse:
         media_type="audio/flac",
         filename=name,
     )
+
+
+@app.get("/video/{video_id}")
+async def get_video(video_id: str) -> FileResponse:
+    """Serve the muted backing video for the karaoke page, fetched video-only
+    via yt-dlp on a cache miss.
+
+    The YouTube IFrame embed refuses embedding-disabled uploads ("Video
+    unavailable"); serving a native `<video>` over a fetched stream sidesteps
+    that. Cross-run cached under `cache_dir/video`, keyed by the 11-char id
+    (validated to foreclose path traversal). Needs no GPU / model, so it's
+    served regardless of worker role or provisioning state, and `FileResponse`
+    honours Range requests so the `<video>` element can seek."""
+    if not is_valid_video_id(video_id):
+        raise HTTPException(status_code=404, detail="No such video.")
+    request_id = new_request_id()
+    set_request_id(request_id)
+    try:
+        path = await asyncio.to_thread(fetch_video, video_id)
+    except Exception as exc:
+        log.exception("get_video: fetch failed (%s)", video_id)
+        raise HTTPException(status_code=502, detail=f"Could not fetch video: {exc}") from exc
+    return FileResponse(str(path), media_type="video/mp4", filename=f"{video_id}.mp4")
 
 
 async def _emit_stems_result(request_id: str, stem_id: str) -> AsyncIterator[bytes]:

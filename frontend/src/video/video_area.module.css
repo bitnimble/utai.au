@@ -22,3 +22,9 @@
     height: 100%;
     border: 0;
 }
+
+/* Native <video> carries `.videoHost` directly; contain so an off-16:9 source
+   isn't cropped inside the fixed 16:9 frame. */
+video.videoHost {
+    object-fit: contain;
+}

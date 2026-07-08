@@ -20,6 +20,12 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.4",
     "httpx>=0.27",
+    # Backing-video fetch for the karaoke page (app/pipeline/video/fetch.py):
+    # downloads a video-only stream so a native <video> can replace the YouTube
+    # IFrame embed, which refuses embedding-disabled uploads. Pure-Python +
+    # ffmpeg (already required), torch-free. In the base deps (not a capability
+    # group) so it ships with every install; it has no model to provision.
+    "yt-dlp>=2024.11",
 ]
 
 # Capability dependency-groups (PEP 735).

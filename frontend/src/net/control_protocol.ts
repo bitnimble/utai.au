@@ -26,17 +26,19 @@ export type InlineRef = { kind: 'inline'; bytesB64: string };
 export type ResultRef = PathRef | UrlRef | InlineRef;
 
 export type Artifact = {
-  role: 'stem' | 'audio';
+  role: 'stem' | 'audio' | 'video';
   ref: ResultRef;
   name?: string;
 };
 
-export type Op = 'alignLyrics' | 'separateStems' | 'analyzeBeats';
+export type Op = 'alignLyrics' | 'separateStems' | 'analyzeBeats' | 'fetchVideo';
 
 // ---- client -> backend -----------------------------------------------------
 
 export type RequestArgs = {
-  audio: SourceRef;
+  /** Optional: the audio ops require it, but `fetchVideo` has no audio input
+   *  (the id rides in `params`). */
+  audio?: SourceRef;
   params: Record<string, unknown>;
 };
 
@@ -133,5 +135,19 @@ export function buildAnalyzeBeatsRequest(id: string, audio: PathRef): RequestMes
     id,
     op: 'analyzeBeats',
     args: { audio, params: {} },
+  };
+}
+
+/** Build the `fetchVideo` request frame. No audio input; `videoId` (an 11-char
+ *  YouTube id) rides in `params`. The sidecar downloads the muted backing video
+ *  and returns it as a `role: 'video'` {@link Artifact} (a local {@link PathRef}
+ *  under the broker's outputs dir). */
+export function buildFetchVideoRequest(id: string, videoId: string): RequestMessage {
+  return {
+    v: PROTOCOL_VERSION,
+    type: 'request',
+    id,
+    op: 'fetchVideo',
+    args: { params: { videoId } },
   };
 }

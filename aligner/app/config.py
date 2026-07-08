@@ -95,6 +95,18 @@ class Settings(BaseSettings):
     # Alignment JSON is small (KB per song); a modest cap holds many
     # thousands of results.
     cache_alignment_cap_bytes: int = 256 * 1024 * 1024  # 256 MB
+    # Backing-video cache (`video/`): the muted, playback-synced video the
+    # karaoke page shows above the score, fetched video-only via yt-dlp because
+    # the YouTube IFrame embed refuses embedding-disabled uploads. Keyed by the
+    # 11-char id, bounded LRU like the others.
+    cache_video_cap_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GB
+
+    # --- Backing video ---
+    # yt-dlp format selector for the karaoke backing video. Video-only (the
+    # audio is the separated stems and the player is muted), H.264/mp4 preferred
+    # for the widest <video> + webview codec support, capped at 720p since it's a
+    # background layer. Falls back through vp9/av1 when no H.264 rung exists.
+    video_format: str = "bv*[vcodec^=avc1][height<=720]/bv*[vcodec^=avc1]/bv*[height<=720]/bv*"
 
     # --- HTTP ---
     # The hosted web app is same-origin (no CORS needed); these cover the local

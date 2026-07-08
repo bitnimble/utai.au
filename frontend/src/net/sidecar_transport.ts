@@ -15,12 +15,13 @@
  * {@link isSidecarAvailable} also gates out mobile.
  */
 
-import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
+import { Channel, convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core';
 import { join, tempDir } from '@tauri-apps/api/path';
 import { mkdir, readFile, remove, writeFile } from '@tauri-apps/plugin-fs';
 import {
   buildAlignLyricsRequest,
   buildAnalyzeBeatsRequest,
+  buildFetchVideoRequest,
   buildSeparateStemsRequest,
   newRequestId,
   type Artifact,
@@ -241,6 +242,26 @@ export async function analyzeBeatsSidecar(
 function extractBeats(data: unknown): unknown {
   if (data != null && typeof data === 'object') return (data as { beats?: unknown }).beats;
   return undefined;
+}
+
+/**
+ * Fetch the karaoke backing video through the desktop sidecar and return a URL
+ * a `<video>` can load. The sidecar downloads a video-only stream (yt-dlp) into
+ * its outputs dir and returns it as a local `video` artifact; we hand back the
+ * asset-protocol URL for that file ({@link convertFileSrc}), which the webview
+ * streams (Range-capable). Rejects on backend failure / abort.
+ */
+export async function fetchVideoSidecar(
+  videoId: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<string> {
+  const id = newRequestId();
+  const request = buildFetchVideoRequest(id, videoId);
+  const result = await runJob(id, request, { signal: opts.signal });
+  const artifact = result.artifacts.find((a) => a.role === 'video');
+  if (!artifact) throw new Error('sidecar did not return a video artifact');
+  if (artifact.ref.kind !== 'path') throw new Error('video artifact is not a local file path');
+  return convertFileSrc(artifact.ref.path);
 }
 
 /** Read one named stem artifact (a local {@link PathRef}) off disk into a
