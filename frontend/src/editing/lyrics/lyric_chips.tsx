@@ -173,7 +173,7 @@ const LyricWordChip = observer(
       '--lyric-word-beat-offset': word.beatOffset,
       '--lyric-word-beat-width': word.beatWidth,
     };
-    if (shift > 0) wordStyle['--lyric-word-shift'] = `${shift}px`;
+    if (shift !== 0) wordStyle['--lyric-word-shift'] = `${shift}px`;
     const pitched = word.pitchFrac !== undefined;
     if (pitched) wordStyle['--lyric-word-pitch-frac'] = word.pitchFrac!;
     return (

@@ -185,20 +185,25 @@ export type LyricWordMeasureInput = {
 export type LyricLineMeasureInput = {
   /** Index into the positioned-line array. */
   lineIdx: number;
-  /** Active line + word indices; either both set (one word in this line
-   *  is active) or both absent (line inactive). */
-  activeWordSourceIdx: number | undefined;
   words: LyricWordMeasureInput[];
 };
 
-/** Walk each line left-to-right and compute the per-word `--lyric-
- *  word-shift` (px) that keeps adjacent words at least {@link MIN_GAP_PX}
- *  apart. Empty result is fine: lines with no collisions return an empty
- *  Map and the renderer leaves `--lyric-word-shift` at 0.
+/**
+ * Per-word `--lyric-word-shift` (px) that guarantees no two words in a line
+ * overlap and Latin word boundaries keep a full space, while shifting the
+ * words the least in total.
  *
- *  Pure: same inputs → same output. The measurer's `fontReady` is read
- *  by callers (to invalidate before/after the font load); this fn itself
- *  doesn't track it. */
+ * Strict, not optimistic: every word is measured at the ACTIVE weight (the
+ * widest it ever renders), so a word going bold under the playhead can't spill
+ * onto its neighbour, and the reserved slot includes a space between adjacent
+ * Latin words so "hello" + "world" never read as one word. Given those minimum
+ * separations, {@link resolvePositions} picks the shifts minimising the total
+ * displacement (words push both ways around a cluster, not one-directional
+ * cascade), so a collision disturbs the layout as little as possible.
+ *
+ * Empty result = no collisions. Pure: same inputs → same output. `fontReady`
+ * is read by callers to invalidate across the web-font swap; this fn doesn't.
+ */
 export function computeLyricShifts(
   lines: readonly LyricLineMeasureInput[],
   pxPerBeat: number,
@@ -206,24 +211,95 @@ export function computeLyricShifts(
 ): Map<LyricShiftKey, number> {
   const out = new Map<LyricShiftKey, number>();
   if (!Number.isFinite(pxPerBeat) || pxPerBeat <= 0) return out;
+  const spacePx = Math.max(MIN_GAP_PX, lyricsMeasurer.measureWordPx(' ', pxPerBeat, false, fontSizePx));
   for (const line of lines) {
-    let prevRight = -Infinity;
-    for (const w of line.words) {
-      const natural = w.beatOffset * pxPerBeat;
-      const isActive = line.activeWordSourceIdx === w.sourceIdx;
+    const n = line.words.length;
+    if (n === 0) continue;
+    const targets = new Array<number>(n);
+    const widths = new Array<number>(n);
+    for (let i = 0; i < n; i++) {
+      const w = line.words[i];
+      targets[i] = w.beatOffset * pxPerBeat;
       const hasRuby = w.segments?.some((s) => s.reading !== undefined) ?? false;
-      const textWidth = hasRuby
-        ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, isActive, fontSizePx)
-        : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, isActive, fontSizePx);
-      const required = Math.max(natural, prevRight + MIN_GAP_PX);
-      const shift = required - natural;
-      if (shift > 0) {
-        out.set(lyricShiftKey(line.lineIdx, w.sourceIdx), shift);
+      widths[i] = hasRuby
+        ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, true, fontSizePx)
+        : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, true, fontSizePx);
+    }
+    // Minimum left-edge distance to the next word: its text width plus a gap
+    // (a full space between Latin words, else just the anti-overlap minimum).
+    const sep = new Array<number>(Math.max(0, n - 1));
+    for (let i = 0; i < n - 1; i++) {
+      const gap = needsWordSpace(line.words[i].text, line.words[i + 1].text) ? spacePx : MIN_GAP_PX;
+      sep[i] = widths[i] + gap;
+    }
+    const positions = resolvePositions(targets, sep);
+    for (let i = 0; i < n; i++) {
+      const shift = positions[i] - targets[i];
+      if (Math.abs(shift) >= 0.5) {
+        out.set(lyricShiftKey(line.lineIdx, line.words[i].sourceIdx), shift);
       }
-      prevRight = required + textWidth;
     }
   }
   return out;
+}
+
+/**
+ * Strict minimal-shift 1-D separation: positions `p` (same order) minimising
+ * the total displacement `sum|p_i - target_i|` subject to
+ * `p_{i+1} >= p_i + sep_i` and `p_0 >= 0` (words never cross a neighbour or
+ * slide before the line's start). Solved as L1 isotonic regression via
+ * pool-adjacent-violators with median pooling on `q_i = p_i - S_i`
+ * (`S_i` = prefix sum of `sep`), which turns the spacing constraint into a
+ * plain monotone-non-decreasing one and the lower bound into `q >= 0`.
+ */
+export function resolvePositions(targets: readonly number[], sep: readonly number[]): number[] {
+  const n = targets.length;
+  if (n === 0) return [];
+  const prefix = new Array<number>(n);
+  prefix[0] = 0;
+  for (let i = 1; i < n; i++) prefix[i] = prefix[i - 1] + sep[i - 1];
+  // PAVA over the targets `a_i = target_i - S_i`; each block keeps its members
+  // so its L1 optimum (the median) is recomputed on merge.
+  type Block = { values: number[]; val: number };
+  const blocks: Block[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = targets[i] - prefix[i];
+    let block: Block = { values: [a], val: a };
+    while (blocks.length > 0 && blocks[blocks.length - 1].val > block.val) {
+      const merged = blocks.pop()!.values.concat(block.values);
+      block = { values: merged, val: median(merged) };
+    }
+    blocks.push(block);
+  }
+  const p = new Array<number>(n);
+  let idx = 0;
+  for (const b of blocks) {
+    // Clamp the block's `q` to >= 0 so `p_0 >= 0` (and, since `S_i >= 0`, every
+    // later `p_i >= S_i >= 0`); monotonicity survives because the clamp only
+    // raises a leading run of negative blocks to zero.
+    const q = Math.max(0, b.val);
+    for (let k = 0; k < b.values.length; k++, idx++) p[idx] = q + prefix[idx];
+  }
+  return p;
+}
+
+function median(vals: readonly number[]): number {
+  const s = [...vals].sort((x, y) => x - y);
+  const m = s.length >> 1;
+  return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/** Latin letters/digits (incl. common accents); two words with one on each
+ *  side of the boundary get a full word space so they don't read as one. */
+function isLatinWordChar(ch: string): boolean {
+  return /[A-Za-z0-9À-ɏ]/.test(ch);
+}
+
+export function needsWordSpace(a: string, b: string): boolean {
+  const left = a.trim();
+  const right = b.trim();
+  if (left.length === 0 || right.length === 0) return false;
+  return isLatinWordChar(left[left.length - 1]) && isLatinWordChar(right[0]);
 }
 
 /** Per-word SVG pitch-line path (see `lyric_layout.buildPitchLine`), keyed like
