@@ -13,6 +13,7 @@ import { makeAutoObservable, runInAction } from 'mobx';
 import { LyricsPresenter } from 'src/editing/lyrics/lyrics_presenter';
 import { AudioTrack, AudioTrackId } from 'src/editing/playback/audio_tracks';
 import { playbackEngine } from 'src/editing/playback/player';
+import { parseSongFilename } from 'src/lyrics/auto_lyrics';
 import { separateStems } from 'src/lyrics/separate_stems';
 import { lyricsStore } from 'src/lyrics/store';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
@@ -74,6 +75,19 @@ export class SongIoPresenter {
     const mixId = await this.karaoke.loadAudioFile(file, 'full-mix', meta);
     if (mixId == null) return;
     await this.separateInto(mixId, file);
+    this.autoFetchLyrics(file);
+  }
+
+  /** After a mix loads, best-effort auto-fetch synced lyrics from LRCLIB using
+   *  the song's title/artist (streaming metadata, else parsed from the filename)
+   *  + duration; the lyrics presenter only applies a confident duration match. */
+  private autoFetchLyrics(file: File): void {
+    const parsed = parseSongFilename(file.name);
+    this.lyrics.autoFetchLyrics({
+      title: this.song.title || parsed.title,
+      artist: this.song.artist || parsed.artist,
+      durationSec: this.song.durationSec,
+    });
   }
 
   private async separateInto(mixId: AudioTrackId, mixFile: File): Promise<void> {

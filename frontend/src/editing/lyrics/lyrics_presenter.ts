@@ -4,7 +4,9 @@ import {
   AlignLyricsRequest,
   nameLooksLikeVocals,
 } from 'src/lyrics/forced_align';
-import { LyricLine, stripLyricNoise } from 'src/lyrics/lrc';
+import { LyricLine, parseLrc, stripLyricNoise } from 'src/lyrics/lrc';
+import { pickDurationMatch } from 'src/lyrics/auto_lyrics';
+import { LrclibMatch, searchLrclib } from 'src/lyrics/lrclib';
 import { attachPitchToLines } from 'src/lyrics/pitch_contour';
 import { LyricsSource, LyricsTrackId, lyricsStore } from 'src/lyrics/store';
 import { AudioTrackId } from 'src/editing/playback/audio_tracks';
@@ -32,6 +34,9 @@ export class LyricsPresenter {
    */
   lyricsAlignControllers: Map<LyricsTrackId, AbortController> = new Map();
 
+  /** In-flight auto-fetch-on-load LRCLIB request; a new song aborts it. */
+  private autoFetchController: AbortController | undefined;
+
   /** Fill empty song fields when a load carries metadata (e.g. an LRCLIB
    *  pick's track + artist). Delegates to the karaoke presenter, the
    *  {@link SongStore} writer, keeping the single-writer rule intact. */
@@ -40,9 +45,10 @@ export class LyricsPresenter {
   constructor(lyricsAlign: LyricsAlignStore, onSongMeta?: (meta: SongMeta) => void) {
     this.lyricsAlign = lyricsAlign;
     this.onSongMeta = onSongMeta;
-    makeAutoObservable<this, 'onSongMeta'>(this, {
+    makeAutoObservable<this, 'onSongMeta' | 'autoFetchController'>(this, {
       lyricsAlign: false,
       lyricsAlignControllers: false,
+      autoFetchController: false,
       onSongMeta: false,
     });
   }
@@ -85,6 +91,51 @@ export class LyricsPresenter {
         label: `${match.trackName} - ${match.artistName}`,
       });
     }
+  }
+
+  /**
+   * Auto-fetch synced lyrics from LRCLIB after a song loads and apply them when a
+   * result matches the song's duration (duration-first, per {@link pickDurationMatch}:
+   * the loaded audio's length disambiguates covers / live / remixes even when the
+   * title/artist strings differ). Best-effort and silent on a miss, so it never
+   * interrupts; a new song aborts a pending fetch. No-op when lyrics are already
+   * loaded or there's nothing to search with.
+   */
+  autoFetchLyrics(query: { title: string; artist: string; durationSec: number }): void {
+    const title = query.title.trim();
+    const artist = query.artist.trim();
+    if (title.length === 0 && artist.length === 0) return;
+    if (lyricsStore.hasAnyLyrics) return;
+    this.autoFetchController?.abort();
+    const controller = new AbortController();
+    this.autoFetchController = controller;
+    void this.runAutoFetch(title, artist, query.durationSec, controller);
+  }
+
+  private async runAutoFetch(
+    title: string,
+    artist: string,
+    durationSec: number,
+    controller: AbortController,
+  ): Promise<void> {
+    let matches: LrclibMatch[];
+    try {
+      matches = await searchLrclib({ trackName: title, artistName: artist, signal: controller.signal });
+    } catch {
+      return; // network error / abort: stay silent, the user can still search manually
+    }
+    // A newer song (or a manual load) superseded this fetch.
+    if (controller.signal.aborted || this.autoFetchController !== controller) return;
+    if (lyricsStore.hasAnyLyrics) return;
+    const best = pickDurationMatch(matches, durationSec, { title, artist });
+    if (best?.syncedLyrics == null) return; // no confident match
+    const lines = parseLrc(best.syncedLyrics);
+    if (lines.length === 0) return;
+    this.applyLrclibResult(
+      lines,
+      { trackName: best.trackName, artistName: best.artistName },
+      { wordLevel: playbackEngine.audioTracks.size > 0 },
+    );
   }
 
   // --- bundle load ---
