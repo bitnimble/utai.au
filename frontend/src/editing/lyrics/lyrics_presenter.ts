@@ -98,9 +98,10 @@ export class LyricsPresenter {
    * result is a confident match (per {@link pickConfidentMatch}: both a duration
    * match and a fuzzy title+artist match, the loaded audio's length disambiguates
    * covers / live / remixes, the name gate rejects a different song of the same
-   * length). Best-effort and silent on a miss, so it never interrupts; a new song
-   * aborts a pending fetch. No-op when lyrics are already loaded or there's nothing
-   * to search with.
+   * length). On a miss it retries title-only (LRCLIB's search is artist-sensitive
+   * and the source's "artist" may be a mislabelling YouTube uploader). Best-effort
+   * and silent on a miss, so it never interrupts; a new song aborts a pending
+   * fetch. No-op when lyrics are already loaded or there's nothing to search with.
    */
   autoFetchLyrics(query: { title: string; artist: string; durationSec: number }): void {
     const title = query.title.trim();
@@ -126,45 +127,22 @@ export class LyricsPresenter {
     durationSec: number,
     controller: AbortController,
   ): Promise<void> {
-    let matches: LrclibMatch[];
-    try {
-      matches = await searchLrclib({ trackName: title, artistName: artist, signal: controller.signal });
-    } catch (err) {
-      console.log('[auto-lyrics] search failed', err);
-      return; // network error / abort: stay silent, the user can still search manually
+    // First pass: title + artist. If nothing confident and we had an artist,
+    // retry title-only: LRCLIB's search is artist-sensitive and the source's
+    // "artist" (e.g. a YouTube uploader) may not be the official one, so an
+    // included wrong artist yields no results / no name match. The title-only
+    // pass drops the artist from both the query and the name gate, leaning on
+    // the duration match for confidence.
+    let best = await this.searchAndPick(title, artist, durationSec, controller, { title, artist });
+    if (best === 'aborted') return;
+    if (best == null && title.length > 0 && artist.length > 0) {
+      console.log('[auto-lyrics] no match with artist; retrying title-only');
+      best = await this.searchAndPick(title, '', durationSec, controller, { title, ignoreArtist: true });
+      if (best === 'aborted') return;
     }
-    console.log(
-      `[auto-lyrics] LRCLIB returned ${matches.length} result(s) for`,
-      { trackName: title, artistName: artist },
-      matches.map((m) => ({ trackName: m.trackName, artistName: m.artistName, duration: m.duration })),
-    );
-    // A newer song (or a manual load) superseded this fetch.
-    if (controller.signal.aborted || this.autoFetchController !== controller) {
-      console.log('[auto-lyrics] superseded by a newer song / load, discarding results');
-      return;
-    }
-    if (lyricsStore.hasAnyLyrics) {
-      console.log('[auto-lyrics] lyrics loaded while fetching, discarding results');
-      return;
-    }
-    const best = pickConfidentMatch(matches, durationSec, {
-      title,
-      artist,
-      onTrace: (t) =>
-        console.log(
-          `[auto-lyrics] ${t.accepted ? 'ACCEPT' : 'reject'} "${t.trackName} - ${t.artistName}" (${t.reason})`,
-          {
-            duration: t.duration,
-            durationDelta: t.durationDelta,
-            tolerance: t.tolerance,
-            nameSim: t.nameSim,
-            nameThreshold: t.nameThreshold,
-          },
-        ),
-    });
     if (best?.syncedLyrics == null) {
       console.log('[auto-lyrics] no confident match, nothing auto-loaded');
-      return; // no confident match
+      return;
     }
     const lines = parseLrc(best.syncedLyrics);
     if (lines.length === 0) {
@@ -177,6 +155,58 @@ export class LyricsPresenter {
       { trackName: best.trackName, artistName: best.artistName },
       { wordLevel: playbackEngine.audioTracks.size > 0 },
     );
+  }
+
+  /** One LRCLIB search + confident-pick attempt for {@link runAutoFetch}.
+   *  Returns the pick, undefined for no confident match, or 'aborted' when the
+   *  fetch failed or a newer song / manual load superseded it (the caller then
+   *  stops rather than retrying). */
+  private async searchAndPick(
+    searchTitle: string,
+    searchArtist: string,
+    durationSec: number,
+    controller: AbortController,
+    matchOpts: { title: string; artist?: string; ignoreArtist?: boolean },
+  ): Promise<LrclibMatch | undefined | 'aborted'> {
+    let matches: LrclibMatch[];
+    try {
+      matches = await searchLrclib({
+        trackName: searchTitle,
+        artistName: searchArtist,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      console.log('[auto-lyrics] search failed', err);
+      return 'aborted'; // network error / abort: stay silent, the user can still search manually
+    }
+    console.log(
+      `[auto-lyrics] LRCLIB returned ${matches.length} result(s) for`,
+      { trackName: searchTitle, artistName: searchArtist },
+      matches.map((m) => ({ trackName: m.trackName, artistName: m.artistName, duration: m.duration })),
+    );
+    // A newer song (or a manual load) superseded this fetch.
+    if (controller.signal.aborted || this.autoFetchController !== controller) {
+      console.log('[auto-lyrics] superseded by a newer song / load, discarding results');
+      return 'aborted';
+    }
+    if (lyricsStore.hasAnyLyrics) {
+      console.log('[auto-lyrics] lyrics loaded while fetching, discarding results');
+      return 'aborted';
+    }
+    return pickConfidentMatch(matches, durationSec, {
+      ...matchOpts,
+      onTrace: (t) =>
+        console.log(
+          `[auto-lyrics] ${t.accepted ? 'ACCEPT' : 'reject'} "${t.trackName} - ${t.artistName}" (${t.reason})`,
+          {
+            duration: t.duration,
+            durationDelta: t.durationDelta,
+            tolerance: t.tolerance,
+            nameSim: t.nameSim,
+            nameThreshold: t.nameThreshold,
+          },
+        ),
+    });
   }
 
   // --- bundle load ---

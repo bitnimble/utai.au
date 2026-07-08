@@ -43,7 +43,10 @@ export type MatchTrace = {
  * share a length. Among the survivors the closest duration wins (ties break
  * toward the stronger name match). undefined when the song duration is unknown or
  * nothing qualifies. `opts.onTrace` (if given) fires once per result with its
- * scoring + accept/reject reason, for debug logging.
+ * scoring + accept/reject reason, for debug logging. With `opts.ignoreArtist`
+ * the name gate compares title vs trackName only (dropping both artist strings),
+ * for the title-only retry where the source's "artist" is unreliable (e.g. a
+ * YouTube uploader); the duration gate then carries the confidence.
  */
 export function pickConfidentMatch(
   matches: readonly LrclibMatch[],
@@ -53,13 +56,15 @@ export function pickConfidentMatch(
     artist?: string;
     toleranceSec?: number;
     nameThreshold?: number;
+    ignoreArtist?: boolean;
     onTrace?: (t: MatchTrace) => void;
   } = {},
 ): LrclibMatch | undefined {
   if (!(durationSec > 0)) return undefined;
   const tolerance = opts.toleranceSec ?? DEFAULT_TOLERANCE_SEC;
   const nameThreshold = opts.nameThreshold ?? DEFAULT_NAME_THRESHOLD;
-  const query = `${opts.title ?? ''} ${opts.artist ?? ''}`;
+  const ignoreArtist = opts.ignoreArtist ?? false;
+  const query = ignoreArtist ? (opts.title ?? '') : `${opts.title ?? ''} ${opts.artist ?? ''}`;
   let best: { match: LrclibMatch; delta: number; nameSim: number } | undefined;
   for (const m of matches) {
     if (m.duration == null || m.syncedLyrics == null || m.syncedLyrics.length === 0) {
@@ -91,7 +96,8 @@ export function pickConfidentMatch(
       });
       continue;
     }
-    const nameSim = wordLevelSimilarity(query, `${m.trackName} ${m.artistName}`);
+    const target = ignoreArtist ? m.trackName : `${m.trackName} ${m.artistName}`;
+    const nameSim = wordLevelSimilarity(query, target);
     const accepted = nameSim >= nameThreshold;
     opts.onTrace?.({
       trackName: m.trackName,

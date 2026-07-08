@@ -63,6 +63,17 @@ describe('pickConfidentMatch', () => {
     const m = pickConfidentMatch([match({ duration: 261 })], 260, { title: 'Karma Police', artist: '' });
     expect(m).toBeDefined();
   });
+
+  test('ignoreArtist matches on title alone when the source artist is wrong', () => {
+    const song = match({ trackName: 'Victorious', artistName: 'Panic! at the Disco', duration: 220 });
+    // A mislabelled source artist (e.g. a YouTube uploader) drags the name score
+    // below threshold when included...
+    expect(
+      pickConfidentMatch([song], 220, { title: 'Victorious', artist: 'Some Uploader Topic' }),
+    ).toBeUndefined();
+    // ...but the title-only retry accepts it (the duration gate still applies).
+    expect(pickConfidentMatch([song], 220, { title: 'Victorious', ignoreArtist: true })).toBeDefined();
+  });
 });
 
 describe('wordLevelSimilarity', () => {
