@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
-import { FolderOpen, Music, Pause, Play, Save, Search, Settings, Square } from 'lucide-react';
+import { ChevronDown, Pause, Play, Settings, Square } from 'lucide-react';
 import React from 'react';
 import { nativeAudioEngine, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
@@ -22,6 +22,8 @@ import { ViewportStore } from 'src/editing/viewport/viewport_store';
 import { ViewportStoreContext } from 'src/editing/viewport/viewport_contexts';
 import { ViewConfig } from 'src/editing/viewport/view_config';
 import { ToastContainer } from 'src/ui/toasts/toast_container';
+import { ActionMenuItem, DropdownButton } from 'src/ui/dropdown/dropdown';
+import { Slider } from 'src/ui/slider/slider';
 import { MusicSearchModal } from 'src/music_source/music_search_modal';
 import {
   MusicSourcePresenterContext,
@@ -264,76 +266,113 @@ const Toolbar = observer(function Toolbar() {
 
   return (
     <header className={styles.toolbar}>
-      <button type="button" className={styles.toolButton} onClick={() => fileRef.current?.click()} data-testid="load-audio">
-        Load audio
-      </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="audio/*"
-        className={styles.hiddenInput}
-        onChange={onPickAudio}
-      />
-      <button
-        type="button"
+      <DropdownButton
+        label={<MenuLabel text="File" />}
         className={styles.toolButton}
-        onClick={() => musicPresenter.openSearch()}
-        data-testid="music-search-open"
+        title="Open, save, and edit song details"
+        testId="file-menu"
       >
-        <Music size={14} aria-hidden="true" /> Add from streaming
-      </button>
-      <button
-        type="button"
+        {(close) => (
+          <>
+            <ActionMenuItem
+              label="Open song"
+              onClick={() => {
+                openSongRef.current?.click();
+                close();
+              }}
+              disabled={songIo.busy}
+              title="Open a saved song bundle (.zip)"
+              testId="open-song"
+            />
+            <ActionMenuItem
+              label={saveLabel}
+              onClick={() => {
+                void songIo.saveSong();
+                close();
+              }}
+              disabled={!songIo.canSave || songIo.busy}
+              title="Save the stems, lyrics, and details as a song bundle (.zip)"
+              testId="save-song"
+            />
+            <ActionMenuItem
+              label="Details"
+              onClick={() => {
+                songIo.openDetails();
+                close();
+              }}
+              title="Edit song title, artist, and links"
+              testId="song-details-open"
+            />
+          </>
+        )}
+      </DropdownButton>
+      <DropdownButton
+        label={<MenuLabel text="Audio" />}
         className={styles.toolButton}
-        onClick={() => lyricsPresenter.setLyricsSearchOpen(true)}
-        data-testid="import-lyrics"
+        title="Add audio"
+        testId="audio-menu"
       >
-        <Search size={14} aria-hidden="true" /> Import lyrics
-      </button>
-      <button
-        type="button"
+        {(close) => (
+          <>
+            <ActionMenuItem
+              label="Load audio"
+              onClick={() => {
+                fileRef.current?.click();
+                close();
+              }}
+              title="Load a local audio file (auto-separates into stems)"
+              testId="load-audio"
+            />
+            <ActionMenuItem
+              label="Add from streaming"
+              onClick={() => {
+                musicPresenter.openSearch();
+                close();
+              }}
+              testId="music-search-open"
+            />
+          </>
+        )}
+      </DropdownButton>
+      <DropdownButton
+        label={<MenuLabel text="Lyrics" />}
         className={styles.toolButton}
-        onClick={() => lyricsPresenter.setLyricsTextOpen(true)}
-        data-testid="paste-lyrics"
+        title="Import and align lyrics"
+        testId="lyrics-menu"
       >
-        Paste lyrics
-      </button>
-      <button
-        type="button"
-        className={styles.toolButton}
-        disabled={!canAlign}
-        onClick={() => firstLyricsId && lyricsPresenter.alignTrackToVocals(firstLyricsId)}
-        title={canAlign ? 'Align lyrics to the vocals' : 'Load an audio track and lyrics first'}
-        data-testid="align-vocals"
-      >
-        Align to vocals
-      </button>
-      <span className={styles.toolbarSpacer} />
-      {songIo.phase === 'separating' && (
-        <span className={styles.toolStatus} data-testid="separating-status">
-          Separating stems…
-        </span>
-      )}
-      <button
-        type="button"
-        className={styles.toolButton}
-        disabled={!songIo.canSave || songIo.busy}
-        onClick={() => void songIo.saveSong()}
-        title="Save the stems, lyrics, and details as a song bundle (.zip)"
-        data-testid="save-song"
-      >
-        <Save size={14} aria-hidden="true" /> {saveLabel}
-      </button>
-      <button
-        type="button"
-        className={styles.toolButton}
-        disabled={songIo.busy}
-        onClick={() => openSongRef.current?.click()}
-        title="Open a saved song bundle (.zip)"
-        data-testid="open-song"
-      >
-        <FolderOpen size={14} aria-hidden="true" /> Open song
-      </button>
+        {(close) => (
+          <>
+            <ActionMenuItem
+              label="Import lyrics"
+              onClick={() => {
+                lyricsPresenter.setLyricsSearchOpen(true);
+                close();
+              }}
+              title="Search LRCLIB for synced lyrics"
+              testId="import-lyrics"
+            />
+            <ActionMenuItem
+              label="Paste lyrics"
+              onClick={() => {
+                lyricsPresenter.setLyricsTextOpen(true);
+                close();
+              }}
+              testId="paste-lyrics"
+            />
+            <ActionMenuItem
+              label="Align to vocals"
+              onClick={() => {
+                if (firstLyricsId) lyricsPresenter.alignTrackToVocals(firstLyricsId);
+                close();
+              }}
+              disabled={!canAlign}
+              title={canAlign ? 'Align lyrics to the vocals' : 'Load an audio track and lyrics first'}
+              testId="align-vocals"
+            />
+          </>
+        )}
+      </DropdownButton>
+      <input ref={fileRef} type="file" accept="audio/*" className={styles.hiddenInput} onChange={onPickAudio} />
       <input
         ref={openSongRef}
         type="file"
@@ -341,15 +380,12 @@ const Toolbar = observer(function Toolbar() {
         className={styles.hiddenInput}
         onChange={onPickSong}
       />
-      <button
-        type="button"
-        className={styles.toolButton}
-        onClick={() => songIo.openDetails()}
-        title="Edit song title, artist, and links"
-        data-testid="song-details-open"
-      >
-        Details
-      </button>
+      <span className={styles.toolbarSpacer} />
+      {songIo.phase === 'separating' && (
+        <span className={styles.toolStatus} data-testid="separating-status">
+          Separating stems…
+        </span>
+      )}
       <button
         type="button"
         className={styles.toolButton}
@@ -362,19 +398,27 @@ const Toolbar = observer(function Toolbar() {
       </button>
       <label className={styles.zoomControl}>
         Zoom
-        <input
-          type="range"
+        <Slider
           min={8}
           max={600}
           step={1}
           value={viewport.pxPerBeat}
-          onChange={(e) => presenter.setZoom(Number(e.target.value))}
-          aria-label="Horizontal zoom (pixels per second)"
+          onChange={(v) => presenter.setZoom(v)}
+          ariaLabel="Horizontal zoom (pixels per second)"
         />
       </label>
     </header>
   );
 });
+
+/** A dropdown-trigger label: text + a trailing caret, so the header menus read
+ *  as openable menus. */
+const MenuLabel = ({ text }: { text: string }): React.ReactElement => (
+  <>
+    {text}
+    <ChevronDown size={13} aria-hidden="true" className={styles.menuCaret} />
+  </>
+);
 
 const ScoreArea = observer(function ScoreArea() {
   const presenter = React.useContext(KaraokePresenterContext)!;

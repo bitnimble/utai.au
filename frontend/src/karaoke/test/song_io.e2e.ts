@@ -82,7 +82,9 @@ test('song io: opening a bundle restores stems, lyrics, and metadata', async ({ 
 
   // The backing stem decoded, so the transport is playable and Save is on.
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await page.getByTestId('file-menu').click();
   await expect(page.getByTestId('save-song')).toBeEnabled();
+  await page.keyboard.press('Escape');
 
   // Per-track mixer: the mute button toggles the track's muted state.
   expect((await firstTrack(page))?.muted).toBe(false);
@@ -93,6 +95,7 @@ test('song io: opening a bundle restores stems, lyrics, and metadata', async ({ 
 test('song io: song-details form edits the song metadata', async ({ page }) => {
   await page.goto('/');
 
+  await page.getByTestId('file-menu').click();
   await page.getByTestId('song-details-open').click();
   await page.getByTestId('song-details-title').fill('Hand Typed');
   await page.getByTestId('song-details-done').click();

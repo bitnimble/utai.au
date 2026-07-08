@@ -42,6 +42,11 @@
     cursor: not-allowed;
 }
 
+.menuCaret {
+    margin-left: -2px;
+    color: var(--color-text-muted-alt);
+}
+
 .hiddenInput {
     display: none;
 }

@@ -106,6 +106,7 @@ export const DropdownButton = observer(
     className,
     panelClassName,
     onOpen,
+    testId,
     children,
   }: {
     label: React.ReactNode;
@@ -116,6 +117,8 @@ export const DropdownButton = observer(
      *  Used by callers that need to refresh data on open without forcing
      *  a parent re-render. */
     onOpen?: () => void;
+    /** Applied to the trigger button, so a test can open the panel. */
+    testId?: string;
     children: (close: () => void) => React.ReactNode;
   }) => {
     const [open, setOpen] = React.useState(false);
@@ -200,6 +203,7 @@ export const DropdownButton = observer(
           type="button"
           className={className}
           title={title}
+          data-testid={testId}
           aria-haspopup="menu"
           aria-expanded={open}
           // Stop propagation so a dropdown trigger placed inside a
