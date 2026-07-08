@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager, Runtime};
 
 /// True iff `dir` has a `portable` marker FILE directly in it. MUST be
@@ -142,6 +143,20 @@ fn rotate_log_file(current: &Path) {
     if let Err(e) = std::fs::rename(current, &prev) {
         eprintln!("log rotation failed ({} -> {}): {e}", current.display(), prev.display());
     }
+}
+
+/// True iff this is a dev cross-build (see scripts/mac-build.ts): a `devbuild`
+/// marker file staged into the app's bundled resources. Such a build ships the
+/// aligner source + a target `uv` but no vendored wheels/models, so the runtime
+/// `uv sync`s + provisions on first launch (see capability::dev_autoprovision).
+/// A bundled resource, not a next-to-exe marker like `portable`: resource
+/// resolution already handles the per-platform bundle layout (.app Resources,
+/// Linux lib dir, …).
+pub fn is_dev_build<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.path()
+        .resolve("devbuild", BaseDirectory::Resource)
+        .map(|p| p.is_file())
+        .unwrap_or(false)
 }
 
 /// Root for all writable state: the portable data dir, else the OS user

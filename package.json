@@ -22,6 +22,7 @@
     "e2e:tauri": "bun run e2e:tauri:build && wdio run wdio.conf.ts",
     "tauri": "bun run scripts/tauri-build.ts",
     "win:build": "bun --env-file=.env run scripts/win-build.ts",
+    "mac:build": "bun --env-file=.env run scripts/mac-build.ts",
     "android:init": "bun run scripts/tauri-build.ts android init",
     "android:dev": "bun run scripts/tauri-build.ts android dev --config '{\"bundle\":{\"resources\":[]}}'",
     "android:build": "bun run scripts/tauri-build.ts android build --target aarch64 --target armv7 --apk --config '{\"bundle\":{\"resources\":[]}}'",

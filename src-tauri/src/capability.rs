@@ -270,7 +270,7 @@ async fn sync_venv(
     app: &AppHandle,
     id: &str,
     groups: &[String],
-    on_event: &Channel<InstallEvent>,
+    on_event: Option<&Channel<InstallEvent>>,
 ) -> Result<(), String> {
     let venv = app_venv(app)?;
     let dir = resolve_aligner_dir(app);
@@ -314,22 +314,26 @@ async fn sync_venv(
     let stderr = child.stderr.take().ok_or("uv has no stderr")?;
     // uv reports progress on stderr; forward both streams as lines.
     let forward = |reader: tokio::process::ChildStdout| {
-        let sink = on_event.clone();
+        let sink = on_event.cloned();
         tokio::spawn(async move {
             let mut lines = BufReader::new(reader).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 log::info!("[sync] {line}");
-                let _ = sink.send(InstallEvent::Line { line });
+                if let Some(s) = &sink {
+                    let _ = s.send(InstallEvent::Line { line });
+                }
             }
         })
     };
     let out_task = forward(stdout);
-    let err_sink = on_event.clone();
+    let err_sink = on_event.cloned();
     let err_task = tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             log::info!("[sync] {line}");
-            let _ = err_sink.send(InstallEvent::Line { line });
+            if let Some(s) = &err_sink {
+                let _ = s.send(InstallEvent::Line { line });
+            }
         }
     });
 
@@ -356,13 +360,13 @@ pub async fn install_capability(
     groups: Vec<String>,
     on_event: Channel<InstallEvent>,
 ) -> Result<(), String> {
-    if let Err(message) = sync_venv(&app, &id, &groups, &on_event).await {
+    if let Err(message) = sync_venv(&app, &id, &groups, Some(&on_event)).await {
         let _ = on_event.send(InstallEvent::Error { message: message.clone() });
         return Err(message);
     }
     let venv = app_venv(&app)?;
     let dir = resolve_aligner_dir(&app);
-    if let Err(message) = provision_models(&venv, &dir, &groups, &on_event).await {
+    if let Err(message) = provision_models(&venv, &dir, &groups, Some(&on_event)).await {
         let _ = on_event.send(InstallEvent::Error { message: message.clone() });
         return Err(message);
     }
@@ -391,7 +395,7 @@ pub async fn uninstall_capability(
         let _ = on_event.send(InstallEvent::Error { message: message.clone() });
         return Err(message);
     }
-    if let Err(message) = sync_venv(&app, &id, &keep_groups, &on_event).await {
+    if let Err(message) = sync_venv(&app, &id, &keep_groups, Some(&on_event)).await {
         let _ = on_event.send(InstallEvent::Error { message: message.clone() });
         return Err(message);
     }
@@ -408,7 +412,7 @@ async fn provision_models(
     venv: &Path,
     dir: &Path,
     groups: &[String],
-    on_event: &Channel<InstallEvent>,
+    on_event: Option<&Channel<InstallEvent>>,
 ) -> Result<(), String> {
     let python = venv_python(venv);
     if !python.exists() {
@@ -427,26 +431,32 @@ async fn provision_models(
         .no_console()
         .spawn()
         .map_err(|e| format!("failed to start model download: {e}"))?;
-    let _ = on_event.send(InstallEvent::Line { line: "Downloading models…".to_string() });
+    if let Some(s) = on_event {
+        let _ = s.send(InstallEvent::Line { line: "Downloading models…".to_string() });
+    }
     let out = child.stdout.take();
     let err = child.stderr.take();
-    let out_sink = on_event.clone();
+    let out_sink = on_event.cloned();
     let out_task = tokio::spawn(async move {
         if let Some(r) = out {
             let mut lines = BufReader::new(r).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 log::info!("[provision] {line}");
-                let _ = out_sink.send(InstallEvent::Line { line });
+                if let Some(s) = &out_sink {
+                    let _ = s.send(InstallEvent::Line { line });
+                }
             }
         }
     });
-    let err_sink = on_event.clone();
+    let err_sink = on_event.cloned();
     let err_task = tokio::spawn(async move {
         if let Some(r) = err {
             let mut lines = BufReader::new(r).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 log::info!("[provision] {line}");
-                let _ = err_sink.send(InstallEvent::Line { line });
+                if let Some(s) = &err_sink {
+                    let _ = s.send(InstallEvent::Line { line });
+                }
             }
         }
     });
@@ -519,6 +529,65 @@ async fn prune_models(
     } else {
         Err(format!("model prune failed ({status})"))
     }
+}
+
+// uv groups a dev build syncs on first launch: `lyrics-ja` pulls the full
+// alignment stack (separation is transitive) plus JP romanization; `music` adds
+// the Spotify source. See scripts/mac-build.ts.
+const DEV_SYNC_GROUPS: &[&str] = &["lyrics-ja", "music"];
+// provision capability whose model assets to pre-fetch. `lyrics` composes
+// `separation`, so this downloads both the separator + aligner weights.
+const DEV_PROVISION_CAPS: &[&str] = &["lyrics"];
+
+/// First-launch capability install for a dev cross-build (`paths::is_dev_build`).
+/// A dev bundle ships the aligner source + a target `uv` but NO vendored
+/// wheels/models (the offline install path a normal bundle has), so it must
+/// `uv sync` the deps from git and download the model assets here, once. A
+/// sentinel file under the data root records success so later launches skip it.
+/// Runs in the background off `setup`; failures are logged, never fatal -- the
+/// app still runs (audio/UI), only alignment waits for a successful retry (delete
+/// the sentinel, relaunch). Needs git + a C toolchain on the machine (Xcode CLT)
+/// to build the git deps, since the wheels aren't vendored.
+pub async fn dev_autoprovision(app: AppHandle) {
+    let sentinel = match crate::paths::data_root(&app) {
+        Ok(root) => root.join("devbuild-provisioned"),
+        Err(e) => {
+            log::error!("[devbuild] cannot resolve data root: {e}");
+            return;
+        }
+    };
+    if sentinel.is_file() {
+        log::info!("[devbuild] already provisioned ({}), skipping", sentinel.display());
+        return;
+    }
+    log::info!(
+        "[devbuild] first launch: uv sync {DEV_SYNC_GROUPS:?} + provision {DEV_PROVISION_CAPS:?}"
+    );
+    let groups: Vec<String> = DEV_SYNC_GROUPS.iter().map(|s| s.to_string()).collect();
+    if let Err(e) = sync_venv(&app, "devbuild", &groups, None).await {
+        log::error!("[devbuild] uv sync failed: {e}");
+        return;
+    }
+    let venv = match app_venv(&app) {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("[devbuild] {e}");
+            return;
+        }
+    };
+    let dir = resolve_aligner_dir(&app);
+    let caps: Vec<String> = DEV_PROVISION_CAPS.iter().map(|s| s.to_string()).collect();
+    if let Err(e) = provision_models(&venv, &dir, &caps, None).await {
+        log::error!("[devbuild] model provisioning failed: {e}");
+        return;
+    }
+    if let Err(e) = tokio::fs::write(&sentinel, "").await {
+        log::warn!(
+            "[devbuild] provisioned OK but couldn't write sentinel {}: {e}",
+            sentinel.display()
+        );
+    }
+    log::info!("[devbuild] provisioning complete");
 }
 
 #[cfg(test)]

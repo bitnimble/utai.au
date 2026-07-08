@@ -98,6 +98,11 @@ pub fn run() {
             let _ = std::fs::create_dir_all(&outputs);
             let _ = app.fs_scope().allow_directory(&outputs, true);
             let _ = app.asset_protocol_scope().allow_directory(&outputs, true);
+            // Dev cross-build: no vendored wheels/models ship, so `uv sync` +
+            // provision the aligner on first launch (once, in the background).
+            if paths::is_dev_build(app.handle()) {
+                tauri::async_runtime::spawn(capability::dev_autoprovision(app.handle().clone()));
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

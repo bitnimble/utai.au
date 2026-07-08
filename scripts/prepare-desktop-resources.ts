@@ -28,6 +28,15 @@ const out = join(repo, 'src-tauri', 'resources');
 const pyOut = join(out, 'python');
 const binOut = join(out, 'bin');
 const wheelCache = join(out, 'wheel-cache'); // persists across builds; not bundled
+const devMarker = join(out, 'devbuild');
+
+// Dev cross-build (scripts/mac-build.ts): ship the aligner source + a target `uv`
+// but DON'T vendor the git deps as wheels -- the runtime `uv sync`s them from git
+// on first launch (needs git + a compiler on the test machine). `UTAI_RESOURCE_UV`
+// is the target-platform `uv` to bundle (host `uv` is still used for `uv lock`);
+// unset means bundle the host `uv` (a native desktop build).
+const DEV = process.env.UTAI_RESOURCE_DEV === '1';
+const bundledUvSrc = process.env.UTAI_RESOURCE_UV?.trim();
 
 const skipJunk = (src: string): boolean =>
   !src.includes('__pycache__') && !src.endsWith('.pyc') && !src.includes('.egg-info');
@@ -56,6 +65,7 @@ const venvPython = (venv: string): string =>
 
 // --- stage the Python source (sidecar + pipeline) ---------------------------
 await rm(pyOut, { recursive: true, force: true });
+await rm(devMarker, { force: true }); // never leave a stale marker on a non-dev build
 await mkdir(join(pyOut, 'aligner'), { recursive: true });
 await mkdir(binOut, { recursive: true });
 
@@ -67,6 +77,9 @@ await cp(join(repo, 'aligner/app'), join(pyOut, 'aligner/app'), {
 });
 
 // --- bundle uv (uv fetches its own managed Python when it syncs) ------------
+// Host uv drives the build (wheel vendoring + `uv lock`); the bundled copy is
+// the TARGET-platform uv (same on a native build; a downloaded macOS uv on a
+// cross-build), since a Linux uv won't run inside a macOS .app.
 const uv = findOnPath('uv');
 if (!uv) {
   // The shipped app can't function without uv: every capability install is a
@@ -79,25 +92,63 @@ if (!uv) {
   );
 }
 const uvDest = join(binOut, process.platform === 'win32' ? 'uv.exe' : 'uv');
-await copyFile(uv, uvDest);
+await copyFile(bundledUvSrc ?? uv, uvDest);
 // Homebrew's uv is mode 0o555 (no write bit); copyFile preserves that, and so
 // does tauri's resource copy into target/. A rebuild then can't overwrite the
 // stale read-only copy -> "Permission denied (os error 13)" in the build
 // script. Force 0o755 so the staged binary is writable+executable (matches the
 // runtime chmod in capability.rs::resolve_uv).
 await chmod(uvDest, 0o755);
-console.log(`[desktop-resources] bundled uv from ${uv}`);
+console.log(`[desktop-resources] bundled uv from ${bundledUvSrc ?? uv}`);
 
-// --- vendor the git/source deps as prebuilt wheels --------------------------
+// --- rewrite the bundled pyproject + re-lock --------------------------------
 const pyprojectPath = join(pyOut, 'aligner', 'pyproject.toml');
 // Normalize to LF: on Windows (autocrlf) the file checks out with CRLF, which
 // breaks the newline-spanning marker matches below ([tool.uv]\n).
 let pyproject = (await readFile(pyprojectPath, 'utf8')).replaceAll('\r\n', '\n');
 const gitSpecs = [...pyproject.matchAll(/"([^"]+ @ git\+[^"]+)"/g)].map((m) => m[1]);
 
-if (gitSpecs.length === 0) {
+// Each rewrite asserts its marker was present: a silent no-op (e.g. pyproject
+// reformatted) would otherwise ship a bundle that still pins >=3.11 or drags in
+// torch.
+const mustReplace = (text: string, find: string, repl: string, what: string): string => {
+  if (!text.includes(find)) {
+    throw new Error(`bundled pyproject rewrite failed: ${what} marker not found (reformatted?)`);
+  }
+  return text.replace(find, repl);
+};
+
+// Both modes: pin Python to the runtime venv's version (uv sync --python 3.11)
+// and null torch/torchaudio/torchcodec out of the resolved graph. The torch drop
+// is essential even for a dev build -- `ctc-forced-aligner` declares torch (and
+// torchcodec) so uv sync would pull multi-GB torch without it; the vendored path
+// (lyrics_onnx.py) uses only its compiled kernel + text_utils and decodes audio
+// via librosa, so torchcodec is dead weight too. (Build artifact only -- the dev
+// pyproject keeps torch for ONNX export + the offline parity checks.)
+pyproject = mustReplace(
+  pyproject,
+  'requires-python = ">=3.11"',
+  `requires-python = "==${PY}.*"`,
+  'requires-python',
+);
+pyproject = mustReplace(
+  pyproject,
+  `override-dependencies = ["torchvision; sys_platform == 'never'"]`,
+  `override-dependencies = ["torchvision; sys_platform == 'never'", "torch; sys_platform == 'never'", "torchaudio; sys_platform == 'never'", "torchcodec; sys_platform == 'never'"]`,
+  'torch-free override',
+);
+
+if (DEV) {
+  // Dev build: leave the git specs as git. The runtime `uv sync` builds them
+  // from git on the test machine (git + a compiler required there), so we skip
+  // the wheelhouse entirely -- a dev bundle can't cross-compile the C extensions
+  // for the target platform anyway.
+  console.log('[desktop-resources] dev build: git deps stay as git specs (runtime builds them)');
+} else if (gitSpecs.length === 0) {
   console.log('[desktop-resources] no git deps to vendor');
 } else {
+  // Vendor the git/source deps as prebuilt wheels + point pyproject at the
+  // wheelhouse, so the runtime install needs NO system git and NO C compiler.
   await mkdir(wheelCache, { recursive: true });
   const cached = (await readdir(wheelCache)).filter((f) => f.endsWith('.whl'));
   const wheelFor = (spec: string, pool: string[]): string | undefined => {
@@ -126,23 +177,6 @@ if (gitSpecs.length === 0) {
     await copyFile(join(wheelCache, w), join(wheelhouse, w));
   }
 
-  // Rewrite the bundled pyproject: pin Python to the wheel ABI, swap each git
-  // spec for the pinned wheel version, and add the wheelhouse as a find-links.
-  // Each rewrite asserts its marker was present: a silent no-op (e.g. pyproject
-  // reformatted) would otherwise ship a bundle that still pins >=3.11 or lacks
-  // find-links and falls back to git/compiler at install time.
-  const mustReplace = (text: string, find: string, repl: string, what: string): string => {
-    if (!text.includes(find)) {
-      throw new Error(`bundled pyproject rewrite failed: ${what} marker not found (reformatted?)`);
-    }
-    return text.replace(find, repl);
-  };
-  pyproject = mustReplace(
-    pyproject,
-    'requires-python = ">=3.11"',
-    `requires-python = "==${PY}.*"`,
-    'requires-python',
-  );
   for (const spec of gitSpecs) {
     const wheel = wheelFor(spec, wheels);
     if (!wheel) {
@@ -161,23 +195,17 @@ if (gitSpecs.length === 0) {
     '[tool.uv]\nfind-links = ["wheels"]\n',
     'find-links',
   );
-  // Torch-free shipped install: the desktop sidecar runs the provisioned fp16
-  // ONNX on onnxruntime (no torch). The only runtime dep that still declares
-  // torch is `ctc-forced-aligner`; the vendored path (lyrics_onnx.py) uses only
-  // its compiled kernel + text_utils, not torch. Null torch/torchaudio out of the
-  // resolved graph here (build artifact only -- the dev pyproject keeps torch for
-  // ONNX export + the UTAI_*_ONNX=0 fallbacks) so the re-lock below is torch-free.
-  pyproject = mustReplace(
-    pyproject,
-    `override-dependencies = ["torchvision; sys_platform == 'never'"]`,
-    `override-dependencies = ["torchvision; sys_platform == 'never'", "torch; sys_platform == 'never'", "torchaudio; sys_platform == 'never'", "torchcodec; sys_platform == 'never'"]`,
-    'torch-free override',
-  );
-  await writeFile(pyprojectPath, pyproject);
+}
 
-  // Re-lock so the runtime install pulls the git deps from the wheelhouse (no git).
-  run(uv, ['lock', '--directory', join(pyOut, 'aligner')]);
-  console.log('[desktop-resources] vendored git deps as wheels + re-locked');
+await writeFile(pyprojectPath, pyproject);
+// Re-lock so the runtime `uv sync` matches the rewritten pyproject (torch
+// dropped; wheelhouse pins in a native build, plain git specs in a dev build).
+run(uv, ['lock', '--directory', join(pyOut, 'aligner')]);
+console.log('[desktop-resources] rewrote pyproject + re-locked');
+
+if (DEV) {
+  await writeFile(devMarker, '');
+  console.log('[desktop-resources] wrote devbuild marker (runtime uv-syncs on first launch)');
 }
 
 console.log(`[desktop-resources] staged Python backend -> ${pyOut}`);
