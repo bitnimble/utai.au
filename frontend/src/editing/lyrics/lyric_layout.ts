@@ -237,7 +237,7 @@ function positionedSegments(
   word: LyricWord,
   wordStartBeat: number,
   range: PitchRange,
-  timeline: JotTimeline,
+  timeline: UtaiTimeline,
   songLeadIn: number,
   structuralBeats: readonly number[],
   offsetSec: number,
