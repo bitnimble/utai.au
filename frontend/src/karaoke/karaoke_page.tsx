@@ -53,6 +53,10 @@ import { ScoringControls } from 'src/scoring/scoring_hud';
 import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_settings_presenter';
 import { AutoscrollMode } from 'src/settings/app_settings_store';
 import { autoscrollTargetLeft } from 'src/editing/score/autoscroll';
+import { VideoStore } from 'src/video/video_store';
+import { VideoPresenter } from 'src/video/video_presenter';
+import { VideoPresenterContext, VideoStoreContext } from 'src/video/video_contexts';
+import { VideoArea } from 'src/video/video_area';
 import { KaraokePresenter } from './karaoke_presenter';
 import {
   KaraokePresenterContext,
@@ -80,6 +84,8 @@ type Session = {
   audioDevicePresenter: AudioDevicePresenter;
   scoring: ScoringStore;
   scoringPresenter: ScoringPresenter;
+  videoStore: VideoStore;
+  videoPresenter: VideoPresenter;
 };
 
 function buildSession(): Session {
@@ -117,6 +123,8 @@ function buildSession(): Session {
   const scoringPresenter = new ScoringPresenter(scoring, createLivePitchSource(), scoringClock, () =>
     referenceTargets(firstPitchedTrack(lyricsStore)),
   );
+  const videoStore = new VideoStore(song);
+  const videoPresenter = new VideoPresenter(videoStore);
   return {
     song,
     viewport,
@@ -131,6 +139,8 @@ function buildSession(): Session {
     audioDevicePresenter,
     scoring,
     scoringPresenter,
+    videoStore,
+    videoPresenter,
   };
 }
 
@@ -150,6 +160,8 @@ export const KaraokePage = observer(function KaraokePage() {
     audioDevicePresenter,
     scoring,
     scoringPresenter,
+    videoStore,
+    videoPresenter,
   } = session;
 
   // Open the native engine's telemetry stream on desktop (no-op on web).
@@ -181,6 +193,8 @@ export const KaraokePage = observer(function KaraokePage() {
       audioDevicePresenter,
       scoring,
       scoringPresenter,
+      videoStore,
+      videoPresenter,
       lyricsStore,
       playbackEngine,
     };
@@ -198,6 +212,8 @@ export const KaraokePage = observer(function KaraokePage() {
     audioDevicePresenter,
     scoring,
     scoringPresenter,
+    videoStore,
+    videoPresenter,
   ]);
 
   return (
@@ -214,13 +230,18 @@ export const KaraokePage = observer(function KaraokePage() {
           <ViewportStoreContext.Provider value={viewport}>
             <LyricsPresenterContext.Provider value={lyricsPresenter}>
               <LyricsAlignStoreContext.Provider value={lyricsAlign}>
+                <VideoStoreContext.Provider value={videoStore}>
+                <VideoPresenterContext.Provider value={videoPresenter}>
                 <div className={styles.page}>
                   <Toolbar />
+                  <VideoArea />
                   <ScoreArea />
                   <TransportBar />
                   <Modals />
                   <ToastContainer />
                 </div>
+                </VideoPresenterContext.Provider>
+                </VideoStoreContext.Provider>
               </LyricsAlignStoreContext.Provider>
             </LyricsPresenterContext.Provider>
           </ViewportStoreContext.Provider>
