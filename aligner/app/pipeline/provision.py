@@ -20,9 +20,11 @@ so a build can repoint them without code changes.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,6 +35,24 @@ from app.config import settings
 log = logging.getLogger(__name__)
 
 _HTTP_TIMEOUT = httpx.Timeout(30.0, read=None)  # read=None: large weights
+# Emit a download-progress event roughly every this many decoded bytes.
+_PROGRESS_TICK_BYTES = 4 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class ProvisionEvent:
+    """One progress tick for a single asset during provisioning. `checking` =
+    verifying the local copy against the remote ETag; `downloading` carries
+    `bytes_done`/`bytes_total`; `done` = freshly downloaded; `skipped` = already
+    up to date (or present but unverifiable, e.g. offline)."""
+
+    asset: str
+    phase: str  # "checking" | "downloading" | "done" | "skipped"
+    bytes_done: int | None = None
+    bytes_total: int | None = None
+
+
+ProgressFn = Callable[[ProvisionEvent], None]
 
 # ckpt -> paired architecture yaml (a bare state_dict can't load without it).
 _CKPT_YAML: dict[str, str] = {
@@ -108,54 +128,178 @@ def _capability_assets(capability: str) -> list[_Asset]:
     return []
 
 
-def _download(url: str, dest: Path) -> None:
-    """Stream `url` to `dest`, atomically. No-op if `dest` already exists.
-
-    HF `resolve/` URLs 302 to a CDN, so redirects are followed. Writes to a
-    `.part` sidecar and renames on success so an interrupted download is never
-    mistaken for a completed one on the next startup."""
-    if dest.exists() and dest.stat().st_size > 0:
-        log.info("provision: %s already present, skipping download", dest.name)
+def _emit(on_progress: ProgressFn | None, event: ProvisionEvent) -> None:
+    if on_progress is None:
         return
+    try:
+        on_progress(event)
+    except Exception:
+        log.debug("provision: progress callback raised", exc_info=True)
+
+
+def _norm_etag(raw: str) -> str:
+    """Strip the weak-validator prefix + surrounding quotes off an ETag header."""
+    v = raw.strip()
+    if v.startswith("W/"):
+        v = v[2:]
+    return v.strip('"')
+
+
+def _etag_path(dest: Path) -> Path:
+    return dest.with_name(f"{dest.name}.etag")
+
+
+def _read_etag(dest: Path) -> str | None:
+    try:
+        return _etag_path(dest).read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def _write_etag(dest: Path, etag: str) -> None:
+    try:
+        _etag_path(dest).write_text(etag, encoding="utf-8")
+    except OSError:
+        log.debug("provision: could not write etag for %s", dest.name, exc_info=True)
+
+
+def _pick_etag(resp: httpx.Response) -> str | None:
+    """HuggingFace's `X-Linked-Etag` (the LFS content hash, on the pre-redirect
+    `resolve/` response) if present, else the final response's `ETag`."""
+    for r in (*getattr(resp, "history", ()), resp):
+        raw = r.headers.get("x-linked-etag") or r.headers.get("etag")
+        if raw:
+            return _norm_etag(raw)
+    return None
+
+
+def _remote_meta(url: str) -> tuple[str, int | None] | None:
+    """`(etag, size)` for a remote asset via HEAD (following redirects), or None
+    if the remote can't be reached / doesn't exist (offline, 404)."""
+    try:
+        resp = httpx.head(url, follow_redirects=True, timeout=_HTTP_TIMEOUT)
+        resp.raise_for_status()
+    except Exception:
+        return None
+    etag = _pick_etag(resp)
+    if etag is None:
+        return None
+    size = resp.headers.get("content-length")
+    return etag, (int(size) if size is not None and size.isdigit() else None)
+
+
+def _download(
+    url: str,
+    dest: Path,
+    *,
+    update_check: bool = True,
+    on_progress: ProgressFn | None = None,
+) -> None:
+    """Stream `url` to `dest`, atomically, if it's absent or out of date.
+
+    When `update_check`, a present file is verified against the remote ETag
+    (stored in a `<name>.etag` sidecar; HF sets it to the LFS content hash) and
+    re-downloaded only on change; so a pushed model update lands on next launch.
+    An unreachable remote (offline, or a 404) leaves a present file untouched. A
+    present-but-untracked file whose size matches the remote adopts the etag
+    without re-downloading. HF `resolve/` URLs 302 to a CDN, so redirects are
+    followed; writes to a `.part` sidecar and renames on success so an
+    interrupted download is never mistaken for a completed one."""
+    name = dest.name
+    if dest.exists() and dest.stat().st_size > 0:
+        if not update_check:
+            _emit(on_progress, ProvisionEvent(name, "skipped"))
+            return
+        _emit(on_progress, ProvisionEvent(name, "checking"))
+        meta = _remote_meta(url)
+        if meta is None:
+            log.info("provision: %s present, remote unreachable to verify; keeping", name)
+            _emit(on_progress, ProvisionEvent(name, "skipped"))
+            return
+        remote_etag, remote_size = meta
+        local_etag = _read_etag(dest)
+        if local_etag is not None and local_etag == remote_etag:
+            _emit(on_progress, ProvisionEvent(name, "skipped"))
+            return
+        if local_etag is None and remote_size is not None and dest.stat().st_size == remote_size:
+            # Present but never tracked (pre-mounted volume, pre-etag download):
+            # adopt the remote etag by size match rather than re-fetch a good file.
+            _write_etag(dest, remote_etag)
+            _emit(on_progress, ProvisionEvent(name, "skipped"))
+            return
+        log.info("provision: %s changed upstream, re-downloading", name)
+
     dest.parent.mkdir(parents=True, exist_ok=True)
     # pid-unique .part so concurrent provisioners don't clobber one temp file.
-    tmp = dest.with_name(f"{dest.name}.{os.getpid()}.part")
-    log.info("provision: downloading %s -> %s", url, dest.name)
+    tmp = dest.with_name(f"{name}.{os.getpid()}.part")
+    log.info("provision: downloading %s -> %s", url, name)
     try:
         with httpx.stream("GET", url, follow_redirects=True, timeout=_HTTP_TIMEOUT) as resp:
             resp.raise_for_status()
+            declared = resp.headers.get("content-length")
+            total = int(declared) if declared is not None and declared.isdigit() else None
+            _emit(on_progress, ProvisionEvent(name, "downloading", 0, total))
+            done = 0
+            next_tick = _PROGRESS_TICK_BYTES
             with open(tmp, "wb") as fh:
                 for chunk in resp.iter_bytes(chunk_size=1 << 20):
                     fh.write(chunk)
+                    done += len(chunk)
+                    if done >= next_tick:
+                        _emit(on_progress, ProvisionEvent(name, "downloading", done, total))
+                        next_tick = done + _PROGRESS_TICK_BYTES
             # Catch a silently-truncated transfer (proxy/CDN cutting the stream at EOF
             # without a protocol error). MUST use num_bytes_downloaded (raw/encoded)
             # vs Content-Length, NOT a sum of the chunks: iter_bytes yields DECODED
             # bytes, so a manual count false-positives on every gzip-encoded body.
             # Skip when Content-Length is absent/non-integer (chunked responses).
-            declared = resp.headers.get("content-length")
-            if declared is not None and declared.isdigit():
-                expected = int(declared)
+            if total is not None:
                 got = resp.num_bytes_downloaded
-                if got != expected:
+                if got != total:
                     raise OSError(
-                        f"truncated download of {dest.name}: got {got} bytes, "
-                        f"expected {expected}"
+                        f"truncated download of {name}: got {got} bytes, expected {total}"
                     )
+            etag = _pick_etag(resp)
         tmp.replace(dest)
+        if etag is not None:
+            _write_etag(dest, etag)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
-    log.info("provision: fetched %s (%d bytes)", dest.name, dest.stat().st_size)
+    size = dest.stat().st_size
+    log.info("provision: fetched %s (%d bytes)", name, size)
+    _emit(on_progress, ProvisionEvent(name, "done", size, size))
 
 
-def provision(*capabilities: str) -> None:
+def planned_assets(*capabilities: str) -> list[str]:
+    """Deduped local filenames the given capabilities will provision, in a stable
+    order. Lets a caller (the startup status) seed its per-asset progress before
+    the download loop runs."""
+    seen: dict[str, None] = {}
+    for capability in capabilities:
+        for asset in _capability_assets(capability):
+            seen[asset.filename] = None
+    return list(seen)
+
+
+def provision(
+    *capabilities: str,
+    update_check: bool | None = None,
+    on_progress: ProgressFn | None = None,
+) -> None:
     """Download only the assets the given capabilities need (deduped by filename)
-    into `settings.models_dir`. Idempotent.
+    into `settings.models_dir`, re-fetching any that changed upstream. Idempotent.
+
+    `update_check` defaults to `settings.provision_update_check`; pass False to
+    skip the per-asset remote verification (presence-only). `on_progress` receives
+    a {@link ProvisionEvent} per asset transition.
 
     This is the capability-scoped entry point: NEVER fetch every model regardless
     of capability -- that defeats the dependency-group split (a separation-only
     install would pull the >1 GB lyrics models). Add a model to `_capability_assets`
     under the one capability that uses it."""
+    if update_check is None:
+        update_check = settings.provision_update_check
     models_dir = Path(settings.models_dir)
     models_dir.mkdir(parents=True, exist_ok=True)
     assets: dict[str, _Asset] = {}
@@ -163,7 +307,12 @@ def provision(*capabilities: str) -> None:
         for asset in _capability_assets(capability):
             assets[asset.filename] = asset
     for asset in assets.values():
-        _download(asset.url, models_dir / asset.filename)
+        _download(
+            asset.url,
+            models_dir / asset.filename,
+            update_check=update_check,
+            on_progress=on_progress,
+        )
     log.info("provision: %d assets ready in %s for %s", len(assets), models_dir, list(capabilities))
 
 
@@ -191,9 +340,11 @@ def deprovision(keep_capabilities: list[str]) -> int:
 
 
 def provision_custom_models() -> None:
-    """Provision the separation capability's assets (yaml + fp16 onnx). Called
-    eagerly by `separate.py` so the separation stage's model is present."""
-    provision("separation")
+    """Ensure the separation capability's assets (yaml + fp16 onnx) are present.
+    Called eagerly by `separate.py` on model load. Presence-only: the startup
+    provisioning pass owns update-checks, so a separator load never blocks on a
+    per-asset network round-trip."""
+    provision("separation", update_check=False)
 
 
 def provisioned_file(filename: str) -> Path | None:
@@ -232,21 +383,45 @@ def missing_shipped_onnx(name: str) -> RuntimeError:
     )
 
 
+def _json_line_emitter() -> ProgressFn:
+    """Progress callback that prints one JSON line per event, for a parent process
+    (the desktop Rust broker) to parse into structured progress."""
+
+    def emit(ev: ProvisionEvent) -> None:
+        print(
+            json.dumps(
+                {
+                    "asset": ev.asset,
+                    "phase": ev.phase,
+                    "bytesDone": ev.bytes_done,
+                    "bytesTotal": ev.bytes_total,
+                }
+            ),
+            flush=True,
+        )
+
+    return emit
+
+
 def main(argv: list[str]) -> int:
-    """`python -m app.pipeline.provision <capability>...` -- pre-fetch the assets a
-    freshly-installed capability needs, so they download at install time rather
-    than on first use. The desktop installer runs this after `uv sync` with the
-    capabilities it installed. Best-effort; lazy fallbacks still cover a failure.
+    """`python -m app.pipeline.provision [--progress-json] <capability>...` --
+    pre-fetch (and update-check) the assets the given capabilities need, so they
+    download at install/launch time rather than on first use. The desktop shell
+    runs this after `uv sync`. `--progress-json` streams one JSON progress event
+    per line for the parent to parse. Best-effort; lazy fallbacks still cover a
+    failure.
 
     `python -m app.pipeline.provision --prune <keep-capability>...` -- the
     uninstall counterpart: delete model files not needed by the capabilities that
     remain installed (the desktop uninstaller runs this before syncing the venv
     down)."""
     logging.basicConfig(level=logging.INFO)
-    if argv and argv[0] == "--prune":
-        deprovision([g for g in argv[1:] if g in _KNOWN_CAPABILITIES])
+    args = [a for a in argv if a != "--progress-json"]
+    on_progress = _json_line_emitter() if "--progress-json" in argv else None
+    if args and args[0] == "--prune":
+        deprovision([g for g in args[1:] if g in _KNOWN_CAPABILITIES])
         return 0
-    provision(*[g for g in argv if g in _KNOWN_CAPABILITIES])
+    provision(*[g for g in args if g in _KNOWN_CAPABILITIES], on_progress=on_progress)
     return 0
 
 

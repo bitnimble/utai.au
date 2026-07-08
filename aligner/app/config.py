@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,7 +39,6 @@ class Settings(BaseSettings):
     #     separation architecture yamls).
     #   - `lyrics_align_model_*`: the /lyrics CTC aligner HF ids (also the
     #     tokenizer source and the shipped `.onnx` filename stem).
-    # TODO(utai): confirm HF repo id once models uploaded
     onnx_repo: str = "https://huggingface.co/bitnimble/utai-onnx/resolve/main"
     lyrics_align_model_english: str = "facebook/wav2vec2-large-robust-ft-libri-960h"
     lyrics_align_model_default: str = "MahmoudAshraf/mms-300m-1130-forced-aligner"
@@ -53,6 +53,28 @@ class Settings(BaseSettings):
     #     low-latency, reserved for the live-mic path.
     pitch_model_offline: str = "rmvpe.onnx"
     pitch_model_live: str = "f0_swiftf0.onnx"
+
+    # --- Startup provisioning ---
+    # Capabilities to eagerly provision (download + update-check) at startup, so
+    # every feature works the moment the app finishes loading. A capability list
+    # (not a flat asset list) keeps provisioning capability-scoped; `lyrics` +
+    # `pitch` each compose `separation`, so the default pulls every model. Set
+    # empty (`STARTUP_CAPABILITIES=`) to opt a deployment out of eager provisioning.
+    startup_capabilities: list[str] = ["lyrics", "pitch"]
+    # Compare each present asset's stored ETag against the remote (HF sets it to the
+    # LFS content hash) and re-download on change, so a pushed model update is
+    # picked up on next launch. Off => presence-only (prod with baked, immutable
+    # models: no per-startup network round-trips).
+    provision_update_check: bool = True
+
+    @field_validator("startup_capabilities", mode="before")
+    @classmethod
+    def _split_capabilities(cls, v: object) -> object:
+        """Accept a comma-separated env string (`lyrics,pitch`) as well as a JSON
+        list, so docker-compose can set it without JSON quoting."""
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return v
 
     # --- Paths (Docker volumes mount these) ---
     models_dir: Path = Path("/models")
