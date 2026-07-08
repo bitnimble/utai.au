@@ -290,10 +290,12 @@ export function buildPitchLine(
   const wordFrac = word.pitchFrac ?? 0;
   const flat = !opts.pitch || word.pitchFrac === undefined;
   const total = segs.reduce((s, g) => s + Math.max(g.beatWidth, 1e-4), 0);
-  // pitchFrac spans the track's whole range over the pitch band, and the viewBox
-  // height (100) maps to that same band, so a frac delta maps 1:1 to *100. Flat
-  // mode pins every note to the centre line (y=50).
-  const yOf = (frac: number) => (flat ? 50 : _clamp(50 - (frac - wordFrac) * 100, 5, 95));
+  // Absolute pitch: pitchFrac (0 = bottom of the vocal range, 1 = top) maps
+  // straight onto the viewBox, whose 100 units cover the whole pitch band (the
+  // SVG is positioned band-tall over the track, not clipped to the word chip).
+  // So a note's line sits at the same height a word at that pitch would, and a
+  // big interval reads as a big vertical move. Flat mode pins to the centre.
+  const yOf = (frac: number) => (flat ? 50 : (1 - frac) * 100);
   const transitionX = 6; // viewBox units reserved on each side of a note for the curve
 
   let x = 0;

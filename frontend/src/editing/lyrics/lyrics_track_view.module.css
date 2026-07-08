@@ -392,17 +392,22 @@
     pointer-events: none;
 }
 
-/* SVG canvas for the pitch contour. Spans the slack width, `--lyric-pitch-band`
-   tall, centred on the text (translateY -50%). The path (see
-   `lyric_layout.pitchContourPath`) draws a continuous line at the median pitch,
-   stepping smoothly to melisma notes and going wavy over vibrato. */
+/* SVG canvas for the pitch contour. Spans the slack width and is
+   `--lyric-pitch-band` tall, but is re-centred on the TRACK's pitch band rather
+   than the word chip: the `+ (pitch-frac - 0.5) * band` term cancels the word's
+   own `.lyricWordPitched` lift, so the viewBox maps to absolute pitch and a
+   note's line can travel the full band to sit level with any other word. The
+   path (see `lyric_layout.buildPitchLine`) draws a continuous line stepping
+   smoothly to melisma notes and going wavy over vibrato. */
 .lyricPitchLine {
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
     height: calc(var(--lyric-pitch-band) * 1px);
-    transform: translateY(-50%);
+    transform: translateY(
+        calc(-50% + (var(--lyric-word-pitch-frac, 0.5) - 0.5) * var(--lyric-pitch-band) * 1px)
+    );
     overflow: visible;
 }
 
