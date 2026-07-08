@@ -157,7 +157,11 @@ export class LyricsPresenter {
       this.applyLrclibResult(
         lines,
         { trackName: best.trackName, artistName: best.artistName },
-        { wordLevel: playbackEngine.audioTracks.size > 0 },
+        // Align inline only once the vocal stem is ready (so alignment runs
+        // against vocals + carries its pitch). During an optimistic fetch the
+        // stem is still separating; the caller re-aligns via
+        // `alignLoadedLyrics` when separation lands.
+        { wordLevel: this.hasVocalsStem() },
       );
     } finally {
       // Only the current fetch clears the flag; a superseding fetch (which
@@ -283,6 +287,34 @@ export class LyricsPresenter {
   private computeLyricsSpreadSec(): number {
     const longestAudio = playbackEngine.durationSec;
     return longestAudio > 0 ? longestAudio : 60;
+  }
+
+  /** True once a vocal stem is loaded (the separated `vocals` track or a file
+   *  whose name reads like an isolated vocal). Gates whether auto-fetched lyrics
+   *  align inline or wait for {@link alignLoadedLyrics}. */
+  private hasVocalsStem(): boolean {
+    for (const t of playbackEngine.audioTracks.values()) {
+      if (t.role === 'vocals' || nameLooksLikeVocals(t.filename)) return true;
+    }
+    return false;
+  }
+
+  /** Word-level-align every loaded lyrics track that isn't already word-timed
+   *  (or aligning) against the best available audio track. Called once stem
+   *  separation lands so optimistically-fetched, line-only lyrics gain word
+   *  timings + the vocal pitch. */
+  alignLoadedLyrics(): void {
+    for (const id of lyricsStore.trackIds) {
+      const track = lyricsStore.get(id);
+      if (!track) continue;
+      const wordTimed = track.lines.some((l) => l.words && l.words.length > 0);
+      if (wordTimed || this.lyricsAlignControllers.has(id)) continue;
+      void this.runWordLevelAlignment(id, track.lines, {
+        source: track.source,
+        sourceLabel: track.sourceLabel,
+        label: track.sourceLabel,
+      });
+    }
   }
 
   /** Run (or re-run) word-level forced alignment on an already-loaded

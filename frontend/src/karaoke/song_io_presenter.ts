@@ -91,8 +91,12 @@ export class SongIoPresenter {
     // Beat analysis runs on the full mix, independent of separation; kick it off
     // concurrently (the backend serialises GPU work) so it isn't gated behind it.
     void this.runBeatAnalysis(file);
-    await this.separateInto(mixId, file);
+    // Optimistically fetch lyrics the moment we have the title/artist, so the
+    // line-level lyrics appear while separation runs. Word-level alignment (and
+    // the vocal pitch it carries) is applied afterwards, once the stems land.
     this.autoFetchLyrics(file);
+    await this.separateInto(mixId, file);
+    this.lyrics.alignLoadedLyrics();
   }
 
   /** Analyse the mix's beats/downbeats via Beat This! and publish them to the
