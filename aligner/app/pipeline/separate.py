@@ -191,6 +191,37 @@ class Separator:
         log.info("vocals: extracted in %.2fs (Mel-Band Roformer)", time.perf_counter() - t0)
         return vocals_stem
 
+    def run_stems(self, audio_path: Path, work_dir: Path) -> dict[str, Path]:
+        """Produce full-quality separated stems (vocals + accompaniment residual)
+        as lossless 44.1 kHz stereo FLACs for the client "save song" feature.
+
+        Unlike `run_vocals` (which keeps only the vocals stem for CTC alignment),
+        this returns BOTH stems at an amplitude-faithful scale, so
+        `vocals + accompaniment` reconstructs the input mix. Returns
+        `{"vocals": <path>, "accompaniment": <path>}`."""
+        self.load()
+        assert self._stems_all is not None
+
+        out_dir = work_dir / "stems"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        log.info("stems: separating full-quality stems from %s", audio_path.name)
+        t0 = time.perf_counter()
+        sources = self._stems_all.separate(
+            str(audio_path),
+            progress_callback=_log_progress("stems"),
+            include_accompaniment=True,
+        )
+        paths: dict[str, Path] = {}
+        for role in ("vocals", "accompaniment"):
+            if role not in sources:
+                raise RuntimeError(f"separator produced no {role} stem (got {sorted(sources)})")
+            stem_path = out_dir / f"{role}.flac"
+            _write_stem(stem_path, sources[role], subtype="PCM_24")
+            paths[role] = stem_path
+        log.info("stems: separated in %.2fs (Mel-Band Roformer)", time.perf_counter() - t0)
+        return paths
+
 
 def _resolve_device() -> str:
     """`settings.device` ("auto" by default) resolved to a concrete device."""
@@ -216,14 +247,15 @@ def _log_progress(stage: str) -> ProgressCallback:
     return _cb
 
 
-def _write_stem(path: Path, wave: np.ndarray) -> None:
-    """Write an in-memory stem (channels, samples) to `path` as 16-bit WAV.
+def _write_stem(path: Path, wave: np.ndarray, subtype: str = "PCM_16") -> None:
+    """Write an in-memory stem (channels, samples) to `path`, format inferred
+    from the extension (`.wav`, `.flac`).
 
     The runner returns (channels, samples) (audio-separator's pre-write shape);
-    soundfile wants (samples, channels). PCM_16 matches the prior on-disk
-    fidelity (these are FLAC-re-encoded downstream)."""
+    soundfile wants (samples, channels). The align path writes PCM_16 WAV
+    (re-encoded downstream); the user-facing stems write PCM_24 FLAC."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(str(path), np.ascontiguousarray(wave.T), SAMPLE_RATE, subtype="PCM_16")
+    sf.write(str(path), np.ascontiguousarray(wave.T), SAMPLE_RATE, subtype=subtype)
 
 
 def _maybe_compile_model(loaded: object) -> None:

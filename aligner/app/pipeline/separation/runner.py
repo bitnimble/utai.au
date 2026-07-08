@@ -64,15 +64,25 @@ class SeparationRunner:
         audio: str | Path | np.ndarray,
         *,
         progress_callback: ProgressCallback | None = None,
+        include_accompaniment: bool = False,
     ) -> dict[str, np.ndarray]:
         """Separate `audio` into `{stem_name: np.ndarray}` of shape
         (channels, samples), matching what audio-separator returns pre-write
-        (before its transpose for the soundfile write)."""
+        (before its transpose for the soundfile write).
+
+        With `include_accompaniment`, returns the amplitude-faithful `vocals` +
+        `accompaniment` residual pair (input-normalized scale, no per-stem
+        renorm) so `vocals + accompaniment == mix`; see `np_inference._accompaniment`."""
+        from .np_inference import _accompaniment
+
         mix = _prepare_mix(audio)
         mix = normalize(mix, max_peak=NORMALIZATION_THRESHOLD, min_peak=AMPLIFICATION_THRESHOLD)
 
         sources = self._demix_roformer(mix, progress_callback)
 
+        if include_accompaniment:
+            vocals = sources["vocals"]
+            return {"vocals": vocals, "accompaniment": _accompaniment(mix, vocals)}
         out: dict[str, np.ndarray] = {}
         for name, wave in sources.items():
             out[name] = normalize(

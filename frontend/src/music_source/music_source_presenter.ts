@@ -16,6 +16,7 @@ import {
   type TrackResult,
 } from 'src/net/music_source_client';
 import { toastStore } from 'src/ui/toasts/toasts';
+import { SongMeta } from 'src/karaoke/song_schema';
 import { MusicSourceStore } from './music_source_store';
 
 /**
@@ -28,13 +29,16 @@ import { MusicSourceStore } from './music_source_store';
  */
 export class MusicSourcePresenter {
   private readonly store: MusicSourceStore;
-  private readonly onAudioFetched: (file: File) => void | Promise<void>;
+  private readonly onAudioFetched: (file: File, meta?: SongMeta) => void | Promise<void>;
   private searchRequestId = 0;
   private searchController: AbortController | undefined;
   private fetchController: AbortController | undefined;
   private loaded = false;
 
-  constructor(store: MusicSourceStore, onAudioFetched: (file: File) => void | Promise<void>) {
+  constructor(
+    store: MusicSourceStore,
+    onAudioFetched: (file: File, meta?: SongMeta) => void | Promise<void>,
+  ) {
     this.store = store;
     this.onAudioFetched = onAudioFetched;
     makeAutoObservable<
@@ -204,7 +208,13 @@ export class MusicSourcePresenter {
       `Loaded ${track.title}${track.artists ? ` by ${track.artists}` : ''}`,
       { testId: 'music-fetch-loaded' },
     );
-    await this.onAudioFetched(file);
+    await this.onAudioFetched(file, {
+      title: track.title,
+      artist: track.artists || undefined,
+      album: track.album ?? undefined,
+      albumArtUrl: track.coverUrl ?? undefined,
+      sourceUrl: track.sourceUrl,
+    });
   }
 
   cancelFetch(): void {

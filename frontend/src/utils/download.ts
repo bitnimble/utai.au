@@ -11,7 +11,15 @@ export function downloadTextFile(
   text: string,
   mime = 'text/plain;charset=utf-8',
 ): void {
-  const url = URL.createObjectURL(new Blob([text], { type: mime }));
+  downloadBlob(filename, new Blob([text], { type: mime }));
+}
+
+/** Trigger a client-side download of an in-memory {@link Blob} (binary or
+ *  text). Same object-URL + synthetic-click dance as
+ *  {@link downloadTextFile}, for payloads already assembled as a Blob
+ *  (e.g. a zipped song bundle). */
+export function downloadBlob(filename: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;

@@ -113,6 +113,8 @@ pub fn run() {
             logs::open_data_folder,
             audio::audio_list_devices,
             audio::audio_load_track,
+            audio::audio_remove_track,
+            audio::audio_set_track_gain,
             audio::audio_play,
             audio::audio_pause,
             audio::audio_stop,

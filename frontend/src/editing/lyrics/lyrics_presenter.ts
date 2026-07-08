@@ -10,6 +10,7 @@ import { AudioTrackId } from 'src/editing/playback/audio_tracks';
 import { playbackEngine } from 'src/editing/playback/player';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
+import { SongMeta } from 'src/karaoke/song_schema';
 import { LyricsAlignStore } from './lyrics_align_store';
 
 /**
@@ -30,11 +31,18 @@ export class LyricsPresenter {
    */
   lyricsAlignControllers: Map<LyricsTrackId, AbortController> = new Map();
 
-  constructor(lyricsAlign: LyricsAlignStore) {
+  /** Fill empty song fields when a load carries metadata (e.g. an LRCLIB
+   *  pick's track + artist). Delegates to the karaoke presenter, the
+   *  {@link SongStore} writer, keeping the single-writer rule intact. */
+  private readonly onSongMeta?: (meta: SongMeta) => void;
+
+  constructor(lyricsAlign: LyricsAlignStore, onSongMeta?: (meta: SongMeta) => void) {
     this.lyricsAlign = lyricsAlign;
-    makeAutoObservable(this, {
+    this.onSongMeta = onSongMeta;
+    makeAutoObservable<this, 'onSongMeta'>(this, {
       lyricsAlign: false,
       lyricsAlignControllers: false,
+      onSongMeta: false,
     });
   }
 
@@ -68,6 +76,7 @@ export class LyricsPresenter {
     toastStore.showSuccess(`Loaded ${match.trackName} by ${match.artistName} from LRCLIB`, {
       testId: 'lyrics-search-loaded',
     });
+    this.onSongMeta?.({ title: match.trackName, artist: match.artistName });
     if (opts.wordLevel) {
       void this.runWordLevelAlignment(trackId, lines, {
         source: 'lrclib',
@@ -75,6 +84,24 @@ export class LyricsPresenter {
         label: `${match.trackName} - ${match.artistName}`,
       });
     }
+  }
+
+  // --- bundle load ---
+
+  /** Add a lyrics row restored from a saved-song bundle, preserving its
+   *  source label + time offset. Lines already carry word-level timings
+   *  (parsed from the bundle's enhanced LRC), so no re-alignment runs. */
+  loadLyricsTrack(input: {
+    lines: readonly LyricLine[];
+    source?: LyricsSource;
+    sourceLabel: string;
+    offsetSec: number;
+  }): void {
+    const id = lyricsStore.add(input.lines, {
+      source: input.source ?? 'file',
+      sourceLabel: input.sourceLabel,
+    });
+    if (input.offsetSec !== 0) lyricsStore.setOffsetSec(id, input.offsetSec);
   }
 
   // --- plain text ---

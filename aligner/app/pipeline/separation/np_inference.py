@@ -85,6 +85,15 @@ def bs_unpack(
 # ---- the separator --------------------------------------------------------
 
 
+def _accompaniment(mix: np.ndarray, vocals: np.ndarray) -> np.ndarray:
+    """The backing (non-vocal) stem as the residual of the mix minus vocals.
+
+    Both operands must be at the SAME amplitude scale (the input-normalized mix
+    and the raw, pre-per-stem-renormalize vocals) so `vocals + accompaniment`
+    reconstructs `mix` sample-for-sample. Pure arithmetic -- no model, no torch."""
+    return (mix - vocals).astype(np.float32)
+
+
 def _profiling() -> bool:
     """UTAI_COREML_PROFILE=1: bump ORT to VERBOSE so the CoreML EP logs which
     nodes it rejects (the on-device partition map) + a per-op compute plan, for
@@ -450,7 +459,13 @@ class NumpySeparator:
             log.exception("could not build the folded STFT path; using numpy")
         return None
 
-    def separate(self, audio, *, progress_callback: ProgressCallback | None = None) -> dict[str, np.ndarray]:
+    def separate(
+        self,
+        audio,
+        *,
+        progress_callback: ProgressCallback | None = None,
+        include_accompaniment: bool = False,
+    ) -> dict[str, np.ndarray]:
         # Peak-normalize in AND out (audio-separator's Separator default). The KJ reference
         # harness does neither; input-normalize is harmless (RMSNorm makes the model
         # scale-invariant), output-normalize forces each stem to peak 0.9 -- fine for the CTC
@@ -460,6 +475,12 @@ class NumpySeparator:
             _prepare_mix(audio), max_peak=NORMALIZATION_THRESHOLD, min_peak=AMPLIFICATION_THRESHOLD
         )
         sources = self._demix_roformer(mix, progress_callback)
+        if include_accompaniment:
+            # User-facing full-quality stems: keep both at the input-normalized scale
+            # WITHOUT the per-stem 0.9 renormalize, so `vocals + accompaniment == mix`
+            # sample-for-sample. The accompaniment is the residual, not a model output.
+            vocals = sources["vocals"]
+            return {"vocals": vocals, "accompaniment": _accompaniment(mix, vocals)}
         return {
             name: normalize(w, max_peak=NORMALIZATION_THRESHOLD, min_peak=AMPLIFICATION_THRESHOLD)
             for name, w in sources.items()

@@ -142,6 +142,24 @@ export class UtaiPlayer implements PlaybackEngine {
     waveformWorker.dropTrack(id);
   }
 
+  setTrackVolume(id: AudioTrackId, volume: number): void {
+    const track = this.audioTracks.get(id);
+    if (!track) return;
+    runInAction(() => {
+      track.volume = Math.max(0, Math.min(1, volume));
+    });
+    this.controller?.setTrackGain(id, track.outputGain);
+  }
+
+  setTrackMuted(id: AudioTrackId, muted: boolean): void {
+    const track = this.audioTracks.get(id);
+    if (!track) return;
+    runInAction(() => {
+      track.muted = muted;
+    });
+    this.controller?.setTrackGain(id, track.outputGain);
+  }
+
   /** Move the playhead (and playback position, if running) to `seconds`. */
   seek(seconds: number): void {
     const dur = this.durationSec;

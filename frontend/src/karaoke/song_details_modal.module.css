@@ -1,0 +1,20 @@
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.label {
+    composes: labelSm from '../typography.module.css';
+}
+
+.input {
+    composes: field from '../ui/form/form.module.css';
+    width: 100%;
+}

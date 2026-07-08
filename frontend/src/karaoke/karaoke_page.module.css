@@ -46,6 +46,12 @@
     flex: 1 1 auto;
 }
 
+.toolStatus {
+    composes: bodySm from '../typography.module.css';
+    padding: 0 8px;
+    opacity: 0.7;
+}
+
 .zoomControl {
     display: inline-flex;
     align-items: center;

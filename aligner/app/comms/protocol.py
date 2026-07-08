@@ -48,7 +48,7 @@ class Artifact(BaseModel):
     name: str | None = None
 
 
-Op = Literal["alignLyrics"]
+Op = Literal["alignLyrics", "separateStems"]
 
 
 # ---- client -> backend ----------------------------------------------------

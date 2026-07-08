@@ -45,13 +45,30 @@ pub fn audio_list_devices() -> DeviceList {
 }
 
 /// Decode + resample the file at `path` (a temp file the frontend wrote) and
-/// load it into the engine. Returns the track duration in seconds.
+/// load it into the engine under `id`. Returns the (longest) track duration in
+/// seconds.
 #[tauri::command]
-pub fn audio_load_track(path: String, state: State<'_, AudioState>) -> Result<f64, String> {
+pub fn audio_load_track(
+    id: String,
+    path: String,
+    state: State<'_, AudioState>,
+) -> Result<f64, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("read {path}: {e}"))?;
     let decoded = decode::decode_bytes(bytes)?;
-    state.0.load_track(decoded);
+    state.0.load_track(id, decoded);
     Ok(state.0.duration_secs())
+}
+
+/// Drop a track from the mix (e.g. the full mix once its stems replace it).
+#[tauri::command]
+pub fn audio_remove_track(id: String, state: State<'_, AudioState>) {
+    state.0.remove_track(&id);
+}
+
+/// Set one track's effective gain in [0, 1] (mute == 0).
+#[tauri::command]
+pub fn audio_set_track_gain(id: String, gain: f32, state: State<'_, AudioState>) {
+    state.0.set_track_gain(&id, gain);
 }
 
 #[tauri::command]

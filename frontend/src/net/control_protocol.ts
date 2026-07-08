@@ -31,7 +31,7 @@ export type Artifact = {
   name?: string;
 };
 
-export type Op = 'alignLyrics';
+export type Op = 'alignLyrics' | 'separateStems';
 
 // ---- client -> backend -----------------------------------------------------
 
@@ -107,4 +107,18 @@ export function buildAlignLyricsRequest(
   params: Record<string, unknown>,
 ): RequestMessage {
   return { v: PROTOCOL_VERSION, type: 'request', id, op: 'alignLyrics', args: { audio, params } };
+}
+
+/** Build the `separateStems` request frame. `audio` is the local mix
+ *  {@link PathRef}; the sidecar returns the full-quality vocals +
+ *  accompaniment stems as `role: 'stem'` {@link Artifact}s (named `vocals`
+ *  / `accompaniment`) written under the broker's outputs dir. */
+export function buildSeparateStemsRequest(id: string, audio: PathRef): RequestMessage {
+  return {
+    v: PROTOCOL_VERSION,
+    type: 'request',
+    id,
+    op: 'separateStems',
+    args: { audio, params: {} },
+  };
 }

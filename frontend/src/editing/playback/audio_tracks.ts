@@ -16,8 +16,10 @@ import { backendFetch } from 'src/net/backend_fetch';
 export type AudioTrackId = string;
 
 /** What the loader believes the audio is; steers lyrics-alignment's
- *  vocals pick (a `vocals` track skips the separator). */
-export type AudioTrackRole = 'full-mix' | 'vocals' | 'unknown';
+ *  vocals pick (a `vocals` track skips the separator). `backing` is the
+ *  separation residual (accompaniment), only present after a bundle load
+ *  or an explicit stem split. */
+export type AudioTrackRole = 'full-mix' | 'vocals' | 'backing' | 'unknown';
 
 /** Tiny pad past `ctx.currentTime` so a scheduled `start()` never lands in the
  *  past. */
@@ -37,6 +39,11 @@ export class AudioTrack {
   readonly role: AudioTrackRole;
   readonly color = WAVEFORM_PAINT_COLOR;
 
+  /** Per-track mixer state (written by the engine). `volume` in [0, 1];
+   *  `muted` forces silence without losing the volume setting. */
+  volume = 1;
+  muted = false;
+
   constructor(fields: {
     id: AudioTrackId;
     filename: string;
@@ -55,6 +62,11 @@ export class AudioTrack {
       buffer: false,
       sourceBlob: false,
     });
+  }
+
+  /** Linear gain the mixer should apply: 0 when muted, else `volume`. */
+  get outputGain(): number {
+    return this.muted ? 0 : this.volume;
   }
 }
 
@@ -122,6 +134,9 @@ export class AudioTrackPlaybackController {
 
   private scheduleOne(track: AudioTrack, audioStartTime: number, mediaSec: number): void {
     const slot = this.ensureSlot(track);
+    // Re-read the track's gain each schedule so a volume/mute change made
+    // while stopped is picked up on the next play/seek.
+    slot.gainNode.gain.value = track.outputGain;
     this.stopSource(slot);
     const offset = Math.max(0, mediaSec);
     if (offset >= slot.buffer.duration) return; // past the end; nothing to play
@@ -137,11 +152,18 @@ export class AudioTrackPlaybackController {
     const existing = this.active.get(track.id);
     if (existing) return existing;
     const gainNode = this.ctx.createGain();
-    gainNode.gain.value = 1;
+    gainNode.gain.value = track.outputGain;
     gainNode.connect(this.destination);
     const slot: ActiveAudioTrack = { id: track.id, gainNode, buffer: track.buffer, source: undefined };
     this.active.set(track.id, slot);
     return slot;
+  }
+
+  /** Live-update one track's gain node while playing/paused. No-op if the
+   *  track has no active slot (nothing scheduled yet). */
+  setTrackGain(id: AudioTrackId, gain: number): void {
+    const slot = this.active.get(id);
+    if (slot) slot.gainNode.gain.value = gain;
   }
 
   private stopSource(slot: ActiveAudioTrack): void {
