@@ -772,8 +772,17 @@ async def lyrics_stem(stem_id: str, name: str) -> FileResponse:
 
 async def _emit_stems_result(request_id: str, stem_id: str) -> AsyncIterator[bytes]:
     """Emit a cached /music/separate result as a single NDJSON `result`
-    envelope (no GPU ran, so no queued/running envelopes)."""
+    envelope (no GPU ran, so no queued/running envelopes).
+
+    Backfills a missing pitch contour: stems separated before the f0 model was
+    provisioned have no `pitch.json`, and a cache hit would otherwise return them
+    pitch-less forever. The extraction is CPU-only (off the GPU) and best-effort,
+    so a still-unprovisioned model just no-ops cheaply."""
     set_request_id(request_id)
+    if _read_stems_pitch(stem_id) is None:
+        await asyncio.to_thread(
+            _write_stems_pitch, stem_id, _stems_dir(stem_id) / "vocals.flac"
+        )
     yield _encode_envelope(_stems_result_envelope(stem_id))
 
 

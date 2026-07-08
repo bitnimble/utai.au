@@ -12,6 +12,7 @@ Two independent, model-free surfaces:
 from __future__ import annotations
 
 import asyncio
+import json
 
 import numpy as np
 import pytest
@@ -19,6 +20,12 @@ from fastapi import HTTPException
 
 import app.main as main
 from app.pipeline.separation.np_inference import _accompaniment
+
+_PITCH_JSON = '{"fps": 100.0, "midi": [], "vibRate": [], "vibExtent": []}'
+
+
+async def _collect(agen) -> bytes:
+    return b"".join([chunk async for chunk in agen])
 
 
 def test_accompaniment_reconstructs_the_mix() -> None:
@@ -68,6 +75,40 @@ def test_stem_route_404_when_file_absent(monkeypatch, tmp_path) -> None:
     with pytest.raises(HTTPException) as exc:
         asyncio.run(main.lyrics_stem(_VALID_ID, "vocals.flac"))
     assert exc.value.status_code == 404
+
+
+def test_cache_hit_backfills_missing_pitch(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(main.settings, "cache_dir", tmp_path)
+    stems_dir = tmp_path / "stems" / _VALID_ID
+    stems_dir.mkdir(parents=True)
+    (stems_dir / "vocals.flac").write_bytes(b"fake flac")
+
+    calls: list[str] = []
+
+    def fake_write(stem_id: str, vocals_path) -> None:
+        calls.append(str(vocals_path))
+        (main._stems_dir(stem_id) / "pitch.json").write_text(_PITCH_JSON)
+
+    monkeypatch.setattr(main, "_write_stems_pitch", fake_write)
+
+    env = json.loads(asyncio.run(_collect(main._emit_stems_result("req", _VALID_ID))))
+    assert calls == [str(stems_dir / "vocals.flac")]
+    assert env["data"]["pitch"]["fps"] == 100.0
+
+
+def test_cache_hit_skips_backfill_when_pitch_present(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(main.settings, "cache_dir", tmp_path)
+    stems_dir = tmp_path / "stems" / _VALID_ID
+    stems_dir.mkdir(parents=True)
+    (stems_dir / "pitch.json").write_text(_PITCH_JSON)
+
+    def fail(*_a, **_k) -> None:
+        raise AssertionError("must not re-extract when pitch.json already exists")
+
+    monkeypatch.setattr(main, "_write_stems_pitch", fail)
+
+    env = json.loads(asyncio.run(_collect(main._emit_stems_result("req", _VALID_ID))))
+    assert env["data"]["pitch"]["fps"] == 100.0
 
 
 def test_stem_route_serves_existing_file(monkeypatch, tmp_path) -> None:
