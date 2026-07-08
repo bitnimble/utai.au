@@ -260,6 +260,27 @@ pub enum InstallEvent {
     Error { message: String },
 }
 
+/// Startup model-provisioning progress, streamed to the webview's blocking
+/// startup gate. Byte fields are camelCase to match the frontend
+/// (`SidecarProvisioningSource`); `phase` mirrors `app.pipeline.provision`'s
+/// per-asset phases (checking | downloading | done | skipped).
+#[derive(Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProvisionEvent {
+    Progress {
+        asset: String,
+        phase: String,
+        #[serde(rename = "bytesDone")]
+        bytes_done: Option<u64>,
+        #[serde(rename = "bytesTotal")]
+        bytes_total: Option<u64>,
+    },
+    Done,
+    Error {
+        message: String,
+    },
+}
+
 /// `uv sync --no-default-groups --group <g>…` the app capability venv to exactly
 /// `groups` (the union of every capability that should be present afterwards, since
 /// uv sync replaces the env). Streams uv's progress lines through `on_event`; Ok
@@ -470,6 +491,88 @@ async fn provision_models(
     }
 }
 
+/// Run `python -m app.pipeline.provision --progress-json <caps>` and forward its
+/// per-asset JSON progress lines (stdout) to the webview as {@link ProvisionEvent}s.
+/// stderr carries logs, which we log rather than surface. Errors if the process
+/// can't start or exits non-zero.
+async fn provision_models_streaming(
+    venv: &Path,
+    dir: &Path,
+    caps: &[String],
+    on_event: &Channel<ProvisionEvent>,
+) -> Result<(), String> {
+    let python = venv_python(venv);
+    if !python.exists() {
+        return Err("model provisioning skipped: venv python missing".to_string());
+    }
+    let mut cmd = Command::new(&python);
+    cmd.arg("-m").arg("app.pipeline.provision").arg("--progress-json");
+    for cap in caps {
+        cmd.arg(cap);
+    }
+    let mut child = cmd
+        .current_dir(dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .no_console()
+        .spawn()
+        .map_err(|e| format!("failed to start model provisioning: {e}"))?;
+    let out = child.stdout.take();
+    let err = child.stderr.take();
+    let sink = on_event.clone();
+    let out_task = tokio::spawn(async move {
+        if let Some(r) = out {
+            let mut lines = BufReader::new(r).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                match parse_progress_line(&line) {
+                    Some(ev) => {
+                        let _ = sink.send(ev);
+                    }
+                    None => log::info!("[provision] {line}"),
+                }
+            }
+        }
+    });
+    let err_task = tokio::spawn(async move {
+        if let Some(r) = err {
+            let mut lines = BufReader::new(r).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::info!("[provision] {line}");
+            }
+        }
+    });
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    let _ = out_task.await;
+    let _ = err_task.await;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("model provisioning failed ({status})"))
+    }
+}
+
+/// Parse one `--progress-json` stdout line into a {@link ProvisionEvent::Progress};
+/// None for a non-JSON line (a stray log line that landed on stdout).
+fn parse_progress_line(line: &str) -> Option<ProvisionEvent> {
+    #[derive(serde::Deserialize)]
+    struct Raw {
+        asset: String,
+        phase: String,
+        #[serde(rename = "bytesDone")]
+        bytes_done: Option<u64>,
+        #[serde(rename = "bytesTotal")]
+        bytes_total: Option<u64>,
+    }
+    let raw: Raw = serde_json::from_str(line.trim()).ok()?;
+    Some(ProvisionEvent::Progress {
+        asset: raw.asset,
+        phase: raw.phase,
+        bytes_done: raw.bytes_done,
+        bytes_total: raw.bytes_total,
+    })
+}
+
 /// Run `python -m app.pipeline.provision --prune <keep_caps>` in the app venv to
 /// delete the model files no remaining capability needs. Skipped (Ok) when the
 /// venv python is already gone -- nothing was installed to have downloaded, so
@@ -531,63 +634,48 @@ async fn prune_models(
     }
 }
 
-// uv groups a dev build syncs on first launch: `lyrics-ja` pulls the full
-// alignment stack (separation is transitive) plus JP romanization; `music` adds
-// the Spotify source. See scripts/mac-build.ts.
-const DEV_SYNC_GROUPS: &[&str] = &["lyrics-ja", "music"];
-// provision capability whose model assets to pre-fetch. `lyrics` composes
-// `separation`, so this downloads both the separator + aligner weights.
-const DEV_PROVISION_CAPS: &[&str] = &["lyrics"];
+// uv groups the startup gate syncs when the venv needs building (dev builds ship
+// no vendored wheels): `lyrics-ja` pulls the full alignment stack (separation is
+// transitive) plus JP romanization; `music` adds the Spotify source. `pitch`
+// needs no packages beyond `separation`, so no pitch group. See scripts/mac-build.ts.
+const STARTUP_SYNC_GROUPS: &[&str] = &["lyrics-ja", "music"];
+// Capabilities eagerly provisioned at startup. `lyrics` + `pitch` each compose
+// `separation`, so this downloads every model (separator + both aligners + f0).
+const STARTUP_PROVISION_CAPS: &[&str] = &["lyrics", "pitch"];
 
-/// First-launch capability install for a dev cross-build (`paths::is_dev_build`).
-/// A dev bundle ships the aligner source + a target `uv` but NO vendored
-/// wheels/models (the offline install path a normal bundle has), so it must
-/// `uv sync` the deps from git and download the model assets here, once. A
-/// sentinel file under the data root records success so later launches skip it.
-/// Runs in the background off `setup`; failures are logged, never fatal -- the
-/// app still runs (audio/UI), only alignment waits for a successful retry (delete
-/// the sentinel, relaunch). Needs git + a C toolchain on the machine (Xcode CLT)
-/// to build the git deps, since the wheels aren't vendored.
-pub async fn dev_autoprovision(app: AppHandle) {
-    let sentinel = match crate::paths::data_root(&app) {
-        Ok(root) => root.join("devbuild-provisioned"),
-        Err(e) => {
-            log::error!("[devbuild] cannot resolve data root: {e}");
-            return;
-        }
-    };
-    if sentinel.is_file() {
-        log::info!("[devbuild] already provisioned ({}), skipping", sentinel.display());
-        return;
-    }
-    log::info!(
-        "[devbuild] first launch: uv sync {DEV_SYNC_GROUPS:?} + provision {DEV_PROVISION_CAPS:?}"
-    );
-    let groups: Vec<String> = DEV_SYNC_GROUPS.iter().map(|s| s.to_string()).collect();
-    if let Err(e) = sync_venv(&app, "devbuild", &groups, None).await {
-        log::error!("[devbuild] uv sync failed: {e}");
-        return;
-    }
+/// Ensure every model is present + up to date at app launch, streaming progress
+/// to the webview's blocking startup gate. Syncs the app venv first when it needs
+/// building (a dev cross-build ships no vendored wheels; installed builds only on
+/// a missing venv), then runs `provision --progress-json` for the startup
+/// capability set, which update-checks each asset against the remote and
+/// re-downloads only changes. Idempotent + safe every launch: an already-current
+/// install returns after a few HEAD checks, so the gate barely flashes. Driven by
+/// the frontend gate on startup, so a failure surfaces there (with Retry) rather
+/// than being a silent background job.
+#[tauri::command]
+pub async fn ensure_models(app: AppHandle, on_event: Channel<ProvisionEvent>) -> Result<(), String> {
     let venv = match app_venv(&app) {
         Ok(v) => v,
         Err(e) => {
-            log::error!("[devbuild] {e}");
-            return;
+            let _ = on_event.send(ProvisionEvent::Error { message: e.clone() });
+            return Err(e);
         }
     };
+    if crate::paths::is_dev_build(&app) || !venv_python(&venv).is_file() {
+        let groups: Vec<String> = STARTUP_SYNC_GROUPS.iter().map(|s| s.to_string()).collect();
+        if let Err(message) = sync_venv(&app, "startup", &groups, None).await {
+            let _ = on_event.send(ProvisionEvent::Error { message: message.clone() });
+            return Err(message);
+        }
+    }
     let dir = resolve_aligner_dir(&app);
-    let caps: Vec<String> = DEV_PROVISION_CAPS.iter().map(|s| s.to_string()).collect();
-    if let Err(e) = provision_models(&venv, &dir, &caps, None).await {
-        log::error!("[devbuild] model provisioning failed: {e}");
-        return;
+    let caps: Vec<String> = STARTUP_PROVISION_CAPS.iter().map(|s| s.to_string()).collect();
+    if let Err(message) = provision_models_streaming(&venv, &dir, &caps, &on_event).await {
+        let _ = on_event.send(ProvisionEvent::Error { message: message.clone() });
+        return Err(message);
     }
-    if let Err(e) = tokio::fs::write(&sentinel, "").await {
-        log::warn!(
-            "[devbuild] provisioned OK but couldn't write sentinel {}: {e}",
-            sentinel.display()
-        );
-    }
-    log::info!("[devbuild] provisioning complete");
+    let _ = on_event.send(ProvisionEvent::Done);
+    Ok(())
 }
 
 #[cfg(test)]

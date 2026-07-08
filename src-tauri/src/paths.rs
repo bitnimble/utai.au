@@ -148,7 +148,7 @@ fn rotate_log_file(current: &Path) {
 /// True iff this is a dev cross-build (see scripts/mac-build.ts): a `devbuild`
 /// marker file staged into the app's bundled resources. Such a build ships the
 /// aligner source + a target `uv` but no vendored wheels/models, so the runtime
-/// `uv sync`s + provisions on first launch (see capability::dev_autoprovision).
+/// `uv sync`s + provisions on first launch (see capability::ensure_models).
 /// A bundled resource, not a next-to-exe marker like `portable`: resource
 /// resolution already handles the per-platform bundle layout (.app Resources,
 /// Linux lib dir, …).

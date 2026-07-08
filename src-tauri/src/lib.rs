@@ -98,11 +98,10 @@ pub fn run() {
             let _ = std::fs::create_dir_all(&outputs);
             let _ = app.fs_scope().allow_directory(&outputs, true);
             let _ = app.asset_protocol_scope().allow_directory(&outputs, true);
-            // Dev cross-build: no vendored wheels/models ship, so `uv sync` +
-            // provision the aligner on first launch (once, in the background).
-            if paths::is_dev_build(app.handle()) {
-                tauri::async_runtime::spawn(capability::dev_autoprovision(app.handle().clone()));
-            }
+            // Model provisioning (incl. the dev cross-build's first-launch uv sync)
+            // is driven by the frontend startup gate via `capability::ensure_models`,
+            // so it streams progress into a blocking dialog rather than running as a
+            // silent background job.
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -113,6 +112,7 @@ pub fn run() {
             capability::set_capability_installed,
             capability::install_capability,
             capability::uninstall_capability,
+            capability::ensure_models,
             capability::available_disk_space,
             logs::read_log_tail,
             logs::open_data_folder,
