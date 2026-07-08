@@ -35,11 +35,12 @@ DEFAULT_THRED = 0.03
 def _ort_session(onnx_path: str | Path):
     import onnxruntime as ort
 
-    from app.pipeline.onnx_cuda import log_bound_ep
+    from app.pipeline.onnx_cuda import default_providers, log_bound_ep
 
-    # CPU EP: RMVPE runs ~35x realtime on CPU (a few seconds per song), which is
-    # ample offline, and keeps it off the GPU while the CTC aligner is resident.
-    sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    # GPU-first: there is VRAM headroom to keep every model resident, so the f0
+    # pass rides CUDA alongside separation + the CTC aligner rather than being
+    # pinned to CPU. Falls back to CPU where no GPU EP binds (still ~35x realtime).
+    sess = ort.InferenceSession(str(onnx_path), providers=default_providers())
     log_bound_ep(sess, onnx_path)
     return sess
 

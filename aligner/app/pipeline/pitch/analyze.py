@@ -42,12 +42,14 @@ def extract_pitch_contour(vocals_path: str | Path) -> dict | None:
     yield any frames."""
     extractor = _get_extractor()
     if extractor is None:
+        log.info("pitch: f0 model not provisioned; stem left pitch-less")
         return None
     from app.pipeline.lyrics_onnx import load_audio_np
 
     audio = load_audio_np(vocals_path)
     contour = extractor.extract(audio)
     if contour.ts.shape[0] == 0:
+        log.info("pitch: stem too short; no f0 frames")
         return None
     # RMVPE is octave-robust, so skip the octave-outlier drop (it would only risk
     # trimming a real falsetto leap); the min-island pass still removes noise.
@@ -60,9 +62,12 @@ def extract_pitch_contour(vocals_path: str | Path) -> dict | None:
     # delayed-onset / boundary-split vibrato is caught. The per-word slice that
     # turns these frames into per-note vibrato tags happens on the frontend.
     vib_rate, vib_extent = features.detect_vibrato_frames(midi, fps=contour.fps)
+    midi_out = _nan_to_none(midi)
+    voiced = sum(1 for v in midi_out if v is not None)
+    log.info("pitch: extracted %d f0 frames (%d voiced)", len(midi_out), voiced)
     return {
         "fps": float(contour.fps),
-        "midi": _nan_to_none(midi),
+        "midi": midi_out,
         "vibRate": _nan_to_none(vib_rate),
         "vibExtent": _nan_to_none(vib_extent),
     }
@@ -72,6 +77,17 @@ def _nan_to_none(arr: np.ndarray) -> list[float | None]:
     """Per-frame floats with NaN -> null, rounded (0.001 semitone / Hz is well
     below anything audible) to keep the JSON contour compact on the wire."""
     return [None if np.isnan(v) else round(float(v), 3) for v in arr]
+
+
+def warm_extractor() -> bool:
+    """Eagerly build the RMVPE session at startup so the first pitch pass pays no
+    model-load latency (keeps the f0 model hot alongside the separator). Returns
+    whether the f0 model was available; best-effort, never raises."""
+    try:
+        return _get_extractor() is not None
+    except Exception:
+        log.warning("pitch: could not warm the f0 model", exc_info=True)
+        return False
 
 
 def _get_extractor() -> Rmvpe | None:

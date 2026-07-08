@@ -182,6 +182,12 @@ async def _run_startup_provision(app: FastAPI, status: ProvisionStatus) -> None:
         separator = Separator()
         await asyncio.to_thread(separator.load)
         app.state.separator = separator
+        if "pitch" in caps:
+            # Keep the f0 model hot too (VRAM headroom): build its GPU session now
+            # so the first /music/separate pitch pass doesn't pay load latency.
+            from app.pipeline.pitch.analyze import warm_extractor
+
+            await asyncio.to_thread(warm_extractor)
         status.set_ready()
         log.info("Startup provisioning + separator warm complete in %.2fs.", time.perf_counter() - started)
     except asyncio.CancelledError:
