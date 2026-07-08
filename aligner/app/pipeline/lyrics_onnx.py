@@ -13,11 +13,12 @@ Torch is needed only for the one-time export (cached); inference is torch-free.
 from __future__ import annotations
 
 import math
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+from app.pipeline.audio_io import load_samples
 
 SR = 16000
 
@@ -182,13 +183,12 @@ def export_ctc_model(model_path: str, out_path: str | Path, *, opset: int = 17,
 
 
 def load_audio_np(audio_file: str | Path) -> np.ndarray:
-    """ffmpeg -> mono 16 kHz float32 in [-1, 1] (numpy port of the package's load_audio)."""
-    cmd = [
-        "ffmpeg", "-nostdin", "-threads", "0", "-i", str(audio_file),
-        "-f", "s16le", "-ac", "1", "-acodec", "pcm_s16le", "-ar", str(SR), "-",
-    ]
-    out = subprocess.run(cmd, capture_output=True, check=True).stdout
-    return np.frombuffer(out, dtype=np.int16).astype(np.float32) / 32768.0
+    """Mono 16 kHz float32 in [-1, 1] (numpy port of the package's load_audio).
+
+    soundfile-direct for compatible containers, ffmpeg-transcode fallback for the
+    rest -- see `audio_io.load_samples`."""
+    audio, _ = load_samples(audio_file, sr=SR, mono=True)
+    return audio
 
 
 def _time_to_frame(t: float) -> int:

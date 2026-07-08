@@ -20,10 +20,11 @@ import logging
 import os
 from pathlib import Path
 
-import librosa
 import numpy as np
 import yaml
 from scipy import signal
+
+from app.pipeline.audio_io import load_samples
 
 from . import np_stft
 from ._chunking import (
@@ -43,7 +44,7 @@ def _prepare_mix(audio: str | Path | np.ndarray) -> np.ndarray:
     if isinstance(audio, np.ndarray):
         mix = audio.T if audio.ndim == 2 else audio
     else:
-        mix, _ = librosa.load(str(audio), mono=False, sr=SAMPLE_RATE)
+        mix, _ = load_samples(audio, sr=SAMPLE_RATE, mono=False)
     if mix.ndim == 1:
         mix = np.asfortranarray([mix, mix])
     return mix.astype(np.float32)

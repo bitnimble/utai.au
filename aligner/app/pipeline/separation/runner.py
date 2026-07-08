@@ -13,7 +13,7 @@ re-anchors to `mix[:, -chunk_size:]` and is overlap-added at the end.
 Peak normalization before demix and per-stem after demix mirrors
 `spec_utils.normalize` (audio-separator default `normalization_threshold=0.9`,
 `amplification_threshold=0.0`), and input prep mirrors
-`common_separator.py::prepare_mix` (`librosa.load(mono=False, sr=44100)`,
+`common_separator.py::prepare_mix` (load to (channels, samples) @ 44.1k,
 mono->stereo broadcast).
 """
 
@@ -21,10 +21,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import librosa
 import numpy as np
 import torch
 from scipy import signal
+
+from app.pipeline.audio_io import load_samples
 
 from ._chunking import (
     AMPLIFICATION_THRESHOLD,
@@ -44,7 +45,7 @@ def _prepare_mix(audio: str | Path | np.ndarray) -> np.ndarray:
     if isinstance(audio, np.ndarray):
         mix = audio.T if audio.ndim == 2 else audio
     else:
-        mix, _ = librosa.load(str(audio), mono=False, sr=SAMPLE_RATE)
+        mix, _ = load_samples(audio, sr=SAMPLE_RATE, mono=False)
     if mix.ndim == 1:
         mix = np.asfortranarray([mix, mix])
     return mix
