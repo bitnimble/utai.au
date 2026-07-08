@@ -11,6 +11,10 @@
  */
 
 :root {
+    /* Drive UA-rendered chrome (scrollbars, native form controls) to match
+       the active palette; without it they stay light in the dark theme. */
+    color-scheme: light;
+
     /* ─── Surfaces / backgrounds ──────────────────────────────────── */
     /* The base UI sits on white; the warm-beige ramp paints panels,
        gutters, hover states, and the rest of the cream-paper aesthetic. */
@@ -182,6 +186,8 @@
  * appear here either.
  */
 :root[data-theme='dark'] {
+    color-scheme: dark;
+
     /* ─── Surfaces / backgrounds ──────────────────────────────────── */
     --color-bg-base: #1a1814;
     --color-bg-neutral: #1f1d18;
