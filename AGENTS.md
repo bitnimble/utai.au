@@ -81,6 +81,11 @@ it aligns over the HTTP backend, same as the web build. Desktop-only Rust
 - **The timeline is linear time**, "beat" collapses onto "second"; there
   is no musical bar/tempo grid (that was Drumjot-specific). The lyrics
   layout maps `word.startSec/endSec → pixels` linearly.
+- **Referenced thing missing? Check worktree divergence from local `main`
+  first.** If the user points at something specific that's nowhere in the
+  tree, we may be on a worktree branched off an earlier `main` that predates
+  it, `git log --oneline main..HEAD` / `HEAD..main` before concluding it
+  doesn't exist.
 
 ### Frontend store / presenter / component architecture
 
@@ -105,6 +110,7 @@ Frontend (`bun`, repo root):
 | `bun run tauri` | Tauri desktop build (via `scripts/tauri-build.ts`). |
 | `bun run android:build` | Android APK. |
 | `bun run win:build` | **Cross-build** the Windows app (binary + NSIS installer) from Linux via cargo-xwin, no Wine. |
+| `bun run mac:build` | **Cross-build** the macOS `.app` (dev testing only) from Linux via osxcross. Unsigned, no DMG. |
 
 **Build-output location (`UTAI_BUILD_DIR`).** Set in `.env` to move the
 heavy Rust/Tauri artifacts off the repo disk (maps to `CARGO_TARGET_DIR`).
@@ -116,6 +122,22 @@ Windows Python), so **alignment is unavailable in this build**; audio + UI work.
 One-time host prereqs: `rustup target add x86_64-pc-windows-msvc`, `cargo install
 --locked cargo-xwin`, `apt install clang llvm lld nsis`, and
 `ln -sf "$(which makensis)" /usr/local/bin/makensis.exe` (Tauri runs `makensis.exe`).
+
+**macOS cross-build (`mac:build`), dev only.** Emits an unsigned `utai.au.app`
+(no DMG, no notarization) to `UTAI_MAC_DIST_DIR` (`.env`) if set, else the target
+dir. Unlike `win:build` it DOES ship the sidecar, but as a **dev bundle**: the
+pure-Python aligner source + a downloaded macOS `uv`, and NO vendored
+wheels/models. A `devbuild` marker resource makes the runtime `uv sync` the deps
+from git + download models on first launch (`paths.rs::is_dev_build` →
+`capability::dev_autoprovision`, once, gated by a `<data_root>/devbuild-provisioned`
+sentinel). So the **test Mac needs Xcode Command Line Tools** (git + a compiler)
+and a network on first run. `prepare-desktop-resources.ts` produces this variant
+when `UTAI_RESOURCE_DEV=1` (skips wheel vendoring, keeps the torch-null override,
+bundles `UTAI_RESOURCE_UV`). One-time host prereqs: `rustup target add
+aarch64-apple-darwin`, an osxcross toolchain with the **Xcode-extracted macOS SDK**
+(Apple's SDK isn't redistributable), and cargo pointed at its clang/linker (set
+`OSXCROSS_ROOT` for the script to wire PATH + `SDKROOT`). The osxcross setup +
+whether `tauri build` will emit the `.app` on Linux is the **untested** part.
 
 **Sandbox** (`sandbox/Dockerfile`): a throwaway CUDA + Python container
 carrying the aligner dep stack plus `bun`. Container name `utai-sandbox`.
