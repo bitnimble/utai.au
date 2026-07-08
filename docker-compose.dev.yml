@@ -114,6 +114,9 @@ services:
       VITE_ALIGNER_URL: ""
       # Keep Vite's dep-optimizer cache off the (possibly read-only-ish) mount.
       VITE_CACHE_DIR: /tmp/utai-vite
+      # Off = no auto browser reload on edit (matches the backend's disabled
+      # --reload); refresh the browser manually to pick up frontend changes.
+      UTAI_NO_HMR: "1"
     volumes:
       - ${REPO_PATH:-.}:/repo
     # Reachable by Caddy over the compose network only; NOT published to the host

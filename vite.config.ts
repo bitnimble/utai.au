@@ -70,6 +70,13 @@ const ESBUILD_TARGET = 'es2022';
 // mobile, with no runtime platform-detection dependency.
 const IS_MOBILE = ['android', 'ios'].includes(process.env.TAURI_ENV_PLATFORM ?? '');
 
+// The dev compose runs the app to test, not to hot-iterate, so `UTAI_NO_HMR=1`
+// turns the dev server's HMR off entirely there (an edit needs a manual browser
+// reload, matching the compose backend's disabled --reload). The file watcher
+// still runs, so a manual reload picks up fresh transforms. Local `bun run dev`
+// / e2e leave HMR on (governed by `noHmrPushPlugin` above).
+const NO_HMR = process.env.UTAI_NO_HMR === '1';
+
 export default defineConfig({
   // Frontend source lives in `frontend/`; the build configs stay at the repo
   // root (bun/playwright/package.json cwd assumptions). Point Vite at the
@@ -115,6 +122,7 @@ export default defineConfig({
     host: true,
     port: 5174,
     allowedHosts: ['utai.au', 'dev.utai.au'],
+    hmr: NO_HMR ? false : undefined,
   },
   preview: {
     host: true,
