@@ -5,7 +5,15 @@
  * endpoint; search returns the candidate list the modal needs for the
  * exact-match / multi-result logic; `/api/get` would return a single
  * best match but doesn't expose the alternates the modal lets the user
- * pick from.
+ * pick from (and it needs clean track/artist metadata, which we rarely
+ * have off a YouTube title anyway).
+ *
+ * A self-hosted LRCLIB mirror (set `VITE_LRCLIB_URL`, e.g.
+ * `http://localhost:3300/api`) is queried FIRST, same `/api/search`
+ * shape, but on your own hardware it answers in ms instead of the public
+ * instance's multi-second latency. The public instance is the fallback
+ * when the local mirror returns no match or is unreachable, so a smaller
+ * local dump never means fewer results than today.
  */
 
 export type LrclibMatch = {
@@ -19,7 +27,12 @@ export type LrclibMatch = {
   instrumental: boolean;
 };
 
-const BASE_URL = 'https://lrclib.net/api';
+const PUBLIC_BASE_URL = 'https://lrclib.net/api';
+/** Optional self-hosted mirror queried before the public instance. Empty (the
+ *  default) = public-only, i.e. unchanged. Trailing slashes trimmed. */
+const localEnv = import.meta.env.VITE_LRCLIB_URL;
+const LOCAL_BASE_URL =
+  typeof localEnv === 'string' ? localEnv.trim().replace(/\/+$/, '') : '';
 
 export type SearchOptions = {
   trackName: string;
@@ -58,13 +71,36 @@ export async function searchLrclib(opts: SearchOptions): Promise<LrclibMatch[]> 
   const cached = searchCache.get(key);
   if (cached != null) return cached;
 
+  let out: LrclibMatch[] = [];
+  if (LOCAL_BASE_URL) {
+    try {
+      out = await searchOne(LOCAL_BASE_URL, opts);
+    } catch (err) {
+      // A superseded search aborts; propagate that (don't waste the fallback on
+      // a request the caller already cancelled). Any other failure (the mirror
+      // being down/unreachable) just falls through to the public instance.
+      if (isAbortError(err) || opts.signal?.aborted) throw err;
+    }
+  }
+  // Public instance: the sole source when no mirror is configured, and the
+  // fallback when the mirror returned no match or was unreachable. Its errors
+  // propagate (the caller stays silent on them).
+  if (out.length === 0) out = await searchOne(PUBLIC_BASE_URL, opts);
+
+  cacheResult(key, out);
+  return out;
+}
+
+/** One `/api/search` request against `baseUrl`, parsed to synced-only matches.
+ *  Throws on transport / HTTP failure. */
+async function searchOne(baseUrl: string, opts: SearchOptions): Promise<LrclibMatch[]> {
   const params = new URLSearchParams();
   if (opts.trackName.trim().length > 0) params.set('track_name', opts.trackName.trim());
   if (opts.artistName.trim().length > 0) params.set('artist_name', opts.artistName.trim());
   // LRCLIB accepts an empty query (returns nothing); the modal guards
   // against firing when neither field has content, so by the time we
   // get here at least one of the two is set.
-  const url = `${BASE_URL}/search?${params.toString()}`;
+  const url = `${baseUrl}/search?${params.toString()}`;
   // No custom request headers on purpose: any non-safelisted header
   // (LRCLIB's optional `Lrclib-Client` identifier) would force the
   // browser to send a CORS preflight before every GET, and LRCLIB
@@ -80,10 +116,7 @@ export async function searchLrclib(opts: SearchOptions): Promise<LrclibMatch[]> 
   }
   const json = (await res.json()) as LrclibApiRow[];
   const out: LrclibMatch[] = [];
-  if (!Array.isArray(json)) {
-    cacheResult(key, out);
-    return out;
-  }
+  if (!Array.isArray(json)) return out;
   for (const row of json) {
     if (typeof row?.syncedLyrics !== 'string' || row.syncedLyrics.length === 0) continue;
     out.push({
@@ -97,8 +130,11 @@ export async function searchLrclib(opts: SearchOptions): Promise<LrclibMatch[]> 
       instrumental: row.instrumental === true,
     });
   }
-  cacheResult(key, out);
   return out;
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === 'AbortError';
 }
 
 function cacheResult(key: string, matches: LrclibMatch[]): void {
