@@ -118,6 +118,9 @@ export class LyricsPresenter {
     this.autoFetchController?.abort();
     const controller = new AbortController();
     this.autoFetchController = controller;
+    runInAction(() => {
+      this.lyricsAlign.autoLyricsSearching = true;
+    });
     void this.runAutoFetch(title, artist, query.durationSec, controller);
   }
 
@@ -127,34 +130,44 @@ export class LyricsPresenter {
     durationSec: number,
     controller: AbortController,
   ): Promise<void> {
-    // First pass: title + artist. If nothing confident and we had an artist,
-    // retry title-only: LRCLIB's search is artist-sensitive and the source's
-    // "artist" (e.g. a YouTube uploader) may not be the official one, so an
-    // included wrong artist yields no results / no name match. The title-only
-    // pass drops the artist from both the query and the name gate, leaning on
-    // the duration match for confidence.
-    let best = await this.searchAndPick(title, artist, durationSec, controller, { title, artist });
-    if (best === 'aborted') return;
-    if (best == null && title.length > 0 && artist.length > 0) {
-      console.log('[auto-lyrics] no match with artist; retrying title-only');
-      best = await this.searchAndPick(title, '', durationSec, controller, { title, ignoreArtist: true });
+    try {
+      // First pass: title + artist. If nothing confident and we had an artist,
+      // retry title-only: LRCLIB's search is artist-sensitive and the source's
+      // "artist" (e.g. a YouTube uploader) may not be the official one, so an
+      // included wrong artist yields no results / no name match. The title-only
+      // pass drops the artist from both the query and the name gate, leaning on
+      // the duration match for confidence.
+      let best = await this.searchAndPick(title, artist, durationSec, controller, { title, artist });
       if (best === 'aborted') return;
+      if (best == null && title.length > 0 && artist.length > 0) {
+        console.log('[auto-lyrics] no match with artist; retrying title-only');
+        best = await this.searchAndPick(title, '', durationSec, controller, { title, ignoreArtist: true });
+        if (best === 'aborted') return;
+      }
+      if (best?.syncedLyrics == null) {
+        console.log('[auto-lyrics] no confident match, nothing auto-loaded');
+        return;
+      }
+      const lines = parseLrc(best.syncedLyrics);
+      if (lines.length === 0) {
+        console.log('[auto-lyrics] confident match had unparseable synced lyrics, nothing auto-loaded');
+        return;
+      }
+      console.log(`[auto-lyrics] auto-loading "${best.trackName} - ${best.artistName}" (${lines.length} lines)`);
+      this.applyLrclibResult(
+        lines,
+        { trackName: best.trackName, artistName: best.artistName },
+        { wordLevel: playbackEngine.audioTracks.size > 0 },
+      );
+    } finally {
+      // Only the current fetch clears the flag; a superseding fetch (which
+      // aborted this one) owns it now and keeps the pill up.
+      if (this.autoFetchController === controller) {
+        runInAction(() => {
+          this.lyricsAlign.autoLyricsSearching = false;
+        });
+      }
     }
-    if (best?.syncedLyrics == null) {
-      console.log('[auto-lyrics] no confident match, nothing auto-loaded');
-      return;
-    }
-    const lines = parseLrc(best.syncedLyrics);
-    if (lines.length === 0) {
-      console.log('[auto-lyrics] confident match had unparseable synced lyrics, nothing auto-loaded');
-      return;
-    }
-    console.log(`[auto-lyrics] auto-loading "${best.trackName} - ${best.artistName}" (${lines.length} lines)`);
-    this.applyLrclibResult(
-      lines,
-      { trackName: best.trackName, artistName: best.artistName },
-      { wordLevel: playbackEngine.audioTracks.size > 0 },
-    );
   }
 
   /** One LRCLIB search + confident-pick attempt for {@link runAutoFetch}.

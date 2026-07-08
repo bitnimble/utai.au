@@ -261,6 +261,7 @@ export const KaraokePage = observer(function KaraokePage() {
 const Toolbar = observer(function Toolbar() {
   const presenter = React.useContext(KaraokePresenterContext)!;
   const lyricsPresenter = React.useContext(LyricsPresenterContext)!;
+  const lyricsAlign = React.useContext(LyricsAlignStoreContext)!;
   const musicPresenter = React.useContext(MusicSourcePresenterContext)!;
   const songIo = React.useContext(SongIoPresenterContext)!;
   const viewport = React.useContext(ViewportStoreContext)!;
@@ -407,6 +408,11 @@ const Toolbar = observer(function Toolbar() {
           Separating stems…
         </span>
       )}
+      {lyricsStatusLabel(lyricsAlign.lyricsStatusPhase) && (
+        <span className={styles.toolStatus} data-testid="lyrics-status">
+          {lyricsStatusLabel(lyricsAlign.lyricsStatusPhase)}
+        </span>
+      )}
       <button
         type="button"
         className={styles.toolButton}
@@ -431,6 +437,19 @@ const Toolbar = observer(function Toolbar() {
     </header>
   );
 });
+
+/** Toolbar pill label for the combined lyrics status; undefined = no pill. */
+function lyricsStatusLabel(phase: 'idle' | 'searching' | 'queued' | 'aligning'): string | undefined {
+  switch (phase) {
+    case 'searching':
+      return 'Searching for lyrics…';
+    case 'queued':
+    case 'aligning':
+      return 'Aligning lyrics…';
+    case 'idle':
+      return undefined;
+  }
+}
 
 /** A dropdown-trigger label: text + a trailing caret, so the header menus read
  *  as openable menus. */
