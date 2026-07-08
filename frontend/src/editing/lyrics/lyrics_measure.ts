@@ -35,17 +35,12 @@ import { PositionedLine, WAVE_WAVELENGTH_PX, buildPitchLine } from './lyric_layo
 
 const FONT_FAMILY =
   "'Bricolage Grotesque', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
-/** Font size inherited from `.lyricLine`. Keep in lockstep with
- *  `lyrics_track_view.module.css::.lyricLine { font-size: 22px }`. */
-const LYRIC_FONT_SIZE_PX = 22;
 const ACTIVE_FONT_WEIGHT = 800;
 const MIN_GAP_PX = 4;
-/** Furigana annotation font. Keep in lockstep with
- *  `lyrics_track_view.module.css::.lyricWordText rt`: 0.65em of the 22px base =
- *  14.3px (the `--lyric-rt-size` var), weight 400, default (100%) width,
- *  the `rt` rule re-declares `font-variation-settings` to `wght 400`, which
- *  also resets `wdth` to the font's 100 default. */
-const RT_FONT_SIZE_PX = 14.3;
+/** Furigana annotation size as a fraction of the lyric font size. Keep in
+ *  lockstep with `lyrics_track_view.module.css::--lyric-rt-size: 0.65em`. The
+ *  `rt` runs at weight 400, default (100%) width. */
+const RT_FONT_RATIO = 0.65;
 const RT_FONT_WEIGHT = 400;
 const RT_WDTH = 100;
 
@@ -122,13 +117,14 @@ class LyricsMeasurer {
   }
 
   /** Measure `text` as it would render under the row's variable-font
-   *  state for the given zoom. `isActive` picks the active-word weight
-   *  override (`wght: 800`). Returns 0 when canvas isn't available. */
-  measureWordPx(text: string, pxPerBeat: number, isActive: boolean): number {
+   *  state for the given zoom + lyric font size. `isActive` picks the
+   *  active-word weight override (`wght: 800`). Returns 0 when canvas
+   *  isn't available. */
+  measureWordPx(text: string, pxPerBeat: number, isActive: boolean, fontSizePx: number): number {
     const wght = isActive ? ACTIVE_FONT_WEIGHT : computeWght(pxPerBeat);
     return this.measure(
       text,
-      LYRIC_FONT_SIZE_PX,
+      fontSizePx,
       wght,
       computeWdth(pxPerBeat),
       computeLetterSpacingPx(pxPerBeat),
@@ -147,15 +143,17 @@ class LyricsMeasurer {
     segments: readonly RubySegment[],
     pxPerBeat: number,
     isActive: boolean,
+    fontSizePx: number,
   ): number {
     let total = 0;
+    const rtSizePx = fontSizePx * RT_FONT_RATIO;
     for (const seg of segments) {
-      const baseW = this.measureWordPx(seg.base, pxPerBeat, isActive);
+      const baseW = this.measureWordPx(seg.base, pxPerBeat, isActive, fontSizePx);
       if (seg.reading === undefined) {
         total += baseW;
         continue;
       }
-      const rtW = this.measure(seg.reading, RT_FONT_SIZE_PX, RT_FONT_WEIGHT, RT_WDTH, 0);
+      const rtW = this.measure(seg.reading, rtSizePx, RT_FONT_WEIGHT, RT_WDTH, 0);
       total += Math.max(baseW, rtW);
     }
     return total;
@@ -203,7 +201,8 @@ export type LyricLineMeasureInput = {
  *  doesn't track it. */
 export function computeLyricShifts(
   lines: readonly LyricLineMeasureInput[],
-  pxPerBeat: number
+  pxPerBeat: number,
+  fontSizePx: number,
 ): Map<LyricShiftKey, number> {
   const out = new Map<LyricShiftKey, number>();
   if (!Number.isFinite(pxPerBeat) || pxPerBeat <= 0) return out;
@@ -214,8 +213,8 @@ export function computeLyricShifts(
       const isActive = line.activeWordSourceIdx === w.sourceIdx;
       const hasRuby = w.segments?.some((s) => s.reading !== undefined) ?? false;
       const textWidth = hasRuby
-        ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, isActive)
-        : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, isActive);
+        ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, isActive, fontSizePx)
+        : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, isActive, fontSizePx);
       const required = Math.max(natural, prevRight + MIN_GAP_PX);
       const shift = required - natural;
       if (shift > 0) {
@@ -236,6 +235,7 @@ export function computePitchPaths(
   lines: readonly PositionedLine[],
   pxPerBeat: number,
   opts: { pitch: boolean; vibrato: boolean },
+  fontSizePx: number,
 ): Map<LyricShiftKey, string> {
   const out = new Map<LyricShiftKey, string>();
   // No line at all when both are off; the plain trailing-rule sustain shows.
@@ -244,7 +244,7 @@ export function computePitchPaths(
     if (!line.wordPositions) continue;
     for (const w of line.wordPositions) {
       if (!w.segments) continue;
-      const textPx = lyricsMeasurer.measureWordPx(w.text, pxPerBeat, false);
+      const textPx = lyricsMeasurer.measureWordPx(w.text, pxPerBeat, false, fontSizePx);
       const trailPx = Math.max(0, w.beatWidth * pxPerBeat - textPx);
       const path = buildPitchLine(w, trailPx, WAVE_WAVELENGTH_PX, opts);
       if (path) out.set(lyricShiftKey(line.i, w.sourceIdx), path);

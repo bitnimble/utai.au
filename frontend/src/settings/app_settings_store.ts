@@ -15,6 +15,13 @@ export const DEFAULT_ALIGNER_URL =
  *  lyric line and pages on the original line boundaries (classic karaoke). */
 export type AutoscrollMode = 'off' | 'center' | 'page' | 'line';
 
+/** Default lyrics-chip font size (px): ~20% larger than the prior fixed 22px so
+ *  the karaoke text reads comfortably. The View-menu stepper adjusts it within
+ *  {@link MIN_LYRIC_FONT_SIZE_PX}..{@link MAX_LYRIC_FONT_SIZE_PX}. */
+export const DEFAULT_LYRIC_FONT_SIZE_PX = 26;
+export const MIN_LYRIC_FONT_SIZE_PX = 14;
+export const MAX_LYRIC_FONT_SIZE_PX = 48;
+
 /**
  * Device-global app settings that persist across songs and app launches: the
  * lyrics-alignment backend URL today, with room for future global preferences.
@@ -42,6 +49,10 @@ export class AppSettingsStore {
   /** Follow-playhead scroll behaviour during playback. Defaults off so the
    *  current free-scroll behaviour is unchanged until the user opts in. */
   autoscrollMode: AutoscrollMode = 'off';
+
+  /** Lyrics-chip font size (px), applied to every lyrics row and stepped from
+   *  the View menu. */
+  lyricsFontSizePx: number = DEFAULT_LYRIC_FONT_SIZE_PX;
 
   constructor() {
     makeAutoObservable(this);

@@ -91,8 +91,8 @@
     --lyric-pitch-band: 0;
     /* Furigana annotation font size, shared by the `rt` rule and the
        plain-word reserve (`.lyricsBarsRowFurigana`) so the rt's line box
-       and the reserved strip stay in lockstep. 0.65em of the 22px base =
-       14.3px. Keep in lockstep with lyrics_measure.ts::RT_FONT_SIZE_PX. */
+       and the reserved strip stay in lockstep. 0.65em of the lyric font
+       size. Keep in lockstep with lyrics_measure.ts::RT_FONT_RATIO. */
     --lyric-rt-size: 0.65em;
     /* Tighten glyph tracking as zoom drops so lyric text packs into the
        narrower per-beat budget. Ramps from 0 at px-per-beat ≥ 224 to
@@ -166,8 +166,8 @@
         (var(--lyric-end-beat) - var(--lyric-start-beat)) * var(--px-per-beat) * 1px - 4px
     );
     padding: 6px 12px;
-    /* stylelint-disable-next-line property-disallowed-list -- lyric chips run at a one-off 22px so the karaoke text reads larger than UI body copy. */
-    font-size: 22px;
+    /* stylelint-disable-next-line property-disallowed-list -- lyric chips run at a View-menu-driven karaoke size (default 26px), larger than UI body copy. */
+    font-size: var(--lyric-font-size, 26px);
     line-height: 1.2;
     overflow: hidden;
     text-overflow: ellipsis;

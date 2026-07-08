@@ -1,5 +1,10 @@
 import { autorun, makeAutoObservable } from 'mobx';
-import { AppSettingsStore, AutoscrollMode } from './app_settings_store';
+import {
+  AppSettingsStore,
+  AutoscrollMode,
+  MAX_LYRIC_FONT_SIZE_PX,
+  MIN_LYRIC_FONT_SIZE_PX,
+} from './app_settings_store';
 
 const STORAGE_KEY = 'utai.settings';
 
@@ -24,6 +29,7 @@ export class AppSettingsPresenter {
         showLyricsPitch: this.settings.showLyricsPitch,
         showLyricsVibrato: this.settings.showLyricsVibrato,
         autoscrollMode: this.settings.autoscrollMode,
+        lyricsFontSizePx: this.settings.lyricsFontSizePx,
       });
       try {
         localStorage.setItem(STORAGE_KEY, snapshot);
@@ -47,6 +53,13 @@ export class AppSettingsPresenter {
 
   setAutoscrollMode(mode: AutoscrollMode): void {
     this.settings.autoscrollMode = mode;
+  }
+
+  setLyricsFontSize(px: number): void {
+    this.settings.lyricsFontSizePx = Math.max(
+      MIN_LYRIC_FONT_SIZE_PX,
+      Math.min(MAX_LYRIC_FONT_SIZE_PX, Math.round(px)),
+    );
   }
 
   private load(): void {
@@ -77,6 +90,9 @@ export class AppSettingsPresenter {
         obj.autoscrollMode === 'line'
       ) {
         this.settings.autoscrollMode = obj.autoscrollMode;
+      }
+      if (typeof obj.lyricsFontSizePx === 'number' && Number.isFinite(obj.lyricsFontSizePx)) {
+        this.setLyricsFontSize(obj.lyricsFontSizePx);
       }
     } catch {
       // corrupt JSON; keep defaults

@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
-import { AudioLines, ChevronDown, Pause, Play, Settings, Square } from 'lucide-react';
+import { ChevronDown, Pause, Play, Settings, Square } from 'lucide-react';
 import React from 'react';
 import { nativeAudioEngine, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
@@ -29,8 +29,14 @@ import {
 import { ViewportStoreContext } from 'src/editing/viewport/viewport_contexts';
 import { ViewConfig } from 'src/editing/viewport/view_config';
 import { ToastContainer } from 'src/ui/toasts/toast_container';
-import { ActionMenuItem, DropdownButton } from 'src/ui/dropdown/dropdown';
+import {
+  ActionMenuItem,
+  DropdownButton,
+  DropdownSection,
+  ToggleMenuItem,
+} from 'src/ui/dropdown/dropdown';
 import { Slider } from 'src/ui/slider/slider';
+import { NumberStepper } from 'src/ui/number_stepper/number_stepper';
 import { MusicSearchModal } from 'src/music_source/music_search_modal';
 import {
   MusicSourcePresenterContext,
@@ -58,7 +64,11 @@ import { firstPitchedTrack, referenceTargets } from 'src/scoring/reference_targe
 import { ScoringPresenterContext, ScoringStoreContext } from 'src/scoring/scoring_contexts';
 import { ScoringControls } from 'src/scoring/scoring_hud';
 import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_settings_presenter';
-import { AutoscrollMode } from 'src/settings/app_settings_store';
+import {
+  AutoscrollMode,
+  MAX_LYRIC_FONT_SIZE_PX,
+  MIN_LYRIC_FONT_SIZE_PX,
+} from 'src/settings/app_settings_store';
 import { autoscrollTargetLeft, GUTTER_PX } from 'src/editing/score/autoscroll';
 import { VideoStore } from 'src/video/video_store';
 import { VideoPresenter } from 'src/video/video_presenter';
@@ -424,6 +434,7 @@ const Toolbar = observer(function Toolbar() {
           </>
         )}
       </DropdownButton>
+      <ViewMenu />
       <input ref={fileRef} type="file" accept="audio/*" className={styles.hiddenInput} onChange={onPickAudio} />
       <input
         ref={openSongRef}
@@ -556,17 +567,22 @@ const ScoreArea = observer(function ScoreArea() {
         const idx = activeLineIndexAt(track.lines, audioTime, track.offsetSec) ?? 0;
         const span = lineSpanSec(track.lines, idx);
         const barsWidth = Math.max(1, lineVw - GUTTER_PX);
-        // Pad the word span on each side so the first/last word aren't flush to
-        // the bars-area edges; the padded span is what fills the bars width.
-        const durSec = Math.max(0.001, span.endSec - span.startSec) * (1 + 2 * LINE_SPAN_PAD_FRAC);
+        // Cap the span so a line followed by a long instrumental gap (or the
+        // final line before a far-off end tag) doesn't fit a huge span and zoom
+        // the whole track out to nothing.
+        const spanSec = Math.min(Math.max(0.001, span.endSec - span.startSec), LINE_MAX_SPAN_SEC);
+        const endSec = span.startSec + spanSec;
+        // Pad each side so the first/last word isn't flush to the bars-area edge;
+        // the padded span is what fills the bars width.
+        const paddedSec = spanSec * (1 + 2 * LINE_SPAN_PAD_FRAC);
         const zoom = Math.max(
           MIN_PX_PER_SECOND,
-          Math.min(MAX_PX_PER_SECOND, barsWidth / durSec),
+          Math.min(MAX_PX_PER_SECOND, barsWidth / paddedSec),
         );
         presenter.setZoom(zoom);
         // Centre the line's midpoint in the bars area (the region right of the
         // sticky gutter), not the whole viewport.
-        const centerSec = (span.startSec + span.endSec) / 2 + track.offsetSec;
+        const centerSec = (span.startSec + endSec) / 2 + track.offsetSec;
         el.scrollLeft = Math.max(0, centerSec * zoom - barsWidth / 2);
         return;
       }
@@ -633,8 +649,12 @@ const ScoreArea = observer(function ScoreArea() {
 
 /** Padding added to each side of a followed line's word span (as a fraction of
  *  the span's duration) before it's fit to the bars area, so the first/last word
- *  aren't flush against the edges. */
-const LINE_SPAN_PAD_FRAC = 0.15;
+ *  aren't flush against the edges. Small: the words should fill most of the row. */
+const LINE_SPAN_PAD_FRAC = 0.06;
+
+/** Cap (seconds) on a followed line's span used for the fit-zoom, so a line
+ *  before a long instrumental gap doesn't zoom the whole track out to nothing. */
+const LINE_MAX_SPAN_SEC = 12;
 
 /** Track-local start/end seconds spanned by one lyric line: the first word's
  *  start to the last word's end when the line is word-timed, else the line
@@ -653,7 +673,6 @@ function lineSpanSec(lines: readonly LyricLine[], idx: number): { startSec: numb
 const TransportBar = observer(function TransportBar() {
   const presenter = React.useContext(KaraokePresenterContext)!;
   const song = React.useContext(SongStoreContext)!;
-  const viewport = React.useContext(ViewportStoreContext)!;
   const playing = playbackEngine.state === 'playing';
   const canPlay = song.durationSec > 0;
   return (
@@ -682,29 +701,6 @@ const TransportBar = observer(function TransportBar() {
         {formatPlayheadTime(playbackEngine.currentTime)}
         {song.durationSec > 0 ? ` / ${formatPlayheadTime(song.durationSec)}` : ''}
       </span>
-      <button
-        type="button"
-        className={styles.transportButton}
-        aria-pressed={!viewport.audioTracksHidden}
-        onClick={() => presenter.toggleAudioTracks()}
-        aria-label={viewport.audioTracksHidden ? 'Show audio tracks' : 'Hide audio tracks'}
-        title={viewport.audioTracksHidden ? 'Show audio tracks' : 'Hide audio tracks'}
-        data-testid="toggle-audio-tracks"
-      >
-        <AudioLines size={16} aria-hidden="true" />
-      </button>
-      <label className={styles.zoomControl}>
-        Zoom
-        <Slider
-          min={8}
-          max={600}
-          step={1}
-          value={viewport.pxPerBeat}
-          onChange={(v) => presenter.setZoom(v)}
-          ariaLabel="Horizontal zoom (pixels per second)"
-        />
-      </label>
-      <AutoscrollControl />
       <ScoringControls />
       <HomeAudioControls />
     </footer>
@@ -718,25 +714,71 @@ const AUTOSCROLL_LABELS: Record<AutoscrollMode, string> = {
   line: 'Line',
 };
 
-const AutoscrollControl = observer(function AutoscrollControl() {
+/** Header "View" menu: follow-playhead mode, audio-track visibility, horizontal
+ *  zoom, and lyrics font size. Groups every view control that used to sit in the
+ *  transport bar / toolbar into one dropdown. */
+const ViewMenu = observer(function ViewMenu() {
+  const presenter = React.useContext(KaraokePresenterContext)!;
+  const viewport = React.useContext(ViewportStoreContext)!;
   return (
-    <label className={styles.followControl}>
-      Follow
-      <select
-        className={styles.followSelect}
-        value={appSettingsStore.autoscrollMode}
-        onChange={(e) => appSettingsPresenter.setAutoscrollMode(e.target.value as AutoscrollMode)}
-        aria-label="Autoscroll to follow the playhead during playback"
-        title="How the score scrolls to follow the playhead while playing"
-        data-testid="autoscroll-mode"
-      >
-        {(Object.keys(AUTOSCROLL_LABELS) as AutoscrollMode[]).map((mode) => (
-          <option key={mode} value={mode}>
-            {AUTOSCROLL_LABELS[mode]}
-          </option>
-        ))}
-      </select>
-    </label>
+    <DropdownButton
+      label={<MenuLabel text="View" />}
+      className={styles.toolButton}
+      title="Follow mode, track visibility, zoom, and lyrics size"
+      testId="view-menu"
+    >
+      {() => (
+        <>
+          <DropdownSection label="Follow playhead">
+            {(Object.keys(AUTOSCROLL_LABELS) as AutoscrollMode[]).map((mode) => (
+              <ToggleMenuItem
+                key={mode}
+                label={AUTOSCROLL_LABELS[mode]}
+                active={appSettingsStore.autoscrollMode === mode}
+                onToggle={() => appSettingsPresenter.setAutoscrollMode(mode)}
+                role="menuitemradio"
+                testId={`autoscroll-mode-${mode}`}
+              />
+            ))}
+          </DropdownSection>
+          <DropdownSection label="Tracks">
+            <ToggleMenuItem
+              label="Audio tracks"
+              active={!viewport.audioTracksHidden}
+              onToggle={() => presenter.toggleAudioTracks()}
+              testId="toggle-audio-tracks"
+            />
+          </DropdownSection>
+          <DropdownSection label="Zoom">
+            <div className={styles.menuControlRow}>
+              <Slider
+                min={8}
+                max={600}
+                step={1}
+                value={viewport.pxPerBeat}
+                onChange={(v) => presenter.setZoom(v)}
+                ariaLabel="Horizontal zoom (pixels per second)"
+                className={styles.menuSlider}
+              />
+            </div>
+          </DropdownSection>
+          <DropdownSection label="Lyrics size">
+            <div className={styles.menuControlRow}>
+              <NumberStepper
+                value={appSettingsStore.lyricsFontSizePx}
+                onChange={(v) => appSettingsPresenter.setLyricsFontSize(v)}
+                step={2}
+                min={MIN_LYRIC_FONT_SIZE_PX}
+                max={MAX_LYRIC_FONT_SIZE_PX}
+                precision={0}
+                ariaLabel="Lyrics font size"
+                testId="lyrics-font-size"
+              />
+            </div>
+          </DropdownSection>
+        </>
+      )}
+    </DropdownButton>
   );
 });
 

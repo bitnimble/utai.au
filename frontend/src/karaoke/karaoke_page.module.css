@@ -97,12 +97,18 @@
     opacity: 0.7;
 }
 
-.zoomControl {
-    display: inline-flex;
+/* A control (slider / stepper) hosted as a row inside the View dropdown panel,
+   below its section heading. */
+.menuControlRow {
+    display: flex;
     align-items: center;
-    gap: 8px;
-    color: var(--color-text-secondary);
-    user-select: none;
+    padding: 4px 12px 8px;
+    min-width: 220px;
+}
+
+.menuSlider {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .scoreArea {
@@ -134,26 +140,6 @@
     border-top: 1px solid var(--color-border);
     background: var(--color-bg-overlay);
     flex: 0 0 auto;
-}
-
-/* Autoscroll (follow-playhead) mode picker in the transport bar. Mirrors the
-   scoring difficulty select so the transport chrome reads consistently. */
-.followControl {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--color-text-secondary);
-    user-select: none;
-}
-
-.followSelect {
-    composes: labelSm from '../typography.module.css';
-    height: var(--control-height);
-    padding: 0 6px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-base);
-    color: var(--color-text);
 }
 
 .transportButton {

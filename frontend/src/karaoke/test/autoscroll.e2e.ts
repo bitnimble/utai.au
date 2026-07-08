@@ -48,6 +48,17 @@ async function loadTrackAndZoom(page: Page): Promise<void> {
   await page.evaluate(() => (window as unknown as UtaiWindow).utai?.presenter?.setZoom?.(600));
 }
 
+/** Pick a follow-playhead mode from the header View menu (the mode moved out of
+ *  the transport bar into that dropdown). */
+async function setFollowMode(
+  page: Page,
+  mode: 'off' | 'center' | 'page' | 'line',
+): Promise<void> {
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId(`autoscroll-mode-${mode}`).click();
+  await page.keyboard.press('Escape');
+}
+
 function scoreState(page: Page): Promise<{
   scrollLeft: number;
   clientWidth: number;
@@ -78,7 +89,7 @@ test('autoscroll: center pins the playhead near the viewport centre; off leaves 
   await page.getByTestId('transport-stop').click();
 
   // Center: the score scrolls so the playhead sits at the viewport centre.
-  await page.getByTestId('autoscroll-mode').selectOption('center');
+  await setFollowMode(page, 'center');
   await page.getByTestId('transport-play').click();
   await expect
     .poll(async () => (await scoreState(page)).scrollLeft, { timeout: 8000 })
@@ -90,9 +101,7 @@ test('autoscroll: center pins the playhead near the viewport centre; off leaves 
   expect(Math.abs(playheadViewportX - s.clientWidth / 2)).toBeLessThan(40);
 });
 
-test('autoscroll: line shows only the current lyric line and pages on line boundaries', async ({
-  page,
-}) => {
+test('autoscroll: line centres the current lyric line and fits its zoom', async ({ page }) => {
   await page.goto('/');
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -113,28 +122,26 @@ test('autoscroll: line shows only the current lyric line and pages on line bound
   });
   await page.getByTestId('lyrics-track').waitFor();
 
-  await page.getByTestId('autoscroll-mode').selectOption('line');
+  await setFollowMode(page, 'line');
 
-  // Idle at t=0: only the first line renders, and it's scrolled to the left.
-  const lineChips = page.locator('[data-testid^="lyrics-line-"]');
-  await expect(lineChips).toHaveCount(1);
+  // Idle at t=0: line one is framed and its midpoint pins to the bars-area
+  // centre (which clamps scrollLeft to the left edge here).
   await expect(page.getByTestId('lyrics-line-0')).toBeVisible();
   expect((await scoreState(page)).scrollLeft).toBeLessThan(2);
 
-  // Play past the second line's start: still exactly one line, now line two,
-  // centred in the bars area with the zoom set so the (padded) line span fits.
+  // Play past the second line's start: line two is now framed, centred in the
+  // bars area with the zoom set so the (padded) line span fits.
   await page.getByTestId('transport-play').click();
   await expect
     .poll(async () => (await scoreState(page)).t, { timeout: 12_000 })
     .toBeGreaterThan(2.2);
 
-  await expect(lineChips).toHaveCount(1);
   await expect(page.getByTestId('lyrics-line-1')).toBeVisible();
   const s = await scoreState(page);
   const barsWidth = s.clientWidth - GUTTER_PX;
   // Zoom fits the word-less span (startSec 2 → next line's startSec 4) padded by
-  // 15 % each side into the bars area.
-  const expectedPpb = Math.min(600, Math.max(8, barsWidth / ((4 - 2) * 1.3)));
+  // LINE_SPAN_PAD_FRAC each side into the bars area.
+  const expectedPpb = Math.min(600, Math.max(8, barsWidth / ((4 - 2) * (1 + 2 * 0.06))));
   expect(Math.abs(s.ppb - expectedPpb)).toBeLessThan(1);
   // The line's midpoint (3 s) sits at the centre of the bars area.
   const centreScreenX = GUTTER_PX + 3 * s.ppb - s.scrollLeft;
@@ -143,7 +150,7 @@ test('autoscroll: line shows only the current lyric line and pages on line bound
 
 test('autoscroll: page keeps the playhead within the bars viewport', async ({ page }) => {
   await loadTrackAndZoom(page);
-  await page.getByTestId('autoscroll-mode').selectOption('page');
+  await setFollowMode(page, 'page');
   await page.getByTestId('transport-play').click();
 
   // Once the playhead has advanced past a page, the score must have turned.

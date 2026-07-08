@@ -60,9 +60,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // lyrics track can still show vibrato.
   const pitchEnabled = appSettingsStore.showLyricsPitch;
   const vibratoEnabled = appSettingsStore.showLyricsVibrato;
-  // Karaoke "line" autoscroll shows only the current lyric line; every other
-  // line is hidden regardless of zoom (see WindowedLines).
-  const lineOnly = appSettingsStore.autoscrollMode === 'line';
+  const lyricsFontSizePx = appSettingsStore.lyricsFontSizePx;
   const hasPitchData = React.useMemo(
     () => lines.some((l) => l.words?.some((w) => w.midi != null)),
     [lines],
@@ -125,16 +123,22 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
           })),
         };
       });
-    return computeLyricShifts(measureInputs, pxPerBeat);
+    return computeLyricShifts(measureInputs, pxPerBeat, lyricsFontSizePx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positioned, pxPerBeat, fontReady, furiganaRevision]);
+  }, [positioned, pxPerBeat, fontReady, furiganaRevision, lyricsFontSizePx]);
 
   // Per-word pitch-line SVG paths. Kept with the shifts because both need the
   // zoom-dependent glyph measurement (the wave wavelength is derived from each
   // word's sustain pixel width), so this re-derives on zoom / font-load too.
   const pitchPaths = React.useMemo(
-    () => computePitchPaths(positioned, pxPerBeat, { pitch: pitchEnabled, vibrato: vibratoEnabled }),
-    [positioned, pxPerBeat, fontReady, pitchEnabled, vibratoEnabled],
+    () =>
+      computePitchPaths(
+        positioned,
+        pxPerBeat,
+        { pitch: pitchEnabled, vibrato: vibratoEnabled },
+        lyricsFontSizePx,
+      ),
+    [positioned, pxPerBeat, fontReady, pitchEnabled, vibratoEnabled, lyricsFontSizePx],
   );
 
   // True once any word has a resolved furigana reading; drives the ruby
@@ -199,6 +203,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
             ['--layer-beats' as string]: layerBeats,
             ['--bars-row-width' as string]: barsRowWidthSeed(structural, layerBeats),
             ['--px-per-beat' as string]: pxPerBeat,
+            ['--lyric-font-size' as string]: `${lyricsFontSizePx}px`,
             ['--lyric-pitch-band' as string]: lineShows ? PITCH_BAND_PX : 0,
             height: rowHeight,
           } as React.CSSProperties
@@ -211,7 +216,6 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
           shifts={shifts}
           pitchPaths={pitchPaths}
           playhead={playhead}
-          lineOnly={lineOnly}
         />
         <Playhead onSeek={onSeek} />
       </div>
