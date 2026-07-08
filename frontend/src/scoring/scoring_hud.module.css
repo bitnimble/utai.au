@@ -1,0 +1,103 @@
+/* Karaoke scoring HUD on the transport bar: difficulty picker, live pitch
+   meter (target vs sung + cents needle), running score, start/stop. */
+
+.hud {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.difficulty {
+    composes: labelSm from '../typography.module.css';
+    height: var(--control-height);
+    padding: 0 6px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-base);
+    color: var(--color-text);
+}
+
+.button {
+    composes: reset from '../ui/button/button.module.css';
+    composes: labelSm from '../typography.module.css';
+    height: var(--control-height);
+    padding: 0 12px;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-sm);
+    background: var(--color-accent-overlay-medium);
+    color: var(--color-accent-on-text);
+}
+
+.button:hover:not(:disabled) {
+    border-color: var(--color-accent-hover);
+    background: var(--color-accent-overlay-light);
+}
+
+.button:disabled {
+    opacity: 0.5;
+    cursor: default;
+    border-color: var(--color-border);
+    background: var(--color-bg-neutral);
+    color: var(--color-text-disabled);
+}
+
+.score {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+}
+
+.scoreValue {
+    composes: readout from '../typography.module.css';
+    color: var(--color-text-strong);
+}
+
+.scoreMeta {
+    composes: metaCaption from '../typography.module.css';
+    color: var(--color-text-muted);
+}
+
+.meter {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.note {
+    composes: mono from '../typography.module.css';
+    min-width: 30px;
+    text-align: center;
+    color: var(--color-text-muted);
+}
+
+.track {
+    position: relative;
+    width: 90px;
+    height: 8px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-neutral);
+}
+
+.center {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    left: 50%;
+    width: 1px;
+    background: var(--color-border-strong);
+}
+
+.needle {
+    position: absolute;
+    top: -3px;
+    width: 6px;
+    height: 14px;
+    margin-left: -3px;
+    border-radius: 2px;
+    background: var(--color-warning);
+}
+
+.needle[data-onpitch='1'] {
+    background: var(--color-success);
+}

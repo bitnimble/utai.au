@@ -23,3 +23,16 @@ impl NoConsole for Command {
         self
     }
 }
+
+impl NoConsole for std::process::Command {
+    #[cfg(windows)]
+    fn no_console(&mut self) -> &mut Self {
+        use std::os::windows::process::CommandExt;
+        self.creation_flags(0x0800_0000)
+    }
+
+    #[cfg(not(windows))]
+    fn no_console(&mut self) -> &mut Self {
+        self
+    }
+}

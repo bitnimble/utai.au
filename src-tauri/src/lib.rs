@@ -14,6 +14,8 @@ mod no_console;
 #[cfg(desktop)]
 mod paths;
 #[cfg(desktop)]
+mod pitch;
+#[cfg(desktop)]
 mod sidecar;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -70,6 +72,7 @@ pub fn run() {
     let builder = builder
         .manage(sidecar::SidecarState::default())
         .manage(audio::AudioState::new())
+        .manage(pitch::PitchState::default())
         .setup(|app| {
             use tauri::Manager;
             use tauri_plugin_fs::FsExt;
@@ -118,6 +121,8 @@ pub fn run() {
             audio::audio_set_output_volume,
             audio::audio_set_devices,
             audio::audio_subscribe,
+            pitch::audio_pitch_subscribe,
+            pitch::audio_pitch_unsubscribe,
         ]);
 
     let app = builder

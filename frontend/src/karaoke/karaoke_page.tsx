@@ -41,6 +41,12 @@ import {
 import { HomeAudioControls } from 'src/audio_devices/audio_controls';
 import { SettingsModal } from 'src/settings/settings_modal';
 import { useSettingsModal } from 'src/settings/settings_modal_context';
+import { ScoringStore } from 'src/scoring/scoring_store';
+import { ScoringPresenter, type ScoringClock } from 'src/scoring/scoring_presenter';
+import { createLivePitchSource } from 'src/scoring/create_live_pitch_source';
+import { firstPitchedTrack, referenceTargets } from 'src/scoring/reference_targets';
+import { ScoringPresenterContext, ScoringStoreContext } from 'src/scoring/scoring_contexts';
+import { ScoringControls } from 'src/scoring/scoring_hud';
 import { KaraokePresenter } from './karaoke_presenter';
 import { KaraokePresenterContext, SongStoreContext } from './karaoke_contexts';
 import { SongStore } from './song_store';
@@ -59,6 +65,8 @@ type Session = {
   musicPresenter: MusicSourcePresenter;
   audioDevice: AudioDeviceStore;
   audioDevicePresenter: AudioDevicePresenter;
+  scoring: ScoringStore;
+  scoringPresenter: ScoringPresenter;
 };
 
 function buildSession(): Session {
@@ -83,6 +91,18 @@ function buildSession(): Session {
     ? new NativeAudioBackend(nativeAudioEngine)
     : new WebAudioBackend();
   const audioDevicePresenter = new AudioDevicePresenter(audioDevice, audioBackend);
+  const scoring = new ScoringStore();
+  const scoringClock: ScoringClock = {
+    get currentTime() {
+      return playbackEngine.currentTime;
+    },
+    get isPlaying() {
+      return playbackEngine.state === 'playing';
+    },
+  };
+  const scoringPresenter = new ScoringPresenter(scoring, createLivePitchSource(), scoringClock, () =>
+    referenceTargets(firstPitchedTrack(lyricsStore)),
+  );
   return {
     song,
     viewport,
@@ -94,6 +114,8 @@ function buildSession(): Session {
     musicPresenter,
     audioDevice,
     audioDevicePresenter,
+    scoring,
+    scoringPresenter,
   };
 }
 
@@ -110,6 +132,8 @@ export const KaraokePage = observer(function KaraokePage() {
     musicPresenter,
     audioDevice,
     audioDevicePresenter,
+    scoring,
+    scoringPresenter,
   } = session;
 
   // Open the native engine's telemetry stream on desktop (no-op on web).
@@ -138,6 +162,8 @@ export const KaraokePage = observer(function KaraokePage() {
       musicPresenter,
       audioDevice,
       audioDevicePresenter,
+      scoring,
+      scoringPresenter,
       lyricsStore,
       playbackEngine,
     };
@@ -152,6 +178,8 @@ export const KaraokePage = observer(function KaraokePage() {
     musicPresenter,
     audioDevice,
     audioDevicePresenter,
+    scoring,
+    scoringPresenter,
   ]);
 
   return (
@@ -160,6 +188,8 @@ export const KaraokePage = observer(function KaraokePage() {
       <MusicSourcePresenterContext.Provider value={musicPresenter}>
       <AudioDeviceStoreContext.Provider value={audioDevice}>
       <AudioDevicePresenterContext.Provider value={audioDevicePresenter}>
+      <ScoringStoreContext.Provider value={scoring}>
+      <ScoringPresenterContext.Provider value={scoringPresenter}>
       <SongStoreContext.Provider value={song}>
         <StructuralContext.Provider value={structural}>
           <ViewportStoreContext.Provider value={viewport}>
@@ -177,6 +207,8 @@ export const KaraokePage = observer(function KaraokePage() {
           </ViewportStoreContext.Provider>
         </StructuralContext.Provider>
       </SongStoreContext.Provider>
+      </ScoringPresenterContext.Provider>
+      </ScoringStoreContext.Provider>
       </AudioDevicePresenterContext.Provider>
       </AudioDeviceStoreContext.Provider>
       </MusicSourcePresenterContext.Provider>
@@ -361,6 +393,7 @@ const TransportBar = observer(function TransportBar() {
         {formatPlayheadTime(playbackEngine.currentTime)}
         {song.durationSec > 0 ? ` / ${formatPlayheadTime(song.durationSec)}` : ''}
       </span>
+      <ScoringControls />
       <HomeAudioControls />
     </footer>
   );

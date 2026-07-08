@@ -61,6 +61,10 @@ pub struct Shared {
     /// Measured output / input latency (ms), from the stream callback timestamps.
     pub out_latency_ms: AtomicF32,
     pub in_latency_ms: AtomicF32,
+    /// Mono mic-capture tap at `output_rate`, drained by the pitch thread (not
+    /// the RT callbacks). The input callback owns the ring's producer; this is
+    /// its consumer, swapped in on each (re)build. `None` when not capturing.
+    pub capture_cons: Mutex<Option<Consumer<f32>>>,
 }
 
 impl Shared {
@@ -79,6 +83,7 @@ impl Shared {
             level: AtomicF32::new(0.0),
             out_latency_ms: AtomicF32::new(0.0),
             in_latency_ms: AtomicF32::new(0.0),
+            capture_cons: Mutex::new(None),
         }
     }
 }
@@ -207,6 +212,20 @@ impl AudioEngine {
     pub fn latency_ms(&self) -> f32 {
         self.shared.out_latency_ms.load() + self.shared.in_latency_ms.load()
     }
+    /// Append the mono mic-capture tap (at [`capture_rate`](Self::capture_rate))
+    /// to `out`: everything the input callback produced since the last drain.
+    /// Empty when not capturing. Pitch-thread only (locks; not RT-safe).
+    pub fn drain_capture(&self, out: &mut Vec<f32>) {
+        if let Some(cons) = self.shared.capture_cons.lock().unwrap().as_mut() {
+            while let Ok(s) = cons.pop() {
+                out.push(s);
+            }
+        }
+    }
+    /// The mic-capture tap's sample rate (the output rate); 0 before output opens.
+    pub fn capture_rate(&self) -> u32 {
+        self.shared.output_rate.load(Ordering::Relaxed)
+    }
     pub fn set_mic_gain(&self, g: f32) {
         self.shared.mic_gain.store(g);
     }
@@ -286,17 +305,26 @@ fn build_streams(host: &Host, shared: &Arc<Shared>, sel: &DeviceSelection) -> St
         log::warn!("[utai-audio] no usable output device");
     }
 
+    // Mono mic-capture tap (input callback producer → pitch thread consumer),
+    // separate from the monitor ring above. ~2s of headroom at 48 kHz.
+    let (cap_prod, cap_cons) = RingBuffer::<f32>::new(96_000);
+
     let rate = shared.output_rate.load(Ordering::Relaxed);
     let inp = if sel.capture && rate > 0 {
         match pick_device(host, sel.input.as_deref(), true) {
-            Some(dev) => build_input(&dev, shared, prod, rate),
+            Some(dev) => {
+                *shared.capture_cons.lock().unwrap() = Some(cap_cons);
+                build_input(&dev, shared, prod, cap_prod, rate)
+            }
             None => {
                 log::warn!("[utai-audio] no usable input device");
+                *shared.capture_cons.lock().unwrap() = None;
                 None
             }
         }
     } else {
         drop(prod); // no capture (or no output rate): consumer stays empty → silence
+        *shared.capture_cons.lock().unwrap() = None;
         None
     };
 
@@ -447,6 +475,7 @@ fn build_input(
     dev: &Device,
     shared: &Arc<Shared>,
     prod: Producer<f32>,
+    cap_prod: Producer<f32>,
     rate: u32,
 ) -> Option<Stream> {
     let supported = dev
@@ -460,10 +489,10 @@ fn build_input(
         buffer_size: cpal::BufferSize::Default,
     };
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build_input_typed::<f32>(dev, &cfg, shared.clone(), prod, channels),
-        SampleFormat::I16 => build_input_typed::<i16>(dev, &cfg, shared.clone(), prod, channels),
-        SampleFormat::I32 => build_input_typed::<i32>(dev, &cfg, shared.clone(), prod, channels),
-        SampleFormat::U16 => build_input_typed::<u16>(dev, &cfg, shared.clone(), prod, channels),
+        SampleFormat::F32 => build_input_typed::<f32>(dev, &cfg, shared.clone(), prod, cap_prod, channels),
+        SampleFormat::I16 => build_input_typed::<i16>(dev, &cfg, shared.clone(), prod, cap_prod, channels),
+        SampleFormat::I32 => build_input_typed::<i32>(dev, &cfg, shared.clone(), prod, cap_prod, channels),
+        SampleFormat::U16 => build_input_typed::<u16>(dev, &cfg, shared.clone(), prod, cap_prod, channels),
         other => {
             log::error!("[utai-audio] unsupported input format {other:?}");
             None
@@ -481,6 +510,7 @@ fn build_input_typed<T>(
     cfg: &StreamConfig,
     shared: Arc<Shared>,
     mut prod: Producer<f32>,
+    mut cap_prod: Producer<f32>,
     in_ch: usize,
 ) -> Option<Stream>
 where
@@ -507,6 +537,7 @@ where
                 };
                 stereo.push(l);
                 stereo.push(r);
+                let _ = cap_prod.push((l + r) * 0.5); // mono pitch tap; drop if behind
             }
             for &s in &stereo {
                 let _ = prod.push(s); // drop if the consumer fell behind

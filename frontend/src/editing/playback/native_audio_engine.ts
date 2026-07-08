@@ -18,6 +18,11 @@ import { waveformWorker } from './waveform_worker_client';
 /** One frame of engine telemetry (see the Rust `Telemetry`), streamed ~33 Hz. */
 type Telemetry = { playSec: number; playing: boolean; level: number; latencyMs: number };
 
+/** One mic pitch reading from the sidecar's RMVPE, streamed while a scoring
+ *  session runs (see the Rust `PitchTelemetry`). */
+type PitchTelemetry = { hz: number; confidence: number };
+export type { PitchTelemetry };
+
 /** Playhead resync anchor: at wall-clock `atMs` the engine was at `playSec`,
  *  advancing iff `playing`. `currentTime` is dead-reckoned from this each frame. */
 type Anchor = { playSec: number; atMs: number; playing: boolean };
@@ -52,12 +57,24 @@ export class NativeAudioEngine implements PlaybackEngine {
   private trackIdCounter = 0;
   private selInput = '';
   private selOutput = '';
+  private pitchChannel: Channel<PitchTelemetry> | undefined;
+  private readonly pitchListeners = new Set<(f: PitchTelemetry) => void>();
 
   constructor() {
-    makeAutoObservable<this, 'ctx' | 'channel' | 'anchor' | 'rafId' | 'trackIdCounter' | 'selInput' | 'selOutput'>(
+    makeAutoObservable<
       this,
-      { ctx: false, channel: false, anchor: false, rafId: false, trackIdCounter: false, selInput: false, selOutput: false },
-    );
+      'ctx' | 'channel' | 'anchor' | 'rafId' | 'trackIdCounter' | 'selInput' | 'selOutput' | 'pitchChannel' | 'pitchListeners'
+    >(this, {
+      ctx: false,
+      channel: false,
+      anchor: false,
+      rafId: false,
+      trackIdCounter: false,
+      selInput: false,
+      selOutput: false,
+      pitchChannel: false,
+      pitchListeners: false,
+    });
   }
 
   get songLeadInSec(): number {
@@ -173,6 +190,34 @@ export class NativeAudioEngine implements PlaybackEngine {
 
   setMicGain(gain: number): void {
     void invoke('audio_set_mic_gain', { gain });
+  }
+
+  // --- live pitch (used by SidecarLivePitchSource) ---
+
+  /** Subscribe to sidecar pitch frames; returns an unsubscribe fn. Frames only
+   *  flow between {@link startPitchStream} and {@link stopPitchStream}. */
+  onPitch(cb: (f: PitchTelemetry) => void): () => void {
+    this.pitchListeners.add(cb);
+    return () => this.pitchListeners.delete(cb);
+  }
+
+  /** Tell Rust to forward the live mic capture to the sidecar's RMVPE and stream
+   *  pitch back. Idempotent. */
+  startPitchStream(): void {
+    if (this.pitchChannel) return;
+    const channel = new Channel<PitchTelemetry>();
+    channel.onmessage = (msg) => {
+      for (const l of this.pitchListeners) l(msg);
+    };
+    this.pitchChannel = channel;
+    void invoke('audio_pitch_subscribe', { channel });
+  }
+
+  /** Stop the pitch stream (drops the channel → ends the Rust forwarding). */
+  stopPitchStream(): void {
+    if (this.pitchChannel == null) return;
+    this.pitchChannel = undefined;
+    void invoke('audio_pitch_unsubscribe').catch(() => {});
   }
 
   setOutputVolume(volume: number): void {
