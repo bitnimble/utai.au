@@ -130,14 +130,8 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // zoom-dependent glyph measurement (the wave wavelength is derived from each
   // word's sustain pixel width), so this re-derives on zoom / font-load too.
   const pitchPaths = React.useMemo(
-    () =>
-      computePitchPaths(
-        positioned,
-        pxPerBeat,
-        { pitch: pitchEnabled, vibrato: vibratoEnabled },
-        lyricsFontSizePx,
-      ),
-    [positioned, pxPerBeat, fontReady, pitchEnabled, vibratoEnabled, lyricsFontSizePx],
+    () => computePitchPaths(positioned, pxPerBeat, { pitch: pitchEnabled, vibrato: vibratoEnabled }),
+    [positioned, pxPerBeat, pitchEnabled, vibratoEnabled],
   );
 
   // True once any word has a resolved furigana reading; drives the ruby

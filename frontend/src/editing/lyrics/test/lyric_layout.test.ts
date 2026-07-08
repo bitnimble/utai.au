@@ -53,6 +53,26 @@ describe('buildPitchLine', () => {
     expect(path!.trimEnd().endsWith('L100 0')).toBe(true);
   });
 
+  test('places a note at its time position within the word (x proportional to beatOffset)', () => {
+    // A note spanning beats [2, 6] of a 10-beat word -> viewBox x [20, 60];
+    // the 6-unit curve inset leaves the held run at x 26..54.
+    const path = buildPitchLine(
+      word({
+        pitchFrac: 0.5,
+        beatWidth: 10,
+        segments: [{ beatOffset: 2, beatWidth: 4, pitchFrac: 0.2, vibrato: false }],
+      }),
+      100,
+      18,
+      { pitch: true, vibrato: false },
+    );
+    // The note's flat run sits at its time-proportional x (26..54), at y=80
+    // (pitchFrac 0.2), then holds flat to the word end.
+    expect(path).toContain('26 80');
+    expect(path).toContain('L54 80');
+    expect(path!.trimEnd().endsWith('L100 80')).toBe(true);
+  });
+
   test('flat mode pins every note to the band centre', () => {
     const path = buildPitchLine(
       word({

@@ -303,15 +303,13 @@ export function needsWordSpace(a: string, b: string): boolean {
 }
 
 /** Per-word SVG pitch-line path (see `lyric_layout.buildPitchLine`), keyed like
- *  the shift map. Measures each word's glyph width at the current zoom to get
- *  its sustain (post-text) pixel width, so the vibrato wave's on-screen
- *  wavelength stays constant across chips. Recomputed on zoom / font-load like
- *  the shifts. */
+ *  the shift map. The line spans the word's whole beat cell (time-accurate x),
+ *  so the on-screen width that keeps the vibrato wavelength constant is just the
+ *  cell width, independent of the text. Recomputed on zoom like the shifts. */
 export function computePitchPaths(
   lines: readonly PositionedLine[],
   pxPerBeat: number,
   opts: { pitch: boolean; vibrato: boolean },
-  fontSizePx: number,
 ): Map<LyricShiftKey, string> {
   const out = new Map<LyricShiftKey, string>();
   // No line at all when both are off; the plain trailing-rule sustain shows.
@@ -320,9 +318,8 @@ export function computePitchPaths(
     if (!line.wordPositions) continue;
     for (const w of line.wordPositions) {
       if (!w.segments) continue;
-      const textPx = lyricsMeasurer.measureWordPx(w.text, pxPerBeat, false, fontSizePx);
-      const trailPx = Math.max(0, w.beatWidth * pxPerBeat - textPx);
-      const path = buildPitchLine(w, trailPx, WAVE_WAVELENGTH_PX, opts);
+      const spanPx = w.beatWidth * pxPerBeat;
+      const path = buildPitchLine(w, spanPx, WAVE_WAVELENGTH_PX, opts);
       if (path) out.set(lyricShiftKey(line.i, w.sourceIdx), path);
     }
   }

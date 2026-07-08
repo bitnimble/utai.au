@@ -6,7 +6,6 @@ import { buildLinearTimeline } from 'src/editing/playback/timeline';
 import { LyricLineChip } from '../lyric_chips';
 import { positionLyricLines } from '../lyric_layout';
 import { computePitchPaths } from '../lyrics_measure';
-import { DEFAULT_LYRIC_FONT_SIZE_PX } from 'src/settings/app_settings_store';
 import styles from '../lyrics_track_view.module.css';
 
 /**
@@ -112,7 +111,7 @@ function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { line
   const positioned = positionLyricLines(lines, timeline, 0, [durationSec], 0, durationSec, { pitch });
   const emptyShifts = React.useMemo(() => new Map<string, number>(), []);
   const pitchPaths = React.useMemo(
-    () => computePitchPaths(positioned, pxPerBeat, { pitch, vibrato }, DEFAULT_LYRIC_FONT_SIZE_PX),
+    () => computePitchPaths(positioned, pxPerBeat, { pitch, vibrato }),
     [positioned, pxPerBeat, pitch, vibrato],
   );
 

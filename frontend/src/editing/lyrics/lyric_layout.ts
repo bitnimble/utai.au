@@ -268,20 +268,20 @@ const _clamp = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi
 export const WAVE_WAVELENGTH_PX = 18;
 
 /** One continuous SVG path for a word's sung-pitch line, in a `0 0 100 100`
- *  viewBox stretched (preserveAspectRatio="none") across the word's post-text
- *  sustain region (`trailPx` wide on screen). y=50 is the word's median pitch
- *  (== the text's vertical centre); notes step off it by pitch, joined by smooth
- *  cubic curves so a melisma reads as one continuous stepping line, and a
- *  vibrato note's run is a smooth wave whose cycle count is set from `trailPx`
- *  so its on-screen wavelength is ~`wavelengthPx` on every chip. Notes are
- *  distributed across x by relative duration.
+ *  viewBox stretched (preserveAspectRatio="none") across the word's whole beat
+ *  cell (`spanPx` wide on screen), so x is time (x=0 the word's onset, x=100 its
+ *  end) and each note sits at its own beat offset. Absolute pitch drives y
+ *  (0..1 of the range → the band); notes join by smooth cubic curves so a
+ *  melisma reads as one continuous stepping line, and a vibrato note's run is a
+ *  smooth wave whose cycle count is set from `spanPx` so its on-screen
+ *  wavelength is ~`wavelengthPx` on every chip.
  *
  *  `pitch` off flattens it (every note on the centre line, no vertical stepping)
  *  so the trailing line + vibrato can still show on a flat track; `vibrato` off
  *  draws vibrato notes as straight held runs. Undefined when no segments. */
 export function buildPitchLine(
   word: PositionedWord,
-  trailPx: number,
+  spanPx: number,
   wavelengthPx: number,
   opts: { pitch: boolean; vibrato: boolean },
 ): string | undefined {
@@ -289,24 +289,26 @@ export function buildPitchLine(
   if (!segs || segs.length === 0) return undefined;
   const wordFrac = word.pitchFrac ?? 0;
   const flat = !opts.pitch || word.pitchFrac === undefined;
-  const total = segs.reduce((s, g) => s + Math.max(g.beatWidth, 1e-4), 0);
   // Absolute pitch: pitchFrac (0 = bottom of the vocal range, 1 = top) maps
   // straight onto the viewBox, whose 100 units cover the whole pitch band (the
   // SVG is positioned band-tall over the track, not clipped to the word chip).
   // So a note's line sits at the same height a word at that pitch would, and a
   // big interval reads as a big vertical move. Flat mode pins to the centre.
   const yOf = (frac: number) => (flat ? 50 : (1 - frac) * 100);
+  // Time-accurate x: the viewBox's 100 units span the word's whole beat cell
+  // (x=0 = the word's start, x=100 = its end) and each note sits at its own
+  // beat offset, so the point under the playhead is the pitch actually sung at
+  // that instant. The stretch behind the glyphs is occluded by the text.
+  const wordBeats = Math.max(word.beatWidth, 1e-4);
+  const xOf = (beat: number) => _clamp((beat / wordBeats) * 100, 0, 100);
   const transitionX = 6; // viewBox units reserved on each side of a note for the curve
 
-  let x = 0;
   let prevX = 0;
-  let prevY = yOf(wordFrac); // start at the text edge, at the median pitch
+  let prevY = yOf(wordFrac); // start at the word's onset, at the median pitch
   let d = `M0 ${_fmt(prevY)}`;
   for (const g of segs) {
-    const w = (Math.max(g.beatWidth, 1e-4) / total) * 100;
-    const x0 = x;
-    const x1 = x + w;
-    x = x1;
+    const x0 = xOf(g.beatOffset);
+    const x1 = xOf(g.beatOffset + g.beatWidth);
     const y = yOf(g.pitchFrac);
     const mid = (x0 + x1) / 2;
     const flatStart = Math.min(x0 + transitionX, mid);
@@ -314,7 +316,7 @@ export function buildPitchLine(
     const cx = (prevX + flatStart) / 2; // symmetric cubic control for a smooth S
     if (g.vibrato && opts.vibrato) {
       // cycle count for a constant on-screen wavelength: run's pixel width / λ.
-      const runPx = ((flatEnd - flatStart) / 100) * trailPx;
+      const runPx = ((flatEnd - flatStart) / 100) * spanPx;
       const cycles = _clamp(runPx / wavelengthPx, 0.75, 40);
       d += ` C${_fmt(cx)} ${_fmt(prevY)} ${_fmt(cx)} ${_fmt(y)} ${_fmt(flatStart)} ${_fmt(y)}`;
       d += _wavyRun(flatStart, flatEnd, y, cycles);

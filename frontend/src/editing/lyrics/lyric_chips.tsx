@@ -188,20 +188,22 @@ const LyricWordChip = observer(
         title={buildWordDebugTitle(word.source)}
         data-testid={`lyrics-word-${lineIdx}-${wordIdx}`}
       >
+        {pitchPath && (
+          // Behind the glyphs (see `.lyricPitchLine` z-index): it spans the
+          // word's whole beat cell, so the text occludes the under-glyph stretch
+          // and only the post-text sustain shows.
+          <svg
+            className={styles.lyricPitchLine}
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <path d={pitchPath} />
+          </svg>
+        )}
         <span className={styles.lyricWordText}>
           <WordText words={lineWordTexts} index={wordPosIndex} />
         </span>
-        {pitchPath && (
-          <span className={styles.lyricPitchTrail} aria-hidden="true">
-            <svg
-              className={styles.lyricPitchLine}
-              viewBox="0 0 100 100"
-              preserveAspectRatio="none"
-            >
-              <path d={pitchPath} />
-            </svg>
-          </span>
-        )}
       </span>
     );
   },
