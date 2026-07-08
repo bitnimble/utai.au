@@ -1,6 +1,7 @@
 import { Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
+import { Slider } from 'src/ui/slider/slider';
 import { AudioDevicePresenterContext, AudioDeviceStoreContext } from './audio_device_contexts';
 import styles from './audio_controls.module.css';
 
@@ -45,16 +46,15 @@ export const ChannelControls = observer(function ChannelControls({
       >
         <Icon size={16} aria-hidden="true" />
       </button>
-      <input
-        type="range"
+      <Slider
         className={styles.slider}
         min={0}
         max={100}
         step={1}
         value={Math.round(volume * 100)}
-        onChange={(e) => setVolume(Number(e.target.value) / 100)}
-        aria-label={`${label} volume`}
-        data-testid={`audio-${channel}-volume-${scope}`}
+        onChange={(v) => setVolume(v / 100)}
+        ariaLabel={`${label} volume`}
+        testId={`audio-${channel}-volume-${scope}`}
       />
     </div>
   );

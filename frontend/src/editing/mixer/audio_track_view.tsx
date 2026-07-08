@@ -7,6 +7,7 @@ import type { StructuralPresenter } from 'src/editing/structure/structural_prese
 import { AudioTrack, AudioTrackId } from 'src/editing/playback/audio_tracks';
 import { waveformWorker, BarSlice } from 'src/editing/playback/waveform_worker_client';
 import { WAVEFORM_PAINT_COLOR } from 'src/editing/utils/waveform_color';
+import { Slider } from 'src/ui/slider/slider';
 import { BarBeat, WaveformChunk, buildChunkLayout } from './waveform_chunks';
 import { StructuralContext } from '../editor_contexts';
 import { ViewportStoreContext } from '../viewport/viewport_contexts';
@@ -88,16 +89,15 @@ export const AudioTrackView = observer(
             >
               {track.muted ? <VolumeX size={14} aria-hidden="true" /> : <Volume2 size={14} aria-hidden="true" />}
             </button>
-            <input
-              type="range"
+            <Slider
               min={0}
               max={1}
               step={0.01}
               value={track.volume}
-              onChange={(e) => presenter?.setTrackVolume(track.id, Number(e.target.value))}
+              onChange={(v) => presenter?.setTrackVolume(track.id, v)}
               className={styles.volumeSlider}
-              aria-label={`${label} volume`}
-              data-testid={`audio-track-volume-${track.id}`}
+              ariaLabel={`${label} volume`}
+              testId={`audio-track-volume-${track.id}`}
             />
           </div>
         </div>
