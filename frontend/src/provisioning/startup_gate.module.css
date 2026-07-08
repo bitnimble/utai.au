@@ -1,0 +1,41 @@
+.title {
+    composes: heading from '../typography.module.css';
+    margin: 0 0 12px;
+}
+
+.body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.status {
+    composes: bodyMd from '../typography.module.css';
+    color: var(--color-text);
+}
+
+.detail {
+    composes: readoutSm from '../typography.module.css';
+    color: var(--color-text-muted-alt);
+}
+
+.progress {
+    width: 100%;
+}
+
+.error {
+    composes: body from '../typography.module.css';
+    color: var(--color-error);
+    margin: 0;
+}
+
+.retry {
+    composes: secondary from '../ui/button/button.module.css';
+    align-self: flex-start;
+}
