@@ -21,6 +21,20 @@ const DEFAULT_NAME_THRESHOLD = 0.6;
  *  words ("karma" vs "paranoid") don't. */
 const WORD_MATCH_THRESHOLD = 0.7;
 
+/** Per-candidate diagnostic emitted by {@link pickConfidentMatch}'s `onTrace`,
+ *  for logging why each LRCLIB result was accepted or rejected. */
+export type MatchTrace = {
+  trackName: string;
+  artistName: string;
+  duration: number | null;
+  durationDelta: number | null;
+  tolerance: number;
+  nameSim: number | null;
+  nameThreshold: number;
+  accepted: boolean;
+  reason: 'no-synced-lyrics' | 'duration-too-far' | 'name-too-weak' | 'candidate';
+};
+
 /**
  * Pick the confident LRCLIB result: its duration is within `toleranceSec` of the
  * song's duration AND its "trackName artistName" is a word-level fuzzy match
@@ -28,12 +42,19 @@ const WORD_MATCH_THRESHOLD = 0.7;
  * covers / live / remixes; the name gate rejects a different song that happens to
  * share a length. Among the survivors the closest duration wins (ties break
  * toward the stronger name match). undefined when the song duration is unknown or
- * nothing qualifies.
+ * nothing qualifies. `opts.onTrace` (if given) fires once per result with its
+ * scoring + accept/reject reason, for debug logging.
  */
 export function pickConfidentMatch(
   matches: readonly LrclibMatch[],
   durationSec: number,
-  opts: { title?: string; artist?: string; toleranceSec?: number; nameThreshold?: number } = {},
+  opts: {
+    title?: string;
+    artist?: string;
+    toleranceSec?: number;
+    nameThreshold?: number;
+    onTrace?: (t: MatchTrace) => void;
+  } = {},
 ): LrclibMatch | undefined {
   if (!(durationSec > 0)) return undefined;
   const tolerance = opts.toleranceSec ?? DEFAULT_TOLERANCE_SEC;
@@ -41,11 +62,49 @@ export function pickConfidentMatch(
   const query = `${opts.title ?? ''} ${opts.artist ?? ''}`;
   let best: { match: LrclibMatch; delta: number; nameSim: number } | undefined;
   for (const m of matches) {
-    if (m.duration == null || m.syncedLyrics == null || m.syncedLyrics.length === 0) continue;
+    if (m.duration == null || m.syncedLyrics == null || m.syncedLyrics.length === 0) {
+      opts.onTrace?.({
+        trackName: m.trackName,
+        artistName: m.artistName,
+        duration: m.duration,
+        durationDelta: null,
+        tolerance,
+        nameSim: null,
+        nameThreshold,
+        accepted: false,
+        reason: 'no-synced-lyrics',
+      });
+      continue;
+    }
     const delta = Math.abs(m.duration - durationSec);
-    if (delta > tolerance) continue;
+    if (delta > tolerance) {
+      opts.onTrace?.({
+        trackName: m.trackName,
+        artistName: m.artistName,
+        duration: m.duration,
+        durationDelta: delta,
+        tolerance,
+        nameSim: null,
+        nameThreshold,
+        accepted: false,
+        reason: 'duration-too-far',
+      });
+      continue;
+    }
     const nameSim = wordLevelSimilarity(query, `${m.trackName} ${m.artistName}`);
-    if (nameSim < nameThreshold) continue;
+    const accepted = nameSim >= nameThreshold;
+    opts.onTrace?.({
+      trackName: m.trackName,
+      artistName: m.artistName,
+      duration: m.duration,
+      durationDelta: delta,
+      tolerance,
+      nameSim,
+      nameThreshold,
+      accepted,
+      reason: accepted ? 'candidate' : 'name-too-weak',
+    });
+    if (!accepted) continue;
     if (best == null || delta < best.delta || (delta === best.delta && nameSim > best.nameSim)) {
       best = { match: m, delta, nameSim };
     }

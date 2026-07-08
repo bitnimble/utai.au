@@ -83,6 +83,13 @@ export class SongIoPresenter {
    *  + duration; the lyrics presenter only applies a confident duration match. */
   private autoFetchLyrics(file: File): void {
     const parsed = parseSongFilename(file.name);
+    console.log('[auto-lyrics] deriving query', {
+      filename: file.name,
+      metaTitle: this.song.title,
+      metaArtist: this.song.artist,
+      parsedFromFilename: parsed,
+      durationSec: this.song.durationSec,
+    });
     this.lyrics.autoFetchLyrics({
       title: this.song.title || parsed.title,
       artist: this.song.artist || parsed.artist,

@@ -95,17 +95,25 @@ export class LyricsPresenter {
 
   /**
    * Auto-fetch synced lyrics from LRCLIB after a song loads and apply them when a
-   * result matches the song's duration (duration-first, per {@link pickDurationMatch}:
-   * the loaded audio's length disambiguates covers / live / remixes even when the
-   * title/artist strings differ). Best-effort and silent on a miss, so it never
-   * interrupts; a new song aborts a pending fetch. No-op when lyrics are already
-   * loaded or there's nothing to search with.
+   * result is a confident match (per {@link pickConfidentMatch}: both a duration
+   * match and a fuzzy title+artist match, the loaded audio's length disambiguates
+   * covers / live / remixes, the name gate rejects a different song of the same
+   * length). Best-effort and silent on a miss, so it never interrupts; a new song
+   * aborts a pending fetch. No-op when lyrics are already loaded or there's nothing
+   * to search with.
    */
   autoFetchLyrics(query: { title: string; artist: string; durationSec: number }): void {
     const title = query.title.trim();
     const artist = query.artist.trim();
-    if (title.length === 0 && artist.length === 0) return;
-    if (lyricsStore.hasAnyLyrics) return;
+    console.log('[auto-lyrics] triggered', { title, artist, durationSec: query.durationSec });
+    if (title.length === 0 && artist.length === 0) {
+      console.log('[auto-lyrics] skipped: no title/artist to search with');
+      return;
+    }
+    if (lyricsStore.hasAnyLyrics) {
+      console.log('[auto-lyrics] skipped: lyrics already loaded');
+      return;
+    }
     this.autoFetchController?.abort();
     const controller = new AbortController();
     this.autoFetchController = controller;
@@ -121,16 +129,49 @@ export class LyricsPresenter {
     let matches: LrclibMatch[];
     try {
       matches = await searchLrclib({ trackName: title, artistName: artist, signal: controller.signal });
-    } catch {
+    } catch (err) {
+      console.log('[auto-lyrics] search failed', err);
       return; // network error / abort: stay silent, the user can still search manually
     }
+    console.log(
+      `[auto-lyrics] LRCLIB returned ${matches.length} result(s) for`,
+      { trackName: title, artistName: artist },
+      matches.map((m) => ({ trackName: m.trackName, artistName: m.artistName, duration: m.duration })),
+    );
     // A newer song (or a manual load) superseded this fetch.
-    if (controller.signal.aborted || this.autoFetchController !== controller) return;
-    if (lyricsStore.hasAnyLyrics) return;
-    const best = pickConfidentMatch(matches, durationSec, { title, artist });
-    if (best?.syncedLyrics == null) return; // no confident match
+    if (controller.signal.aborted || this.autoFetchController !== controller) {
+      console.log('[auto-lyrics] superseded by a newer song / load, discarding results');
+      return;
+    }
+    if (lyricsStore.hasAnyLyrics) {
+      console.log('[auto-lyrics] lyrics loaded while fetching, discarding results');
+      return;
+    }
+    const best = pickConfidentMatch(matches, durationSec, {
+      title,
+      artist,
+      onTrace: (t) =>
+        console.log(
+          `[auto-lyrics] ${t.accepted ? 'ACCEPT' : 'reject'} "${t.trackName} - ${t.artistName}" (${t.reason})`,
+          {
+            duration: t.duration,
+            durationDelta: t.durationDelta,
+            tolerance: t.tolerance,
+            nameSim: t.nameSim,
+            nameThreshold: t.nameThreshold,
+          },
+        ),
+    });
+    if (best?.syncedLyrics == null) {
+      console.log('[auto-lyrics] no confident match, nothing auto-loaded');
+      return; // no confident match
+    }
     const lines = parseLrc(best.syncedLyrics);
-    if (lines.length === 0) return;
+    if (lines.length === 0) {
+      console.log('[auto-lyrics] confident match had unparseable synced lyrics, nothing auto-loaded');
+      return;
+    }
+    console.log(`[auto-lyrics] auto-loading "${best.trackName} - ${best.artistName}" (${lines.length} lines)`);
     this.applyLrclibResult(
       lines,
       { trackName: best.trackName, artistName: best.artistName },
