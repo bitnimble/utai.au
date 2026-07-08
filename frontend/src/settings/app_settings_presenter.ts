@@ -1,5 +1,5 @@
 import { autorun, makeAutoObservable } from 'mobx';
-import { AppSettingsStore } from './app_settings_store';
+import { AppSettingsStore, AutoscrollMode } from './app_settings_store';
 
 const STORAGE_KEY = 'utai.settings';
 
@@ -19,7 +19,10 @@ export class AppSettingsPresenter {
     // (private mode, sandboxed context), in which case the in-memory value
     // still works for the session.
     autorun(() => {
-      const snapshot = JSON.stringify({ alignerUrl: this.settings.alignerUrl });
+      const snapshot = JSON.stringify({
+        alignerUrl: this.settings.alignerUrl,
+        autoscrollMode: this.settings.autoscrollMode,
+      });
       try {
         localStorage.setItem(STORAGE_KEY, snapshot);
       } catch {
@@ -30,6 +33,10 @@ export class AppSettingsPresenter {
 
   setAlignerUrl(url: string): void {
     this.settings.alignerUrl = url;
+  }
+
+  setAutoscrollMode(mode: AutoscrollMode): void {
+    this.settings.autoscrollMode = mode;
   }
 
   private load(): void {
@@ -46,6 +53,14 @@ export class AppSettingsPresenter {
       const obj = parsed as Record<string, unknown>;
       if (typeof obj.alignerUrl === 'string') {
         this.settings.alignerUrl = obj.alignerUrl;
+      }
+      if (
+        obj.autoscrollMode === 'off' ||
+        obj.autoscrollMode === 'center' ||
+        obj.autoscrollMode === 'page' ||
+        obj.autoscrollMode === 'line'
+      ) {
+        this.settings.autoscrollMode = obj.autoscrollMode;
       }
     } catch {
       // corrupt JSON; keep defaults

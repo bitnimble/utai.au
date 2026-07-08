@@ -15,6 +15,7 @@
     <style>
       html,
       body {
+        margin: 0;
         font-family:
           'Bricolage Grotesque',
           system-ui,
@@ -22,6 +23,14 @@
           'Segoe UI',
           Roboto,
           sans-serif;
+      }
+      /* The app owns its own scroll regions (the score scrolls horizontally);
+         the page itself never scrolls. */
+      body {
+        overflow: hidden;
+      }
+      #root {
+        height: 100%;
       }
       /* Form controls default to their own UA font; make every primitive
          inherit the product font (backs up the per-component resets). */

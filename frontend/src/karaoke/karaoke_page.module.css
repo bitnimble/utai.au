@@ -1,13 +1,17 @@
 .page {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    /* dvh (not vh) so the mobile browser's collapsing URL/toolbar chrome
+       doesn't push the transport footer below the visible viewport. */
+    height: 100dvh;
+    overflow: hidden;
     background: var(--color-bg-base);
     color: var(--color-text);
 }
 
 .toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     padding: 8px 16px;
@@ -63,6 +67,10 @@
 .scoreArea {
     position: relative;
     flex: 1 1 auto;
+    /* min-height: 0 lets this flex child shrink below its content height so
+       its own overflow scrolls instead of growing the column past the
+       viewport and shoving the transport footer off-screen. */
+    min-height: 0;
     overflow: auto;
     background: var(--color-bg-base);
 }
@@ -75,12 +83,35 @@
 
 .transport {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     padding: 8px 16px;
+    /* Clear the phone's home-indicator / gesture area at the bottom edge. */
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
     border-top: 1px solid var(--color-border);
     background: var(--color-bg-overlay);
     flex: 0 0 auto;
+}
+
+/* Autoscroll (follow-playhead) mode picker in the transport bar. Mirrors the
+   scoring difficulty select so the transport chrome reads consistently. */
+.followControl {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-text-secondary);
+    user-select: none;
+}
+
+.followSelect {
+    composes: labelSm from '../typography.module.css';
+    height: var(--control-height);
+    padding: 0 6px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-base);
+    color: var(--color-text);
 }
 
 .transportButton {

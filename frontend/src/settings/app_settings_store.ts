@@ -8,6 +8,13 @@ const envDefault = import.meta.env.VITE_ALIGNER_URL;
 export const DEFAULT_ALIGNER_URL =
   typeof envDefault === 'string' ? envDefault : '';
 
+/** How the score follows the playhead during playback. `off` leaves scrolling
+ *  to the user; `center` keeps the playhead pinned to the viewport centre with
+ *  the track scrolling under it; `page` sweeps the playhead left→right and turns
+ *  a full page when it reaches the right edge; `line` shows only the current
+ *  lyric line and pages on the original line boundaries (classic karaoke). */
+export type AutoscrollMode = 'off' | 'center' | 'page' | 'line';
+
 /**
  * Device-global app settings that persist across songs and app launches: the
  * lyrics-alignment backend URL today, with room for future global preferences.
@@ -22,6 +29,10 @@ export class AppSettingsStore {
    * proxy serves on the app's own origin.
    */
   alignerUrl: string = DEFAULT_ALIGNER_URL;
+
+  /** Follow-playhead scroll behaviour during playback. Defaults off so the
+   *  current free-scroll behaviour is unchanged until the user opts in. */
+  autoscrollMode: AutoscrollMode = 'off';
 
   constructor() {
     makeAutoObservable(this);

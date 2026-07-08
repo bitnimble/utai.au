@@ -4,6 +4,7 @@ import { FolderOpen, Music, Pause, Play, Save, Search, Settings, Square } from '
 import React from 'react';
 import { nativeAudioEngine, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
+import { activeLineIndexAt } from 'src/lyrics/lrc';
 import { formatPlayheadTime } from 'src/editing/playback/playhead_label';
 import { AudioTrackView } from 'src/editing/mixer/audio_track_view';
 import { LyricsTrackView } from 'src/editing/lyrics/lyrics_track_view';
@@ -47,6 +48,9 @@ import { createLivePitchSource } from 'src/scoring/create_live_pitch_source';
 import { firstPitchedTrack, referenceTargets } from 'src/scoring/reference_targets';
 import { ScoringPresenterContext, ScoringStoreContext } from 'src/scoring/scoring_contexts';
 import { ScoringControls } from 'src/scoring/scoring_hud';
+import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_settings_presenter';
+import { AutoscrollMode } from 'src/settings/app_settings_store';
+import { autoscrollTargetLeft } from 'src/editing/score/autoscroll';
 import { KaraokePresenter } from './karaoke_presenter';
 import {
   KaraokePresenterContext,
@@ -402,6 +406,43 @@ const ScoreArea = observer(function ScoreArea() {
     });
   }, [viewport]);
 
+  // Autoscroll (follow-playhead): drive the score's scrollLeft so the playhead
+  // stays centred (`center`), paged (`page`), or the current lyric line stays
+  // in view (`line`). Reads `mode` first, so an `off` mode never subscribes to
+  // `currentTime` and the autorun stays idle. Programmatic scrollLeft re-fires
+  // the onScroll → setScrollX mirror (harmless; it just keeps the windowing
+  // store in sync).
+  React.useEffect(() => {
+    return autorun(() => {
+      const mode = appSettingsStore.autoscrollMode;
+      if (mode === 'off') return;
+      const el = scrollRef.current;
+      if (!el) return;
+      const ppb = viewport.pxPerBeat;
+      if (ppb <= 0) return;
+
+      // Line mode pages on the original lyric-line boundaries, pinning the
+      // current line's start to the left of the bars area. Driven off the
+      // first lyrics track; positions regardless of play state so the single
+      // visible line (see WindowedLines) is always scrolled into view.
+      if (mode === 'line') {
+        const trackId = lyricsStore.trackIds[0];
+        const track = trackId != null ? lyricsStore.get(trackId) : undefined;
+        if (!track || track.lines.length === 0) return;
+        const audioTime = playbackEngine.currentTime - playbackEngine.songLeadInSec;
+        const idx = activeLineIndexAt(track.lines, audioTime, track.offsetSec) ?? 0;
+        el.scrollLeft = Math.max(0, (track.lines[idx].startSec + track.offsetSec) * ppb);
+        return;
+      }
+
+      if (playbackEngine.state !== 'playing') return;
+      const vw = viewport._viewportWidth;
+      if (vw <= 0) return;
+      const playheadX = playbackEngine.currentTime * ppb;
+      el.scrollLeft = autoscrollTargetLeft(mode, playheadX, vw);
+    });
+  }, [viewport]);
+
   const onSeek = (x: number): void => presenter.seekToX(x);
 
   return (
@@ -458,9 +499,39 @@ const TransportBar = observer(function TransportBar() {
         {formatPlayheadTime(playbackEngine.currentTime)}
         {song.durationSec > 0 ? ` / ${formatPlayheadTime(song.durationSec)}` : ''}
       </span>
+      <AutoscrollControl />
       <ScoringControls />
       <HomeAudioControls />
     </footer>
+  );
+});
+
+const AUTOSCROLL_LABELS: Record<AutoscrollMode, string> = {
+  off: "Don't follow",
+  center: 'Center',
+  page: 'Page',
+  line: 'Line',
+};
+
+const AutoscrollControl = observer(function AutoscrollControl() {
+  return (
+    <label className={styles.followControl}>
+      Follow
+      <select
+        className={styles.followSelect}
+        value={appSettingsStore.autoscrollMode}
+        onChange={(e) => appSettingsPresenter.setAutoscrollMode(e.target.value as AutoscrollMode)}
+        aria-label="Autoscroll to follow the playhead during playback"
+        title="How the score scrolls to follow the playhead while playing"
+        data-testid="autoscroll-mode"
+      >
+        {(Object.keys(AUTOSCROLL_LABELS) as AutoscrollMode[]).map((mode) => (
+          <option key={mode} value={mode}>
+            {AUTOSCROLL_LABELS[mode]}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 });
 

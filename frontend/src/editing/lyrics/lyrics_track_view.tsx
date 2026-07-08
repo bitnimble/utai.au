@@ -5,6 +5,7 @@ import { StructuralContext } from '../editor_contexts';
 import { furiganaAnnotator } from 'src/lyrics/furigana';
 import { activeLineIndexAt, activeWordIndexAt } from 'src/lyrics/lrc';
 import { LyricsTrackId, lyricsStore } from 'src/lyrics/store';
+import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { playbackEngine } from 'src/editing/playback/player';
 import { LyricsPresenterContext, LyricsAlignStoreContext } from './lyrics_contexts';
 import {
@@ -59,6 +60,9 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // TODO(settings): source these from the user's lyrics settings.
   const pitchEnabled = true;
   const vibratoEnabled = true;
+  // Karaoke "line" autoscroll shows only the current lyric line; every other
+  // line is hidden regardless of zoom (see WindowedLines).
+  const lineOnly = appSettingsStore.autoscrollMode === 'line';
   const hasPitchData = React.useMemo(
     () => lines.some((l) => l.words?.some((w) => w.midi != null)),
     [lines],
@@ -202,6 +206,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
           shifts={shifts}
           pitchPaths={pitchPaths}
           playhead={playhead}
+          lineOnly={lineOnly}
         />
         <Playhead onSeek={onSeek} />
       </div>

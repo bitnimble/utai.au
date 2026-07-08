@@ -264,18 +264,28 @@ export const WindowedLines = observer(function WindowedLines({
   shifts,
   pitchPaths,
   playhead,
+  lineOnly = false,
 }: {
   positioned: PositionedLine[];
   shifts: Map<string, number>;
   pitchPaths: Map<string, string>;
   playhead: LyricsPlayhead;
+  /** Karaoke "line" mode: render only the current line, hiding every other
+   *  line regardless of zoom. Before the first line (no active line yet), the
+   *  first line is cued so the row isn't blank. */
+  lineOnly?: boolean;
 }) {
   const viewport = React.useContext(ViewportStoreContext);
   const range = viewport?.visibleBeatRange ?? null;
+  const shownLine = lineOnly ? (playhead.activeLineIdx ?? 0) : undefined;
   return (
     <>
       {positioned.map((p) => {
-        if (!intersectsBeatRange(range, p.startBeat, p.endBeat - p.startBeat)) return null;
+        if (lineOnly) {
+          if (p.i !== shownLine) return null;
+        } else if (!intersectsBeatRange(range, p.startBeat, p.endBeat - p.startBeat)) {
+          return null;
+        }
         const isActive = playhead.activeLineIdx === p.i;
         return (
           <LyricLineChip
