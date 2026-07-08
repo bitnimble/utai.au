@@ -51,8 +51,12 @@ exits and everything still works against public lrclib.net.
 echo "LRCLIB_DUMP_URL=https://lrclib.net/db-dumps/lrclib-db-dump-<timestamp>.sqlite3.gz" >> .env
 ```
 
-First `up` builds the Rust server from source and does the multi-GB download, so
-it's slow; until the dump lands the frontend just uses public lrclib.net.
+The mirror is a tiny Bun script (`docker/lrclib-server.ts`) that serves
+`/api/search` directly off the dump's FTS index, no build, it just runs on the
+web service's Bun image. The only slow part of the first `up` is the multi-GB
+download; until the dump lands the frontend just uses public lrclib.net. (It
+doesn't reproduce LRCLIB's exact ranking, but the client re-filters every result
+by duration + fuzzy title/artist, so that doesn't matter.)
 
 ## First-run checks
 
