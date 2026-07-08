@@ -104,8 +104,13 @@ class LyricsMeasurer {
   ): number {
     const ctx = this.ensureCtx();
     if (!ctx) return 0;
-    // CSS font shorthand: <weight> <stretch%> <size>px <family>.
-    ctx.font = `${Math.round(wght)} ${wdthPct.toFixed(2)}% ${sizePx}px ${FONT_FAMILY}`;
+    // A PERCENTAGE font-stretch in the shorthand ("800 92% 26px …") is rejected
+    // by the canvas font parser (Chromium leaves `ctx.font` unchanged, so
+    // measureText silently returns the WRONG font's metrics -> words measured
+    // too narrow -> collisions). Canvas 2D can't take a `wdth` axis at all, so
+    // measure at the default width and scale by `wdthPct/100`, which tracks the
+    // glyph-advance scaling of the width axis closely enough.
+    ctx.font = `${Math.round(wght)} ${sizePx}px ${FONT_FAMILY}`;
     // `letterSpacing` is the CSS letter-spacing applied during measureText;
     // Chromium / Firefox honour it directly. Safari < 16 ignores; the
     // (sub-)pixel drift sits well inside MIN_GAP_PX.
@@ -113,7 +118,7 @@ class LyricsMeasurer {
       letterSpacing?: string;
     } & (CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D);
     (ctx as WithSpacing).letterSpacing = `${letterSpacingPx.toFixed(3)}px`;
-    return ctx.measureText(text).width;
+    return ctx.measureText(text).width * (wdthPct / 100);
   }
 
   /** Measure `text` as it would render under the row's variable-font
