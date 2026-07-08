@@ -39,6 +39,10 @@ export class KaraokePresenter {
   }
 
   setZoom(pxPerSecond: number): void {
+    // Never let a non-finite value poison the zoom: a NaN `pxPerBeat` collapses
+    // the whole score (content width, chip positions, and the windowing range
+    // all go NaN, so every track + lyric vanishes).
+    if (!Number.isFinite(pxPerSecond)) return;
     this.viewport.pxPerBeat = Math.max(MIN_PX_PER_SECOND, Math.min(MAX_PX_PER_SECOND, pxPerSecond));
   }
 

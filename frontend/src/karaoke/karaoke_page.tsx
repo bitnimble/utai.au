@@ -566,6 +566,10 @@ const ScoreArea = observer(function ScoreArea() {
         const audioTime = playbackEngine.currentTime - playbackEngine.songLeadInSec;
         const idx = activeLineIndexAt(track.lines, audioTime, track.offsetSec) ?? 0;
         const span = lineSpanSec(track.lines, idx);
+        // A word from the aligner can carry a non-finite time; a NaN span would
+        // yield a NaN zoom. Skip this tick (keep the current frame) rather than
+        // collapse the score.
+        if (!Number.isFinite(span.startSec) || !Number.isFinite(span.endSec)) return;
         const barsWidth = Math.max(1, lineVw - GUTTER_PX);
         // Cap the span so a line followed by a long instrumental gap (or the
         // final line before a far-off end tag) doesn't fit a huge span and zoom
@@ -659,15 +663,23 @@ const LINE_MAX_SPAN_SEC = 12;
 /** Track-local start/end seconds spanned by one lyric line: the first word's
  *  start to the last word's end when the line is word-timed, else the line
  *  stamp to the next line's stamp (a 4 s fallback for the final, word-less
- *  line). Feeds the follow-`line` centre + fit-zoom math. */
+ *  line). Feeds the follow-`line` centre + fit-zoom math. Uses only FINITE word
+ *  times, the aligner can emit a NaN for a held/edge word (e.g. a long-sustained
+ *  final note), and a NaN span would collapse the whole score. */
 function lineSpanSec(lines: readonly LyricLine[], idx: number): { startSec: number; endSec: number } {
   const line = lines[idx];
   const words = line.words;
   if (words && words.length > 0) {
-    return { startSec: words[0].startSec, endSec: words[words.length - 1].endSec };
+    const starts = words.map((w) => w.startSec).filter(Number.isFinite);
+    const ends = words.map((w) => w.endSec).filter(Number.isFinite);
+    if (starts.length > 0 && ends.length > 0) {
+      return { startSec: Math.min(...starts), endSec: Math.max(...ends) };
+    }
   }
   const next = lines[idx + 1];
-  return { startSec: line.startSec, endSec: next ? next.startSec : line.startSec + 4 };
+  const startSec = Number.isFinite(line.startSec) ? line.startSec : 0;
+  const nextSec = next && Number.isFinite(next.startSec) ? next.startSec : startSec + 4;
+  return { startSec, endSec: nextSec };
 }
 
 const TransportBar = observer(function TransportBar() {

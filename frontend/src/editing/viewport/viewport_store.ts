@@ -48,7 +48,7 @@ export class ViewportStore {
   get visibleBeatRange(): { startBeat: number; endBeat: number } | null {
     const ppb = this.pxPerBeat;
     const vw = this._viewportWidth;
-    if (ppb <= 0 || vw <= 0) return null;
+    if (!Number.isFinite(ppb) || ppb <= 0 || vw <= 0) return null;
     const buffer = vw;
     return {
       startBeat: (this.scrollXPx - buffer) / ppb,
