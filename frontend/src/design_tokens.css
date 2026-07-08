@@ -135,6 +135,13 @@
     --color-grid-quarter-triplet: #8554b8; /* 6ths: deeper violet so it reads as the "parent" of 12ths */
     --color-grid-triplet: #a374cf;      /* triplets: subtle violet, distinct hue */
 
+    /* Beat lines drawn over the audio + lyrics tracks from the Beat This!
+       analysis. Translucent warm gray so they read as a faint grid behind the
+       waveform / lyric chips; the downbeat is thicker AND more opaque so bar
+       starts stand out without shouting. */
+    --color-beat-line: rgba(120, 110, 88, 0.16);
+    --color-beat-line-downbeat: rgba(96, 84, 60, 0.42);
+
     /* "LEAD-IN" caption floating over the hatched lead-in stripe.
        Subtle warm gray on the cream paper background so it doesn't
        compete with the bars; the dark-theme override below brightens
@@ -281,6 +288,11 @@
     --color-grid-subbeat-48: #4a4232;   /* 48ths: faint warm gray, just below 16ths */
     --color-grid-quarter-triplet: #b393d8; /* 6ths: brighter violet so it reads as the "parent" of 12ths on the dark bg */
     --color-grid-triplet: #9676b8;      /* triplets: muted violet, distinct hue */
+
+    /* Beat lines: light warm gray on the dark surface, same faint/prominent
+       split as the light theme. */
+    --color-beat-line: rgba(216, 208, 188, 0.14);
+    --color-beat-line-downbeat: rgba(232, 224, 204, 0.36);
 
     --color-lead-in-label: #b5ac98;     /* bright enough to read against dark bg */
 

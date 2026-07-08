@@ -10,6 +10,8 @@
  */
 
 import { makeAutoObservable, runInAction } from 'mobx';
+import { analyzeBeats } from 'src/editing/beats/analyze_beats_client';
+import { BeatStore } from 'src/editing/beats/beat_store';
 import { LyricsPresenter } from 'src/editing/lyrics/lyrics_presenter';
 import { AudioTrack, AudioTrackId } from 'src/editing/playback/audio_tracks';
 import { playbackEngine } from 'src/editing/playback/player';
@@ -37,16 +39,21 @@ export class SongIoPresenter {
   busy = false;
   phase: SongIoPhase = undefined;
   detailsOpen = false;
+  /** True while the backend is analysing the mix's beats (concurrent with, and
+   *  outliving, separation); drives a toolbar status. */
+  analyzingBeats = false;
 
   constructor(
     private readonly song: SongStore,
     private readonly karaoke: KaraokePresenter,
     private readonly lyrics: LyricsPresenter,
+    private readonly beats: BeatStore,
   ) {
-    makeAutoObservable<this, 'song' | 'karaoke' | 'lyrics'>(this, {
+    makeAutoObservable<this, 'song' | 'karaoke' | 'lyrics' | 'beats'>(this, {
       song: false,
       karaoke: false,
       lyrics: false,
+      beats: false,
     });
   }
 
@@ -74,8 +81,33 @@ export class SongIoPresenter {
     if (this.busy) return;
     const mixId = await this.karaoke.loadAudioFile(file, 'full-mix', meta);
     if (mixId == null) return;
+    // Beat analysis runs on the full mix, independent of separation; kick it off
+    // concurrently (the backend serialises GPU work) so it isn't gated behind it.
+    void this.runBeatAnalysis(file);
     await this.separateInto(mixId, file);
     this.autoFetchLyrics(file);
+  }
+
+  /** Analyse the mix's beats/downbeats via Beat This! and publish them to the
+   *  {@link BeatStore} for the beat-line overlay. Best-effort: a failure just
+   *  leaves the song without beat lines. */
+  private async runBeatAnalysis(file: File): Promise<void> {
+    runInAction(() => {
+      this.analyzingBeats = true;
+      this.beats.analysis = undefined;
+    });
+    try {
+      const analysis = await analyzeBeats(file);
+      runInAction(() => {
+        this.beats.analysis = analysis;
+      });
+    } catch (err) {
+      if (!isBackendUnreachable(err)) console.warn('[beats] analysis failed:', message(err));
+    } finally {
+      runInAction(() => {
+        this.analyzingBeats = false;
+      });
+    }
   }
 
   /** After a mix loads, best-effort auto-fetch synced lyrics from LRCLIB using
@@ -239,6 +271,11 @@ export class SongIoPresenter {
   private async applyLoadedSong(loaded: LoadedSong): Promise<void> {
     this.karaoke.resetSong();
     this.lyrics.clearLyrics();
+    // A bundle carries stems, not the original mix, so there's nothing to
+    // re-analyse; clear any prior beats so a stale grid can't bleed onto it.
+    runInAction(() => {
+      this.beats.analysis = undefined;
+    });
     for (const stem of loaded.stems) {
       // `new Uint8Array(...)` rebinds fflate's `ArrayBufferLike`-typed bytes
       // to an ArrayBuffer-backed view the DOM `BlobPart` type accepts.

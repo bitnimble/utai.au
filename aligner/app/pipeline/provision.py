@@ -112,19 +112,27 @@ def _pitch_assets() -> list[_Asset]:
     return [_onnx(settings.pitch_model_offline), _onnx(settings.pitch_model_live)]
 
 
-_KNOWN_CAPABILITIES = ("separation", "lyrics", "pitch")
+def _beat_assets() -> list[_Asset]:
+    """The Beat This! tracker body (fp16 onnx). Runs on the input MIX, not a
+    stem, so `beat` does NOT compose `separation`."""
+    return [_onnx("beat_this.fp16.onnx")]
+
+
+_KNOWN_CAPABILITIES = ("separation", "lyrics", "pitch", "beat")
 
 
 def _capability_assets(capability: str) -> list[_Asset]:
     """Assets one capability needs. `lyrics` and `pitch` each compose
     `separation` (both run over the vocals stem), mirroring the pyproject
-    dependency-groups."""
+    dependency-groups; `beat` stands alone (it runs on the mix)."""
     if capability == "separation":
         return _separation_assets()
     if capability == "lyrics":
         return _separation_assets() + _lyrics_assets()
     if capability == "pitch":
         return _separation_assets() + _pitch_assets()
+    if capability == "beat":
+        return _beat_assets()
     return []
 
 

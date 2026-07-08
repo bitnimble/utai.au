@@ -810,6 +810,139 @@ async def _stream_lyrics_separate(
         shutil.rmtree(cleanup_dir, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# /music/beats: Beat This! beat/downbeat analysis for the beat-line overlay
+# ---------------------------------------------------------------------------
+#
+# Content-addressed by the mix hash: a repeat mix reuses the cached analysis
+# and skips the GPU. Runs on the full MIX (Beat This!'s training distribution),
+# so unlike /music/separate it needs no separator, just the beat model.
+
+
+def _beats_cache_path(mix_hash: str) -> Path:
+    return settings.cache_dir / "beats" / f"{mix_hash}.json"
+
+
+def _read_beats_cache(mix_hash: str) -> Any | None:
+    path = _beats_cache_path(mix_hash)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _write_beats_cache(mix_hash: str, beats: Any) -> None:
+    try:
+        path = _beats_cache_path(mix_hash)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(beats, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        log.warning("music_beats: could not write beats cache", exc_info=True)
+
+
+def _beats_result_envelope(beats: Any | None) -> dict[str, Any]:
+    """The terminal NDJSON `result` for /music/beats. `data.beats` is the
+    analysis summary, or absent when no beats could be produced."""
+    return {"type": "result", "data": {"beats": beats} if beats is not None else {}}
+
+
+@app.post("/music/beats")
+async def music_beats(request: Request, mix: UploadFile = File(...)) -> StreamingResponse:
+    """Beat/downbeat analysis (Beat This!) over a full mix, for the frontend's
+    beat-line overlay.
+
+    Streaming NDJSON, mirroring /music/separate:
+
+        {"type": "queued"}                         # only when the GPU is busy
+        {"type": "running"}                         # GPU acquired, work started
+        {"type": "result", "data": {"beats": {      # terminal success
+            "beats": [...], "downbeats": [...], "bpm": 128.0,
+            "timeSignature": [4, 4], ...}}}
+        {"type": "error", "status_code": 500, "message": "..."}  # terminal
+
+    Content-addressed by SHA-256 of the mix bytes, so a repeat mix reuses the
+    cached analysis and skips the GPU. `data.beats` is absent when no beats
+    could be produced (the frontend then renders no lines).
+    """
+    _require_pipeline_role()
+    _require_ready(request)
+    request_id = new_request_id()
+    set_request_id(request_id)
+
+    mix_bytes = await mix.read()
+    if not mix_bytes:
+        raise HTTPException(status_code=400, detail="`mix` is required.")
+    mix_hash = _hash_bytes(mix_bytes)
+
+    cached = _read_beats_cache(mix_hash)
+    if cached is not None:
+        log.info("music_beats: cache HIT (%s)", mix_hash)
+        return StreamingResponse(
+            _emit_beats_result(request_id, cached),
+            media_type="application/x-ndjson",
+        )
+
+    cleanup_dir = Path(tempfile.mkdtemp(prefix="utai_beats_"))
+    try:
+        mix_path = cleanup_dir / f"input{Path(mix.filename or '').suffix}"
+        mix_path.write_bytes(mix_bytes)
+    except Exception:
+        shutil.rmtree(cleanup_dir, ignore_errors=True)
+        raise
+
+    return StreamingResponse(
+        _stream_music_beats(
+            request_id=request_id,
+            mix_path=mix_path,
+            mix_hash=mix_hash,
+            cleanup_dir=cleanup_dir,
+        ),
+        media_type="application/x-ndjson",
+    )
+
+
+async def _emit_beats_result(request_id: str, beats: Any) -> AsyncIterator[bytes]:
+    """Emit a cached /music/beats result as a single NDJSON `result` envelope
+    (no GPU ran, so no queued/running envelopes)."""
+    set_request_id(request_id)
+    yield _encode_envelope(_beats_result_envelope(beats))
+
+
+async def _stream_music_beats(
+    *,
+    request_id: str,
+    mix_path: Path,
+    mix_hash: str,
+    cleanup_dir: Path,
+) -> AsyncIterator[bytes]:
+    """Stream the GPU phase of /music/beats as NDJSON bytes, serialised on the
+    process-wide GPU lock (behind any in-flight /music/align|separate) with the
+    same queued/running/heartbeat envelopes."""
+    set_request_id(request_id)
+
+    async def job() -> AsyncIterator[dict[str, Any]]:
+        try:
+            from app.pipeline.beats.analyze import analyze_beats
+
+            beats = await asyncio.to_thread(analyze_beats, mix_path)
+            if beats is not None:
+                _write_beats_cache(mix_hash, beats)
+            log.info("music_beats: analysed (%s)", mix_hash)
+            yield _beats_result_envelope(beats)
+        except Exception as exc:
+            log.exception("music_beats failed")
+            yield {"type": "error", "status_code": 500, "message": str(exc)}
+
+    envelopes = _serialized_gpu_stream(_gpu_lock, job).__aiter__()
+    try:
+        async for chunk in _pump_with_heartbeat(envelopes.__anext__, _encode_envelope):
+            yield chunk
+    finally:
+        shutil.rmtree(cleanup_dir, ignore_errors=True)
+
+
 def _parse_lyrics_input(raw: str) -> list[InputLine]:
     """Decode the `lyrics` form field into {@link InputLine}s.
 

@@ -18,6 +18,9 @@ import {
 } from 'src/editing/lyrics/lyrics_contexts';
 import { StructuralPresenter } from 'src/editing/structure/structural_presenter';
 import { StructuralContext } from 'src/editing/editor_contexts';
+import { BeatStore } from 'src/editing/beats/beat_store';
+import { BeatStoreContext } from 'src/editing/beats/beat_contexts';
+import { formatBeatSummary } from 'src/editing/beats/beat_analysis';
 import { ViewportStore } from 'src/editing/viewport/viewport_store';
 import { ViewportStoreContext } from 'src/editing/viewport/viewport_contexts';
 import { ViewConfig } from 'src/editing/viewport/view_config';
@@ -74,6 +77,7 @@ type Session = {
   song: SongStore;
   viewport: ViewportStore;
   structural: StructuralPresenter;
+  beats: BeatStore;
   lyricsAlign: LyricsAlignStore;
   lyricsPresenter: LyricsPresenter;
   presenter: KaraokePresenter;
@@ -93,10 +97,11 @@ function buildSession(): Session {
   const viewport = new ViewportStore();
   const viewConfig = new ViewConfig();
   const structural = new StructuralPresenter(song, viewport, viewConfig);
+  const beats = new BeatStore();
   const lyricsAlign = new LyricsAlignStore();
   const presenter = new KaraokePresenter(song, viewport);
   const lyricsPresenter = new LyricsPresenter(lyricsAlign, (meta) => presenter.captureSongMeta(meta));
-  const songIo = new SongIoPresenter(song, presenter, lyricsPresenter);
+  const songIo = new SongIoPresenter(song, presenter, lyricsPresenter, beats);
   const musicSource = new MusicSourceStore();
   const musicPresenter = new MusicSourcePresenter(musicSource, (file, meta) =>
     songIo.loadMix(file, meta),
@@ -129,6 +134,7 @@ function buildSession(): Session {
     song,
     viewport,
     structural,
+    beats,
     lyricsAlign,
     lyricsPresenter,
     presenter,
@@ -150,6 +156,7 @@ export const KaraokePage = observer(function KaraokePage() {
     song,
     viewport,
     structural,
+    beats,
     lyricsAlign,
     lyricsPresenter,
     presenter,
@@ -183,6 +190,7 @@ export const KaraokePage = observer(function KaraokePage() {
       song,
       viewport,
       structural,
+      beats,
       lyricsAlign,
       lyricsPresenter,
       presenter,
@@ -202,6 +210,7 @@ export const KaraokePage = observer(function KaraokePage() {
     song,
     viewport,
     structural,
+    beats,
     lyricsAlign,
     lyricsPresenter,
     presenter,
@@ -228,6 +237,7 @@ export const KaraokePage = observer(function KaraokePage() {
       <SongIoPresenterContext.Provider value={songIo}>
         <StructuralContext.Provider value={structural}>
           <ViewportStoreContext.Provider value={viewport}>
+            <BeatStoreContext.Provider value={beats}>
             <LyricsPresenterContext.Provider value={lyricsPresenter}>
               <LyricsAlignStoreContext.Provider value={lyricsAlign}>
                 <VideoStoreContext.Provider value={videoStore}>
@@ -244,6 +254,7 @@ export const KaraokePage = observer(function KaraokePage() {
                 </VideoStoreContext.Provider>
               </LyricsAlignStoreContext.Provider>
             </LyricsPresenterContext.Provider>
+            </BeatStoreContext.Provider>
           </ViewportStoreContext.Provider>
         </StructuralContext.Provider>
       </SongIoPresenterContext.Provider>
@@ -264,6 +275,7 @@ const Toolbar = observer(function Toolbar() {
   const lyricsAlign = React.useContext(LyricsAlignStoreContext)!;
   const musicPresenter = React.useContext(MusicSourcePresenterContext)!;
   const songIo = React.useContext(SongIoPresenterContext)!;
+  const beats = React.useContext(BeatStoreContext)!;
   const viewport = React.useContext(ViewportStoreContext)!;
   const settingsModal = useSettingsModal();
   const fileRef = React.useRef<HTMLInputElement>(null);
@@ -412,6 +424,17 @@ const Toolbar = observer(function Toolbar() {
         <span className={styles.toolStatus} data-testid="lyrics-status">
           {lyricsStatusLabel(lyricsAlign.lyricsStatusPhase)}
         </span>
+      )}
+      {songIo.analyzingBeats ? (
+        <span className={styles.toolStatus} data-testid="beats-status">
+          Analysing beats…
+        </span>
+      ) : (
+        beats.analysis && (
+          <span className={styles.toolStatus} data-testid="beats-readout">
+            {formatBeatSummary(beats.analysis)}
+          </span>
+        )
       )}
       <button
         type="button"

@@ -31,7 +31,7 @@ export type Artifact = {
   name?: string;
 };
 
-export type Op = 'alignLyrics' | 'separateStems';
+export type Op = 'alignLyrics' | 'separateStems' | 'analyzeBeats';
 
 // ---- client -> backend -----------------------------------------------------
 
@@ -119,6 +119,19 @@ export function buildSeparateStemsRequest(id: string, audio: PathRef): RequestMe
     type: 'request',
     id,
     op: 'separateStems',
+    args: { audio, params: {} },
+  };
+}
+
+/** Build the `analyzeBeats` request frame. `audio` is the local mix
+ *  {@link PathRef}; the sidecar returns the beat/downbeat analysis in the
+ *  result `data.beats` payload (no file artifacts). */
+export function buildAnalyzeBeatsRequest(id: string, audio: PathRef): RequestMessage {
+  return {
+    v: PROTOCOL_VERSION,
+    type: 'request',
+    id,
+    op: 'analyzeBeats',
     args: { audio, params: {} },
   };
 }

@@ -1,0 +1,27 @@
+/* Beat-line overlay: subtle vertical lines on a track's bars row, positioned
+   as a percentage of the row width so zoom only resizes the row (see the
+   `--bars-row-width` note in design_tokens.css). Sits beneath the waveform /
+   lyric chips (mounted first in the bars row). */
+
+.beatLines {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.beatLine {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    /* `--beat-sec` is set inline per line; `--layer-beats` (== song duration in
+       seconds) is inherited from the bars row. */
+    left: calc(var(--beat-sec) / var(--layer-beats) * 100%);
+    background: var(--color-beat-line);
+}
+
+.downbeat {
+    width: 2px;
+    background: var(--color-beat-line-downbeat);
+}

@@ -19,6 +19,7 @@ import { WindowedLines } from './lyric_chips';
 import { LyricsOverflowMenu } from './lyrics_overflow_menu';
 import styles from './lyrics_track_view.module.css';
 import { Playhead } from '../playback/playhead';
+import { BeatLinesOverlay } from '../beats/beat_lines_overlay';
 import { seekFromClick } from '../score/seek';
 import { barsRowWidthSeed } from '../utils/windowing';
 
@@ -204,6 +205,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
         }
         onClick={(e) => seekFromClick(e, onSeek)}
       >
+        <BeatLinesOverlay />
         <WindowedLines
           positioned={positioned}
           shifts={shifts}

@@ -20,6 +20,7 @@ import { join, tempDir } from '@tauri-apps/api/path';
 import { mkdir, readFile, remove, writeFile } from '@tauri-apps/plugin-fs';
 import {
   buildAlignLyricsRequest,
+  buildAnalyzeBeatsRequest,
   buildSeparateStemsRequest,
   newRequestId,
   type Artifact,
@@ -29,6 +30,8 @@ import {
 } from 'src/net/control_protocol';
 import type { AlignLyricsOptions, AlignLyricsRequest } from 'src/lyrics/forced_align';
 import type { SeparatedStems, SeparateStemsOptions } from 'src/lyrics/separate_stems';
+import type { AnalyzeBeatsOptions } from 'src/editing/beats/analyze_beats_client';
+import { parseBeatAnalysis, type BeatAnalysis } from 'src/editing/beats/beat_analysis';
 import { parsePitchContour } from 'src/lyrics/pitch_contour';
 import type { LyricLine } from 'src/lyrics/lrc';
 
@@ -203,6 +206,41 @@ export async function separateStemsSidecar(
       // already gone / unwritable
     }
   }
+}
+
+/**
+ * Analyse a mix's beats through the desktop sidecar. Same contract as
+ * {@link import('src/editing/beats/analyze_beats_client').analyzeBeats}: resolves
+ * with the {@link BeatAnalysis} (or undefined when the backend produced no
+ * beats), rejects on backend failure / abort.
+ */
+export async function analyzeBeatsSidecar(
+  mix: File,
+  opts: AnalyzeBeatsOptions = {},
+): Promise<BeatAnalysis | undefined> {
+  const id = newRequestId();
+  const audioPath = await writeTempAudio(id, mix);
+  try {
+    const request = buildAnalyzeBeatsRequest(id, { kind: 'path', path: audioPath });
+    const result = await runJob(id, request, {
+      signal: opts.signal,
+      onRunning: () => opts.onProgress?.({ kind: 'running' }),
+    });
+    return parseBeatAnalysis(extractBeats(result.data));
+  } finally {
+    try {
+      await remove(audioPath);
+    } catch {
+      // already gone / unwritable
+    }
+  }
+}
+
+/** Pull the raw `data.beats` payload out of a terminal `result` frame, for
+ *  {@link parseBeatAnalysis}; undefined when the sidecar shipped no beats. */
+function extractBeats(data: unknown): unknown {
+  if (data != null && typeof data === 'object') return (data as { beats?: unknown }).beats;
+  return undefined;
 }
 
 /** Read one named stem artifact (a local {@link PathRef}) off disk into a

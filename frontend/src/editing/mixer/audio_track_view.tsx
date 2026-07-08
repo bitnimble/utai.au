@@ -13,6 +13,7 @@ import { StructuralContext } from '../editor_contexts';
 import { ViewportStoreContext } from '../viewport/viewport_contexts';
 import styles from './audio_track_view.module.css';
 import { Playhead } from '../playback/playhead';
+import { BeatLinesOverlay } from '../beats/beat_lines_overlay';
 import { seekFromClick } from '../score/seek';
 import { barsRowWidthSeed } from '../utils/windowing';
 
@@ -115,6 +116,7 @@ export const AudioTrackView = observer(
           }
           onClick={(e) => seekFromClick(e, onSeek)}
         >
+          <BeatLinesOverlay />
           <AudioTrackWaveformCanvas
             structural={structural}
             track={track}

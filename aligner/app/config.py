@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # `lyrics` + `pitch` each compose `separation`, so the default pulls every
     # model. A plain string (not `list[str]`) so `STARTUP_CAPABILITIES=lyrics,pitch`
     # needs no JSON quoting; parsed by `startup_capability_list`. Empty opts out.
+    # NOTE: `beat` is deliberately NOT here, it provisions lazily on first song
+    # load (`beats/analyze.py`), so a missing/unpublished beat asset can't fail
+    # startup and 503 the whole app (a startup provision error blocks readiness);
+    # beats are best-effort and fall back to librosa if the model is absent.
     startup_capabilities: str = "lyrics,pitch"
     # Compare each present asset's stored ETag against the remote (HF sets it to the
     # LFS content hash) and re-download on change, so a pushed model update is
