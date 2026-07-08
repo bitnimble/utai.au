@@ -10,6 +10,7 @@
 }
 
 .toolbar {
+    position: relative;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -18,6 +19,41 @@
     border-bottom: 1px solid var(--color-border);
     background: var(--color-bg-overlay);
     flex: 0 0 auto;
+}
+
+/* Centred now-playing title + artist. Absolutely positioned so it stays
+   optically centred in the header regardless of the menu / status widths on
+   either side; pointer-transparent so it never eats a menu click. */
+.songMeta {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    max-width: 40%;
+    pointer-events: none;
+    text-align: center;
+}
+
+.songTitle {
+    composes: heading from '../typography.module.css';
+    color: var(--color-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.songArtist {
+    composes: bodySm from '../typography.module.css';
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
 }
 
 .toolButton {

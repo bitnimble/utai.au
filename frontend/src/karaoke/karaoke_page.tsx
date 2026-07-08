@@ -1,10 +1,10 @@
 import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
-import { ChevronDown, Pause, Play, Settings, Square } from 'lucide-react';
+import { AudioLines, ChevronDown, Pause, Play, Settings, Square } from 'lucide-react';
 import React from 'react';
 import { nativeAudioEngine, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
-import { activeLineIndexAt } from 'src/lyrics/lrc';
+import { activeLineIndexAt, LyricLine } from 'src/lyrics/lrc';
 import { formatPlayheadTime } from 'src/editing/playback/playhead_label';
 import { AudioTrackView } from 'src/editing/mixer/audio_track_view';
 import { LyricsTrackView } from 'src/editing/lyrics/lyrics_track_view';
@@ -21,7 +21,11 @@ import { StructuralContext } from 'src/editing/editor_contexts';
 import { BeatStore } from 'src/editing/beats/beat_store';
 import { BeatStoreContext } from 'src/editing/beats/beat_contexts';
 import { formatBeatSummary } from 'src/editing/beats/beat_analysis';
-import { ViewportStore } from 'src/editing/viewport/viewport_store';
+import {
+  MAX_PX_PER_SECOND,
+  MIN_PX_PER_SECOND,
+  ViewportStore,
+} from 'src/editing/viewport/viewport_store';
 import { ViewportStoreContext } from 'src/editing/viewport/viewport_contexts';
 import { ViewConfig } from 'src/editing/viewport/view_config';
 import { ToastContainer } from 'src/ui/toasts/toast_container';
@@ -55,7 +59,7 @@ import { ScoringPresenterContext, ScoringStoreContext } from 'src/scoring/scorin
 import { ScoringControls } from 'src/scoring/scoring_hud';
 import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_settings_presenter';
 import { AutoscrollMode } from 'src/settings/app_settings_store';
-import { autoscrollTargetLeft } from 'src/editing/score/autoscroll';
+import { autoscrollTargetLeft, GUTTER_PX } from 'src/editing/score/autoscroll';
 import { VideoStore } from 'src/video/video_store';
 import { VideoPresenter } from 'src/video/video_presenter';
 import { VideoPresenterContext, VideoStoreContext } from 'src/video/video_contexts';
@@ -184,6 +188,21 @@ export const KaraokePage = observer(function KaraokePage() {
     return () => audioDevicePresenter.dispose();
   }, [audioDevicePresenter]);
 
+  // Global spacebar transport toggle. Ignored while typing into a form field
+  // or contenteditable so the space still types a character there.
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.code !== 'Space' || e.repeat) return;
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t?.isContentEditable) return;
+      e.preventDefault();
+      presenter.togglePlay();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [presenter]);
+
   // Expose the live session on `window.utai` for e2e specs + debugging.
   React.useEffect(() => {
     (window as Window & { utai?: Record<string, unknown> }).utai = {
@@ -270,13 +289,12 @@ export const KaraokePage = observer(function KaraokePage() {
 });
 
 const Toolbar = observer(function Toolbar() {
-  const presenter = React.useContext(KaraokePresenterContext)!;
   const lyricsPresenter = React.useContext(LyricsPresenterContext)!;
   const lyricsAlign = React.useContext(LyricsAlignStoreContext)!;
   const musicPresenter = React.useContext(MusicSourcePresenterContext)!;
   const songIo = React.useContext(SongIoPresenterContext)!;
   const beats = React.useContext(BeatStoreContext)!;
-  const viewport = React.useContext(ViewportStoreContext)!;
+  const song = React.useContext(SongStoreContext)!;
   const settingsModal = useSettingsModal();
   const fileRef = React.useRef<HTMLInputElement>(null);
   const openSongRef = React.useRef<HTMLInputElement>(null);
@@ -414,6 +432,12 @@ const Toolbar = observer(function Toolbar() {
         className={styles.hiddenInput}
         onChange={onPickSong}
       />
+      {(song.title || song.artist) && (
+        <div className={styles.songMeta} data-testid="song-meta">
+          {song.title && <span className={styles.songTitle}>{song.title}</span>}
+          {song.artist && <span className={styles.songArtist}>{song.artist}</span>}
+        </div>
+      )}
       <span className={styles.toolbarSpacer} />
       {songIo.phase === 'separating' && (
         <span className={styles.toolStatus} data-testid="separating-status">
@@ -446,17 +470,6 @@ const Toolbar = observer(function Toolbar() {
       >
         <Settings size={14} aria-hidden="true" />
       </button>
-      <label className={styles.zoomControl}>
-        Zoom
-        <Slider
-          min={8}
-          max={600}
-          step={1}
-          value={viewport.pxPerBeat}
-          onChange={(v) => presenter.setZoom(v)}
-          ariaLabel="Horizontal zoom (pixels per second)"
-        />
-      </label>
     </header>
   );
 });
@@ -528,17 +541,29 @@ const ScoreArea = observer(function ScoreArea() {
       const ppb = viewport.pxPerBeat;
       if (ppb <= 0) return;
 
-      // Line mode pages on the original lyric-line boundaries, pinning the
-      // current line's start to the left of the bars area. Driven off the
-      // first lyrics track; positions regardless of play state so the single
-      // visible line (see WindowedLines) is always scrolled into view.
+      // Line mode centres the current lyric line and zooms so all of its words
+      // fit the bars area. Driven off the first lyrics track; positions
+      // regardless of play state so the single visible line (see WindowedLines)
+      // is always framed. Sets the zoom itself (via the presenter), so it reads
+      // the line's own duration + viewport width rather than the live `ppb`.
       if (mode === 'line') {
         const trackId = lyricsStore.trackIds[0];
         const track = trackId != null ? lyricsStore.get(trackId) : undefined;
         if (!track || track.lines.length === 0) return;
+        const lineVw = viewport._viewportWidth;
+        if (lineVw <= 0) return;
         const audioTime = playbackEngine.currentTime - playbackEngine.songLeadInSec;
         const idx = activeLineIndexAt(track.lines, audioTime, track.offsetSec) ?? 0;
-        el.scrollLeft = Math.max(0, (track.lines[idx].startSec + track.offsetSec) * ppb);
+        const span = lineSpanSec(track.lines, idx);
+        const barsWidth = Math.max(1, lineVw - GUTTER_PX);
+        const durSec = Math.max(0.001, span.endSec - span.startSec);
+        const zoom = Math.max(
+          MIN_PX_PER_SECOND,
+          Math.min(MAX_PX_PER_SECOND, (barsWidth * LINE_FILL_FRAC) / durSec),
+        );
+        presenter.setZoom(zoom);
+        const centerSec = (span.startSec + span.endSec) / 2 + track.offsetSec;
+        el.scrollLeft = Math.max(0, GUTTER_PX + centerSec * zoom - lineVw / 2);
         return;
       }
 
@@ -548,15 +573,41 @@ const ScoreArea = observer(function ScoreArea() {
       const playheadX = playbackEngine.currentTime * ppb;
       el.scrollLeft = autoscrollTargetLeft(mode, playheadX, vw);
     });
-  }, [viewport]);
+  }, [viewport, presenter]);
 
   const onSeek = (x: number): void => presenter.seekToX(x);
+
+  // Middle-button drag pans the score in both axes (a "grab" pan over the
+  // native scroll container), suppressing the browser's middle-click autoscroll.
+  const onMouseDown = (e: React.MouseEvent<HTMLDivElement>): void => {
+    if (e.button !== 1) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startLeft = el.scrollLeft;
+    const startTop = el.scrollTop;
+    el.style.cursor = 'grabbing';
+    const onMove = (ev: MouseEvent): void => {
+      el.scrollLeft = startLeft - (ev.clientX - startX);
+      el.scrollTop = startTop - (ev.clientY - startY);
+    };
+    const onUp = (): void => {
+      el.style.cursor = '';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
 
   return (
     <div
       className={styles.scoreArea}
       ref={scrollRef}
       onScroll={(e) => presenter.setScrollX(e.currentTarget.scrollLeft)}
+      onMouseDown={onMouseDown}
       data-testid="score-area"
     >
       {!hasContent && (
@@ -564,10 +615,11 @@ const ScoreArea = observer(function ScoreArea() {
           Load an audio file, then import or paste lyrics.
         </div>
       )}
-      {audioTrackIds.map((id) => {
-        const track = playbackEngine.audioTracks.get(id);
-        return track ? <AudioTrackView key={id} track={track} onSeek={onSeek} /> : null;
-      })}
+      {!viewport.audioTracksHidden &&
+        audioTrackIds.map((id) => {
+          const track = playbackEngine.audioTracks.get(id);
+          return track ? <AudioTrackView key={id} track={track} onSeek={onSeek} /> : null;
+        })}
       {lyricsIds.map((id) => (
         <LyricsTrackView key={id} id={id} onSeek={onSeek} />
       ))}
@@ -575,9 +627,28 @@ const ScoreArea = observer(function ScoreArea() {
   );
 });
 
+/** Fraction of the bars area a followed line's words fill, leaving a margin so
+ *  the first/last word aren't flush against the edges. */
+const LINE_FILL_FRAC = 0.85;
+
+/** Track-local start/end seconds spanned by one lyric line: the first word's
+ *  start to the last word's end when the line is word-timed, else the line
+ *  stamp to the next line's stamp (a 4 s fallback for the final, word-less
+ *  line). Feeds the follow-`line` centre + fit-zoom math. */
+function lineSpanSec(lines: readonly LyricLine[], idx: number): { startSec: number; endSec: number } {
+  const line = lines[idx];
+  const words = line.words;
+  if (words && words.length > 0) {
+    return { startSec: words[0].startSec, endSec: words[words.length - 1].endSec };
+  }
+  const next = lines[idx + 1];
+  return { startSec: line.startSec, endSec: next ? next.startSec : line.startSec + 4 };
+}
+
 const TransportBar = observer(function TransportBar() {
   const presenter = React.useContext(KaraokePresenterContext)!;
   const song = React.useContext(SongStoreContext)!;
+  const viewport = React.useContext(ViewportStoreContext)!;
   const playing = playbackEngine.state === 'playing';
   const canPlay = song.durationSec > 0;
   return (
@@ -606,6 +677,28 @@ const TransportBar = observer(function TransportBar() {
         {formatPlayheadTime(playbackEngine.currentTime)}
         {song.durationSec > 0 ? ` / ${formatPlayheadTime(song.durationSec)}` : ''}
       </span>
+      <button
+        type="button"
+        className={styles.transportButton}
+        aria-pressed={!viewport.audioTracksHidden}
+        onClick={() => presenter.toggleAudioTracks()}
+        aria-label={viewport.audioTracksHidden ? 'Show audio tracks' : 'Hide audio tracks'}
+        title={viewport.audioTracksHidden ? 'Show audio tracks' : 'Hide audio tracks'}
+        data-testid="toggle-audio-tracks"
+      >
+        <AudioLines size={16} aria-hidden="true" />
+      </button>
+      <label className={styles.zoomControl}>
+        Zoom
+        <Slider
+          min={8}
+          max={600}
+          step={1}
+          value={viewport.pxPerBeat}
+          onChange={(v) => presenter.setZoom(v)}
+          ariaLabel="Horizontal zoom (pixels per second)"
+        />
+      </label>
       <AutoscrollControl />
       <ScoringControls />
       <HomeAudioControls />

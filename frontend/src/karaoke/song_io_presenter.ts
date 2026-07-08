@@ -79,6 +79,13 @@ export class SongIoPresenter {
    *  the sole track. */
   async loadMix(file: File, meta?: SongMeta): Promise<void> {
     if (this.busy) return;
+    // Fresh mix replaces whatever's loaded: drop the prior tracks, lyrics, and
+    // beat grid so the new song starts from a clean slate rather than stacking.
+    this.karaoke.resetSong();
+    this.lyrics.clearLyrics();
+    runInAction(() => {
+      this.beats.analysis = undefined;
+    });
     const mixId = await this.karaoke.loadAudioFile(file, 'full-mix', meta);
     if (mixId == null) return;
     // Beat analysis runs on the full mix, independent of separation; kick it off

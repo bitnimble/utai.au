@@ -42,6 +42,10 @@ export class KaraokePresenter {
     this.viewport.pxPerBeat = Math.max(MIN_PX_PER_SECOND, Math.min(MAX_PX_PER_SECOND, pxPerSecond));
   }
 
+  toggleAudioTracks(): void {
+    this.viewport.audioTracksHidden = !this.viewport.audioTracksHidden;
+  }
+
   // --- audio ---
 
   /** Decode a local audio file into a new track and refresh the song

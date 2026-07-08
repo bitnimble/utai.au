@@ -24,6 +24,9 @@ export class ViewportStore {
   _viewportWidth = 0;
   /** Horizontal scale: pixels per second (the zoom). */
   pxPerBeat = DEFAULT_PX_PER_SECOND;
+  /** Collapse the audio-track rows out of the score (the lyrics track stays
+   *  visible). Toggled from the transport bar. */
+  audioTracksHidden = false;
 
   constructor() {
     makeAutoObservable(this);

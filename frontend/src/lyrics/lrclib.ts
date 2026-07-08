@@ -27,16 +27,37 @@ export type SearchOptions = {
   signal?: AbortSignal;
 };
 
+// LRCLIB's /api/search is slow (5-8 s server-side) and does no useful
+// server caching, so the identical query costs the full latency again.
+// The same (track, artist) is commonly searched twice in one session:
+// the on-load auto-fetch, then the modal auto-firing on open (both seeded
+// from the jot's title/artist), plus manual re-searches. An in-memory
+// result cache keyed on the normalised query makes every repeat instant.
+const CACHE_LIMIT = 50;
+const searchCache = new Map<string, LrclibMatch[]>();
+
+function cacheKey(trackName: string, artistName: string): string {
+  return `${trackName.trim().toLowerCase()} ${artistName.trim().toLowerCase()}`;
+}
+
 /**
  * Search LRCLIB for `trackName` + `artistName`. Returns only entries
  * with non-empty `syncedLyrics` (the modal's exact-match / auto-load
  * logic only operates on synced lyrics; plain lyrics aren't useful
  * for the timeline-anchored row).
  *
+ * Successful results are cached in-memory per normalised query (see
+ * {@link searchCache}); a repeat search resolves instantly instead of
+ * re-paying LRCLIB's multi-second latency.
+ *
  * Throws on transport / HTTP failures; the caller's `requestId` guard
  * is responsible for filtering stale responses against newer searches.
  */
 export async function searchLrclib(opts: SearchOptions): Promise<LrclibMatch[]> {
+  const key = cacheKey(opts.trackName, opts.artistName);
+  const cached = searchCache.get(key);
+  if (cached != null) return cached;
+
   const params = new URLSearchParams();
   if (opts.trackName.trim().length > 0) params.set('track_name', opts.trackName.trim());
   if (opts.artistName.trim().length > 0) params.set('artist_name', opts.artistName.trim());
@@ -58,8 +79,11 @@ export async function searchLrclib(opts: SearchOptions): Promise<LrclibMatch[]> 
     throw new Error(`LRCLIB search failed (${res.status} ${res.statusText})`);
   }
   const json = (await res.json()) as LrclibApiRow[];
-  if (!Array.isArray(json)) return [];
   const out: LrclibMatch[] = [];
+  if (!Array.isArray(json)) {
+    cacheResult(key, out);
+    return out;
+  }
   for (const row of json) {
     if (typeof row?.syncedLyrics !== 'string' || row.syncedLyrics.length === 0) continue;
     out.push({
@@ -73,7 +97,16 @@ export async function searchLrclib(opts: SearchOptions): Promise<LrclibMatch[]> 
       instrumental: row.instrumental === true,
     });
   }
+  cacheResult(key, out);
   return out;
+}
+
+function cacheResult(key: string, matches: LrclibMatch[]): void {
+  if (searchCache.size >= CACHE_LIMIT) {
+    const oldest = searchCache.keys().next().value;
+    if (oldest != null) searchCache.delete(oldest);
+  }
+  searchCache.set(key, matches);
 }
 
 type LrclibApiRow = {

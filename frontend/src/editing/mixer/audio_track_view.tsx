@@ -18,7 +18,7 @@ import { seekFromClick } from '../score/seek';
 import { barsRowWidthSeed } from '../utils/windowing';
 
 /** Row height shared by the gutter label and the bars-row waveform. */
-const AUDIO_TRACK_HEIGHT = 76;
+const AUDIO_TRACK_HEIGHT = 38;
 
 // Trailing debounce (ms) for the expensive per-tile peak recompute + repaint.
 // The tile's CSS box (left/width) tracks zoom live, so during a zoom sweep the

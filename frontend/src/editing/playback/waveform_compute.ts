@@ -225,7 +225,7 @@ const SILENCE_FLOOR = 0.05;
  * of clipping at the top/bottom edges. Tweak this single value to
  * change how full uniform waveforms render.
  */
-const UNIFORM_WAVEFORM_TARGET = 0.3;
+const UNIFORM_WAVEFORM_TARGET = 0.24;
 
 /**
  * Per-track amplitude scale for "uniform amplitude" mode. Computed
