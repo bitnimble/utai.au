@@ -556,14 +556,18 @@ const ScoreArea = observer(function ScoreArea() {
         const idx = activeLineIndexAt(track.lines, audioTime, track.offsetSec) ?? 0;
         const span = lineSpanSec(track.lines, idx);
         const barsWidth = Math.max(1, lineVw - GUTTER_PX);
-        const durSec = Math.max(0.001, span.endSec - span.startSec);
+        // Pad the word span on each side so the first/last word aren't flush to
+        // the bars-area edges; the padded span is what fills the bars width.
+        const durSec = Math.max(0.001, span.endSec - span.startSec) * (1 + 2 * LINE_SPAN_PAD_FRAC);
         const zoom = Math.max(
           MIN_PX_PER_SECOND,
-          Math.min(MAX_PX_PER_SECOND, (barsWidth * LINE_FILL_FRAC) / durSec),
+          Math.min(MAX_PX_PER_SECOND, barsWidth / durSec),
         );
         presenter.setZoom(zoom);
+        // Centre the line's midpoint in the bars area (the region right of the
+        // sticky gutter), not the whole viewport.
         const centerSec = (span.startSec + span.endSec) / 2 + track.offsetSec;
-        el.scrollLeft = Math.max(0, GUTTER_PX + centerSec * zoom - lineVw / 2);
+        el.scrollLeft = Math.max(0, centerSec * zoom - barsWidth / 2);
         return;
       }
 
@@ -627,9 +631,10 @@ const ScoreArea = observer(function ScoreArea() {
   );
 });
 
-/** Fraction of the bars area a followed line's words fill, leaving a margin so
- *  the first/last word aren't flush against the edges. */
-const LINE_FILL_FRAC = 0.85;
+/** Padding added to each side of a followed line's word span (as a fraction of
+ *  the span's duration) before it's fit to the bars area, so the first/last word
+ *  aren't flush against the edges. */
+const LINE_SPAN_PAD_FRAC = 0.15;
 
 /** Track-local start/end seconds spanned by one lyric line: the first word's
  *  start to the last word's end when the line is word-timed, else the line

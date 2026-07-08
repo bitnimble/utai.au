@@ -122,7 +122,7 @@ test('autoscroll: line shows only the current lyric line and pages on line bound
   expect((await scoreState(page)).scrollLeft).toBeLessThan(2);
 
   // Play past the second line's start: still exactly one line, now line two,
-  // and the score has paged to that line's start (startSec 2 × pxPerBeat).
+  // centred in the bars area with the zoom set so the (padded) line span fits.
   await page.getByTestId('transport-play').click();
   await expect
     .poll(async () => (await scoreState(page)).t, { timeout: 12_000 })
@@ -131,7 +131,14 @@ test('autoscroll: line shows only the current lyric line and pages on line bound
   await expect(lineChips).toHaveCount(1);
   await expect(page.getByTestId('lyrics-line-1')).toBeVisible();
   const s = await scoreState(page);
-  expect(Math.abs(s.scrollLeft - 2 * s.ppb)).toBeLessThan(6);
+  const barsWidth = s.clientWidth - GUTTER_PX;
+  // Zoom fits the word-less span (startSec 2 → next line's startSec 4) padded by
+  // 15 % each side into the bars area.
+  const expectedPpb = Math.min(600, Math.max(8, barsWidth / ((4 - 2) * 1.3)));
+  expect(Math.abs(s.ppb - expectedPpb)).toBeLessThan(1);
+  // The line's midpoint (3 s) sits at the centre of the bars area.
+  const centreScreenX = GUTTER_PX + 3 * s.ppb - s.scrollLeft;
+  expect(Math.abs(centreScreenX - (GUTTER_PX + s.clientWidth) / 2)).toBeLessThan(6);
 });
 
 test('autoscroll: page keeps the playhead within the bars viewport', async ({ page }) => {
