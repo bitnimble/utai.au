@@ -5,10 +5,12 @@ Endpoints:
     POST /lyrics/align   - word-level lyrics alignment (CTC forced alignment)
 
 The service is intentionally stateless. All temp files live in per-request
-tempdirs. The separation model is loaded eagerly at startup (FastAPI
-lifespan) so the first /lyrics/align call (mix flow) doesn't pay
-model-load latency and so orchestrators can use /health as a true
-readiness probe.
+tempdirs. At startup a background task provisions the configured model set
+(with update-detection) and warms the separation model; uvicorn accepts
+connections immediately so GET /provision/status can report progress while it
+runs. /health is a liveness probe (process + GPU); /provision/status is the
+readiness signal (models downloaded + separator loaded). /lyrics/* return 503
+until provisioning finishes.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ import tempfile
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -33,11 +35,12 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from app.cache import BlobCache
 from app.config import settings
-from app.models import HealthResponse
+from app.models import HealthResponse, ProvisionStatusResponse
 from app.music.routes import aclose_facade as aclose_music_facade
 from app.music.routes import router as music_router
 from app.pipeline import gpu_park
 from app.pipeline.lyrics_align import InputLine, get_aligner, lines_to_json
+from app.pipeline.provision import ProvisionEvent, planned_assets, provision
 from app.pipeline.separate import Separator
 from app.request_context import (
     RequestIdLogFilter,
@@ -114,36 +117,109 @@ class _DropHealthAccessLog(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(_DropHealthAccessLog())
 
 
+class ProvisionStatus:
+    """Thread-safe snapshot of the startup provisioning pass. Written by the
+    background provisioner's progress callback (which runs on a worker thread)
+    and read by GET /provision/status."""
+
+    def __init__(self, assets: list[str]) -> None:
+        self._lock = threading.Lock()
+        self._state = "checking"
+        self._error: str | None = None
+        self._assets: dict[str, dict[str, Any]] = {
+            name: {"phase": "pending", "bytesDone": None, "bytesTotal": None}
+            for name in assets
+        }
+
+    def on_event(self, ev: ProvisionEvent) -> None:
+        with self._lock:
+            self._assets[ev.asset] = {
+                "phase": ev.phase,
+                "bytesDone": ev.bytes_done,
+                "bytesTotal": ev.bytes_total,
+            }
+            # A live download dominates the aggregate; otherwise stay in checking.
+            if ev.phase == "downloading":
+                self._state = "downloading"
+
+    def set_loading(self) -> None:
+        with self._lock:
+            self._state = "loading"
+
+    def set_ready(self) -> None:
+        with self._lock:
+            self._state = "ready"
+
+    def set_error(self, message: str) -> None:
+        with self._lock:
+            self._state = "error"
+            self._error = message
+
+    @property
+    def state(self) -> str:
+        with self._lock:
+            return self._state
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "state": self._state,
+                "error": self._error,
+                "assets": [{"name": n, **v} for n, v in self._assets.items()],
+            }
+
+
+async def _run_startup_provision(app: FastAPI, status: ProvisionStatus) -> None:
+    """Provision the configured capability set (with update-detection), then warm
+    the separator. Heavy work runs off the event loop. A failure is recorded on
+    `status` so /provision/status can surface it; it does not crash the process."""
+    try:
+        caps = settings.startup_capabilities
+        if caps:
+            await asyncio.to_thread(provision, *caps, on_progress=status.on_event)
+        status.set_loading()
+        started = time.perf_counter()
+        separator = Separator()
+        await asyncio.to_thread(separator.load)
+        app.state.separator = separator
+        status.set_ready()
+        log.info("Startup provisioning + separator warm complete in %.2fs.", time.perf_counter() - started)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        log.exception("Startup provisioning failed")
+        status.set_error(str(exc))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # The `api` role serves the lightweight control endpoints while an
     # alignment occupies the pipeline worker. Only the pipeline role touches
-    # the GPU; the api role skips the eager model load entirely.
+    # the GPU; the api role skips model provisioning + load entirely and reports
+    # ready (nothing to provision in this process).
     if settings.worker_role != "pipeline":
         log.info(
-            "Starting up in '%s' role: skipping separation-model load.",
+            "Starting up in '%s' role: skipping model provisioning + load.",
             settings.worker_role,
         )
         app.state.separator = None
+        app.state.provision_status = None
         yield
         await aclose_music_facade()
         log.info("Shutting down.")
         return
 
-    # Eagerly warm the separation model so the first mix-flow /lyrics/align
-    # call doesn't pay model-load latency. The model load is blocking I/O +
-    # GPU memory allocation, so we run it on a worker thread to avoid
-    # blocking the event loop while uvicorn negotiates startup.
-    log.info("Starting up: warming separation model...")
-    started = time.perf_counter()
-    separator = Separator()
-    await asyncio.to_thread(separator.load)
-    app.state.separator = separator
-    log.info(
-        "Startup complete in %.2fs - service is ready to accept requests.",
-        time.perf_counter() - started,
-    )
+    # Return fast so uvicorn accepts connections (and serves /provision/status)
+    # immediately; provision the models + warm the separator in the background.
+    status = ProvisionStatus(planned_assets(*settings.startup_capabilities))
+    app.state.provision_status = status
+    app.state.separator = None
+    task = asyncio.create_task(_run_startup_provision(app, status))
+    log.info("Starting up: provisioning models + warming separator in the background...")
     yield
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
     await aclose_music_facade()
     log.info("Shutting down.")
 
@@ -189,6 +265,28 @@ async def health() -> HealthResponse:
     )
 
 
+@app.get("/provision/status", response_model=ProvisionStatusResponse)
+async def provision_status(request: Request) -> dict[str, Any]:
+    """Startup model-provisioning progress, polled by the frontend startup gate.
+    `state == "ready"` means every model is downloaded + the separator is warm.
+    A process that doesn't provision (api role) reports ready."""
+    status: ProvisionStatus | None = getattr(request.app.state, "provision_status", None)
+    if status is None:
+        return {"state": "ready", "error": None, "assets": []}
+    return status.snapshot()
+
+
+def _require_ready(request: Request) -> None:
+    """503 until startup provisioning + separator warm-up finish, so a pipeline
+    request never races a half-provisioned model set."""
+    status: ProvisionStatus | None = getattr(request.app.state, "provision_status", None)
+    if status is not None and status.state != "ready":
+        raise HTTPException(
+            status_code=503,
+            detail="Models are still being provisioned; retry once startup finishes.",
+        )
+
+
 @app.post("/lyrics/align")
 async def lyrics_align(
     request: Request,
@@ -230,6 +328,7 @@ async def lyrics_align(
     detection.
     """
     _require_pipeline_role()
+    _require_ready(request)
     # Bind the request id before the first log line and again at the top of
     # `_stream_lyrics_align` (Starlette consumes the streamed body generator
     # in a separate context).
@@ -609,6 +708,7 @@ async def lyrics_separate(
     skips the GPU entirely.
     """
     _require_pipeline_role()
+    _require_ready(request)
     request_id = new_request_id()
     set_request_id(request_id)
 
