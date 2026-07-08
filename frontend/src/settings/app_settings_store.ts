@@ -30,6 +30,15 @@ export class AppSettingsStore {
    */
   alignerUrl: string = DEFAULT_ALIGNER_URL;
 
+  /**
+   * Lyrics-track pitch rendering, applied to every lyrics row. `showLyricsPitch`
+   * lifts each word to its sung pitch + draws the pitch line (off => a flat
+   * straight lyrics track); `showLyricsVibrato` gates only the wave on vibrato
+   * notes, so a flat track can still show vibrato.
+   */
+  showLyricsPitch: boolean = true;
+  showLyricsVibrato: boolean = true;
+
   /** Follow-playhead scroll behaviour during playback. Defaults off so the
    *  current free-scroll behaviour is unchanged until the user opts in. */
   autoscrollMode: AutoscrollMode = 'off';

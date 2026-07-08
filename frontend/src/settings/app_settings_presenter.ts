@@ -21,6 +21,8 @@ export class AppSettingsPresenter {
     autorun(() => {
       const snapshot = JSON.stringify({
         alignerUrl: this.settings.alignerUrl,
+        showLyricsPitch: this.settings.showLyricsPitch,
+        showLyricsVibrato: this.settings.showLyricsVibrato,
         autoscrollMode: this.settings.autoscrollMode,
       });
       try {
@@ -33,6 +35,14 @@ export class AppSettingsPresenter {
 
   setAlignerUrl(url: string): void {
     this.settings.alignerUrl = url;
+  }
+
+  setShowLyricsPitch(on: boolean): void {
+    this.settings.showLyricsPitch = on;
+  }
+
+  setShowLyricsVibrato(on: boolean): void {
+    this.settings.showLyricsVibrato = on;
   }
 
   setAutoscrollMode(mode: AutoscrollMode): void {
@@ -53,6 +63,12 @@ export class AppSettingsPresenter {
       const obj = parsed as Record<string, unknown>;
       if (typeof obj.alignerUrl === 'string') {
         this.settings.alignerUrl = obj.alignerUrl;
+      }
+      if (typeof obj.showLyricsPitch === 'boolean') {
+        this.settings.showLyricsPitch = obj.showLyricsPitch;
+      }
+      if (typeof obj.showLyricsVibrato === 'boolean') {
+        this.settings.showLyricsVibrato = obj.showLyricsVibrato;
       }
       if (
         obj.autoscrollMode === 'off' ||

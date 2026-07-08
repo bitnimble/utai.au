@@ -5,7 +5,7 @@ import { StructuralContext } from '../editor_contexts';
 import { furiganaAnnotator } from 'src/lyrics/furigana';
 import { activeLineIndexAt, activeWordIndexAt } from 'src/lyrics/lrc';
 import { LyricsTrackId, lyricsStore } from 'src/lyrics/store';
-import { appSettingsStore } from 'src/settings/app_settings_presenter';
+import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_settings_presenter';
 import { playbackEngine } from 'src/editing/playback/player';
 import { LyricsPresenterContext, LyricsAlignStoreContext } from './lyrics_contexts';
 import {
@@ -53,13 +53,12 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   const lines = track.lines;
   const offsetSec = track.offsetSec;
   const sourceLabel = track.sourceLabel;
-  // Pitch rendering toggles. Default on; these become user settings (a user may
-  // turn the row back into a flat straight lyrics track, or keep pitch but drop
-  // the vibrato waves). `pitchEnabled` gates the vertical placement + the pitch
-  // line; `vibratoEnabled` gates only the wave on vibrato notes.
-  // TODO(settings): source these from the user's lyrics settings.
-  const pitchEnabled = true;
-  const vibratoEnabled = true;
+  // Global (user/session) pitch rendering toggles, exposed on every lyrics
+  // track's overflow menu. `pitchEnabled` gates the vertical placement + the
+  // pitch line; `vibratoEnabled` gates only the wave on vibrato notes, so a flat
+  // lyrics track can still show vibrato.
+  const pitchEnabled = appSettingsStore.showLyricsPitch;
+  const vibratoEnabled = appSettingsStore.showLyricsVibrato;
   // Karaoke "line" autoscroll shows only the current lyric line; every other
   // line is hidden regardless of zoom (see WindowedLines).
   const lineOnly = appSettingsStore.autoscrollMode === 'line';
@@ -182,7 +181,11 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
         <LyricsOverflowMenu
           id={id}
           offsetSec={offsetSec}
+          showPitch={pitchEnabled}
+          showVibrato={vibratoEnabled}
           onSetOffset={(v) => lyricsStore.setOffsetSec(id, v)}
+          onTogglePitch={() => appSettingsPresenter.setShowLyricsPitch(!pitchEnabled)}
+          onToggleVibrato={() => appSettingsPresenter.setShowLyricsVibrato(!vibratoEnabled)}
           onRemove={() => presenter?.removeLyricsTrack(id)}
         />
       </div>

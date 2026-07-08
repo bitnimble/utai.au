@@ -1,7 +1,7 @@
 import { serializeEnhancedLrc } from 'src/lyrics/enhanced_lrc';
 import { LYRICS_OFFSET_MAX_SEC, LYRICS_OFFSET_MIN_SEC, LYRICS_OFFSET_STEP_SEC, LyricsTrackId, lyricsStore } from 'src/lyrics/store';
 import { downloadTextFile } from 'src/utils/download';
-import { DropdownButton, dropdownStyles } from 'src/ui/dropdown/dropdown';
+import { DropdownButton, ToggleMenuItem, dropdownStyles } from 'src/ui/dropdown/dropdown';
 import { NumberStepper } from 'src/ui/number_stepper/number_stepper';
 import mixerStyles from '../mixer/mixer.module.css';
 import styles from './lyrics_track_view.module.css';
@@ -30,18 +30,27 @@ function exportLyricsTrack(id: LyricsTrackId): void {
 }
 
 /** Per-row overflow menu on lyrics tracks. Hosts the time-offset stepper
- *  (replacing the inline gutter control), the enhanced-LRC export, and
- *  the "Remove lyrics" action; same trigger position as the audio-track
- *  row's overflow so the chrome reads identically across the mixer. */
+ *  (replacing the inline gutter control), the pitch/vibrato render toggles,
+ *  the enhanced-LRC export, and the "Remove lyrics" action; same trigger
+ *  position as the audio-track row's overflow so the chrome reads
+ *  identically across the mixer. */
 export const LyricsOverflowMenu = ({
   id,
   offsetSec,
+  showPitch,
+  showVibrato,
   onSetOffset,
+  onTogglePitch,
+  onToggleVibrato,
   onRemove,
 }: {
   id: LyricsTrackId;
   offsetSec: number;
+  showPitch: boolean;
+  showVibrato: boolean;
   onSetOffset: (sec: number) => void;
+  onTogglePitch: () => void;
+  onToggleVibrato: () => void;
   onRemove: () => void;
 }) => (
   <DropdownButton
@@ -70,6 +79,21 @@ export const LyricsOverflowMenu = ({
             <span className={styles.offsetStepperUnit}>s</span>
           </span>
         </label>
+        <span className={dropdownStyles.dropdownDivider} aria-hidden="true" />
+        <ToggleMenuItem
+          label="Show pitch"
+          active={showPitch}
+          onToggle={onTogglePitch}
+          title="Lift each word to its sung pitch and draw the pitch line"
+          testId={`lyrics-toggle-pitch-${id}`}
+        />
+        <ToggleMenuItem
+          label="Show vibrato"
+          active={showVibrato}
+          onToggle={onToggleVibrato}
+          title="Draw the vibrato wave on sustained notes"
+          testId={`lyrics-toggle-vibrato-${id}`}
+        />
         <span className={dropdownStyles.dropdownDivider} aria-hidden="true" />
         <button
           type="button"
