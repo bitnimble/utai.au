@@ -58,11 +58,17 @@ services:
       PYTHONPATH: /repo/aligner
       # ONE service runs both the music API and the ML pipeline (vocal
       # separation + CTC forced alignment), matching the sidecar. The `pipeline`
-      # role eager-loads the separator and serves /lyrics/align; music routes
-      # work in any role. NB: missing models -> the separator load fails and the
-      # container won't start, so keep MODELS_PATH (below) pointed at real weights.
+      # role provisions the startup model set + warms the separator in a
+      # background task (uvicorn accepts connections immediately, so the web
+      # frontend's startup gate can poll /provision/status); music routes work in
+      # any role.
       WORKER_ROLE: pipeline
       MODELS_DIR: /models
+      # Capabilities eagerly provisioned at startup (download + ETag update-check
+      # against `onnx_repo`). Default is lyrics,pitch (every model); set here for
+      # visibility. Any pre-mounted `/models` weights are adopted (size match) or
+      # update-checked rather than re-downloaded.
+      STARTUP_CAPABILITIES: lyrics,pitch
       # Runtime is torch-free onnxruntime (the only shipped path). On this box
       # separation rides the TensorRT EP automatically (the backend image carries
       # the tensorrt-cu12 wheel and UTAI_SEP_TRT defaults on); its engine builds
@@ -79,10 +85,10 @@ services:
     volumes:
       - ${REPO_PATH:-.}:/repo
       - otsconfig:/config
-      # The exported ONNX bodies (separator + CTC) plus the separator yaml.
-      # Point MODELS_PATH at the dir holding them; defaults to the onnx-export
-      # dir on this box. NB the yaml lives under the ckpt cache, so you may need
-      # to drop `config_mel_band_roformer.yaml` into this dir alongside the onnx.
+      # Persistent model cache. Startup provisioning downloads whatever's missing
+      # here from `onnx_repo` (and update-checks what's present), so an empty dir
+      # just means a one-time download on first `up`; a pre-populated onnx-export
+      # dir is adopted as-is. Kept on a host path so downloads survive `down`.
       - ${MODELS_PATH:-/codebox-workspace/utai/onnx-export}:/models
       - aligncache:/cache
       - hfcache:/hf-cache

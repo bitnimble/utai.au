@@ -77,8 +77,12 @@ it aligns over the HTTP backend, same as the web build. Desktop-only Rust
   (`provision.provision(*capabilities)` + `_capability_assets`): a
   separation-only install must never pull the aligner weights. Model URLs / HF
   ids are `settings.*` build fields (config.py), not hardcoded. fp16 is
-  GPU-only. **The HF repo id is a placeholder until the real models are
-  uploaded**, see [docs/lyrics-alignment.md](docs/lyrics-alignment.md).
+  GPU-only. Shipped weights live on HF (`settings.onnx_repo`,
+  `bitnimble/utai-onnx`). At startup the app **eagerly provisions**
+  `settings.startup_capabilities` (default `lyrics,pitch` = every model) and
+  **update-checks** each present asset via its ETag (re-downloading a pushed
+  model), fronted by a blocking startup dialog; see
+  [docs/lyrics-alignment.md](docs/lyrics-alignment.md).
 - **The timeline is linear time**, "beat" collapses onto "second"; there
   is no musical bar/tempo grid (that was Drumjot-specific). The lyrics
   layout maps `word.startSec/endSec → pixels` linearly.
@@ -129,10 +133,11 @@ One-time host prereqs: `rustup target add x86_64-pc-windows-msvc`, `cargo instal
 dir. Unlike `win:build` it DOES ship the sidecar, but as a **dev bundle**: the
 pure-Python aligner source + a downloaded macOS `uv`, and NO vendored
 wheels/models. A `devbuild` marker resource makes the runtime `uv sync` the deps
-from git + download models on first launch (`paths.rs::is_dev_build` →
-`capability::dev_autoprovision`, once, gated by a `<data_root>/devbuild-provisioned`
-sentinel). So the **test Mac needs Xcode Command Line Tools** (git + a compiler)
-and a network on first run. `prepare-desktop-resources.ts` produces this variant
+from git (`paths.rs::is_dev_build`) and provision/update the models on launch,
+driven by the frontend startup gate via `capability::ensure_models` (streams
+progress into the blocking dialog; runs every launch, update-checking cheaply).
+So the **test Mac needs Xcode Command Line Tools** (git + a compiler) and a
+network on first run. `prepare-desktop-resources.ts` produces this variant
 when `UTAI_RESOURCE_DEV=1` (skips wheel vendoring, keeps the torch-null override,
 bundles `UTAI_RESOURCE_UV`). One-time host prereqs: `rustup target add
 aarch64-apple-darwin`, an osxcross toolchain with the **Xcode-extracted macOS SDK**
