@@ -582,12 +582,13 @@ const AutoscrollControl = observer(function AutoscrollControl() {
 const Modals = observer(function Modals() {
   const lyricsPresenter = React.useContext(LyricsPresenterContext)!;
   const lyricsAlign = React.useContext(LyricsAlignStoreContext)!;
+  const song = React.useContext(SongStoreContext)!;
   return (
     <>
       <LyricsSearchModal
         open={lyricsAlign.lyricsSearchOpen}
-        initialTitle=""
-        initialArtist=""
+        initialTitle={song.title}
+        initialArtist={song.artist}
         onClose={() => lyricsPresenter.setLyricsSearchOpen(false)}
         presenter={lyricsPresenter}
       />
