@@ -1,4 +1,6 @@
+import classNames from 'classnames';
 import React from 'react';
+import styles from './slider.module.css';
 
 /**
  * Horizontal range slider. Wraps `<input type="range">` and folds in the two
@@ -7,8 +9,8 @@ import React from 'react';
  * the thumb" track paint, and swallowing mouse events so a drag doesn't bubble
  * into the page-level marquee selection or the seek-on-click handler.
  *
- * Visual chrome (track height, thumb) comes from the global
- * `input[type='range']` rules; pass `className` for per-site geometry (width).
+ * Visual chrome (rounded accent-filled track + knob) comes from the component's
+ * own `.range` class; pass `className` for per-site geometry (width).
  */
 export const Slider = ({
   value,
@@ -41,7 +43,7 @@ export const Slider = ({
   return (
     <input
       type="range"
-      className={className}
+      className={classNames(styles.range, className)}
       min={min}
       max={max}
       step={step}

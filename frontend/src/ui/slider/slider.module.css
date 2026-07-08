@@ -1,0 +1,69 @@
+/* Range-slider chrome for the {@link Slider} component (ported from Drumjot's
+   app-wide range styling, scoped here since Slider is the only range input).
+   The default browser thumb overflows the track, restyle so the thumb sits
+   flush inside a rounded track. Per-instance width lives on the caller's
+   `className`. The "filled to the thumb" look is driven by `--value` (0..1),
+   set inline on the input by <Slider>; the `0` fallback keeps it sane if unset. */
+
+.range {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+}
+
+.range:focus {
+    outline: none;
+}
+
+.range::-webkit-slider-runnable-track {
+    height: 8px;
+    border-radius: var(--radius-md);
+    background: linear-gradient(
+        to right,
+        var(--color-accent) 0%,
+        var(--color-accent) calc(var(--value, 0) * 100%),
+        var(--color-border-soft) calc(var(--value, 0) * 100%),
+        var(--color-border-soft) 100%
+    );
+}
+
+.range::-moz-range-track {
+    height: 8px;
+    border-radius: var(--radius-md);
+    background: linear-gradient(
+        to right,
+        var(--color-accent) 0%,
+        var(--color-accent) calc(var(--value, 0) * 100%),
+        var(--color-border-soft) calc(var(--value, 0) * 100%),
+        var(--color-border-soft) 100%
+    );
+    border: none;
+}
+
+.range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    /* Centre the 14px thumb on the 8px track (webkit places it from the track top). */
+    margin-top: -3px;
+    border-radius: var(--radius-circle);
+    /* White knob + hairline border so it reads on both the accent-filled and
+       grey portions of the track. */
+    background: var(--color-bg-base);
+    border: 1px solid var(--color-border-strong);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+}
+
+.range::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: var(--radius-circle);
+    background: var(--color-bg-base);
+    border: 1px solid var(--color-border-strong);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+}
