@@ -51,9 +51,11 @@ services:
     # Mount the whole repo (a subdir bind of ./aligner came up EMPTY on this
     # Docker) and run uvicorn as a module from /repo/aligner so cwd + PYTHONPATH
     # put the app source on sys.path; the backend image installs the deps only.
-    # --reload-dir app: watch ONLY the source, not the huge mounted .venv/ or
-    # tests/ (watching those thrashes watchfiles into an OOM).
-    command: sh -c "cd /repo/aligner && exec /opt/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /repo/aligner/app"
+    # Hot-reload is off on purpose: a restart re-runs the startup lifespan, which
+    # re-provisions (update-checks every model) and re-warms the separator, so an
+    # edit-triggered reload is slow. Apply backend edits with an explicit
+    # `docker compose -f docker-compose.dev.yml restart backend`.
+    command: sh -c "cd /repo/aligner && exec /opt/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
     environment:
       PYTHONPATH: /repo/aligner
       # ONE service runs both the music API and the ML pipeline (vocal
