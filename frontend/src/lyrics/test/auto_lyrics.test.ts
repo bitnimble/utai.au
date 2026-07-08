@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { parseSongFilename, pickDurationMatch } from '../auto_lyrics';
+import { parseSongFilename, pickConfidentMatch, wordLevelSimilarity } from '../auto_lyrics';
 import { LrclibMatch } from '../lrclib';
 
 function match(over: Partial<LrclibMatch>): LrclibMatch {
   return {
     id: 1,
-    trackName: '',
-    artistName: '',
+    trackName: 'Karma Police',
+    artistName: 'Radiohead',
     albumName: null,
-    duration: null,
+    duration: 260,
     syncedLyrics: '[00:01.00]la',
     plainLyrics: null,
     instrumental: false,
@@ -16,43 +16,73 @@ function match(over: Partial<LrclibMatch>): LrclibMatch {
   };
 }
 
-describe('pickDurationMatch', () => {
-  test('picks the result closest in duration within tolerance', () => {
-    const m = pickDurationMatch(
-      [match({ id: 1, duration: 250 }), match({ id: 2, duration: 201 }), match({ id: 3, duration: 208 })],
-      200,
+const QUERY = { title: 'Karma Police', artist: 'Radiohead' };
+
+describe('pickConfidentMatch', () => {
+  test('picks the closest duration among name+duration matches', () => {
+    const m = pickConfidentMatch(
+      [match({ id: 1, duration: 250 }), match({ id: 2, duration: 261 }), match({ id: 3, duration: 268 })],
+      260,
+      QUERY,
     );
     expect(m?.id).toBe(2);
   });
 
-  test('returns undefined when nothing is within tolerance', () => {
-    expect(pickDurationMatch([match({ duration: 205 }), match({ duration: 190 })], 200)).toBeUndefined();
+  test('rejects a same-length result whose name does not match', () => {
+    const m = pickConfidentMatch(
+      [match({ id: 9, trackName: 'Paranoid Android', artistName: 'Some Cover Band', duration: 260 })],
+      260,
+      QUERY,
+    );
+    expect(m).toBeUndefined();
   });
 
-  test('breaks duration ties toward an exact title+artist match', () => {
-    const m = pickDurationMatch(
-      [
-        match({ id: 1, duration: 201, trackName: 'Other', artistName: 'Nope' }),
-        match({ id: 2, duration: 201, trackName: 'Song', artistName: 'Band' }),
-      ],
-      200,
-      { title: 'song', artist: 'BAND' },
+  test('accepts fuzzy names: extra words, punctuation, case, order', () => {
+    const m = pickConfidentMatch(
+      [match({ trackName: 'Karma Police (Remastered)', artistName: 'RADIOHEAD', duration: 261 })],
+      260,
+      QUERY,
     );
-    expect(m?.id).toBe(2); // same delta; name match wins
+    expect(m).toBeDefined();
+  });
+
+  test('rejects when duration is out of tolerance even if the name matches', () => {
+    expect(pickConfidentMatch([match({ duration: 265 })], 260, QUERY)).toBeUndefined();
   });
 
   test('skips results without a duration or synced lyrics', () => {
-    expect(pickDurationMatch([match({ duration: null })], 200)).toBeUndefined();
-    expect(pickDurationMatch([match({ duration: 200, syncedLyrics: null })], 200)).toBeUndefined();
-    expect(pickDurationMatch([match({ duration: 200, syncedLyrics: '' })], 200)).toBeUndefined();
+    expect(pickConfidentMatch([match({ duration: null })], 260, QUERY)).toBeUndefined();
+    expect(pickConfidentMatch([match({ syncedLyrics: null })], 260, QUERY)).toBeUndefined();
   });
 
   test('returns undefined when the song duration is unknown', () => {
-    expect(pickDurationMatch([match({ duration: 200 })], 0)).toBeUndefined();
+    expect(pickConfidentMatch([match({ duration: 260 })], 0, QUERY)).toBeUndefined();
   });
 
-  test('honours a custom tolerance', () => {
-    expect(pickDurationMatch([match({ duration: 204 })], 200, { toleranceSec: 5 })?.duration).toBe(204);
+  test('matches on a title-only query (no artist)', () => {
+    const m = pickConfidentMatch([match({ duration: 261 })], 260, { title: 'Karma Police', artist: '' });
+    expect(m).toBeDefined();
+  });
+});
+
+describe('wordLevelSimilarity', () => {
+  test('1 for the same string, 0 for disjoint', () => {
+    expect(wordLevelSimilarity('Karma Police Radiohead', 'karma police radiohead')).toBe(1);
+    expect(wordLevelSimilarity('Karma Police', 'Enter Sandman')).toBe(0);
+  });
+
+  test('order-independent and diacritics/punctuation-insensitive', () => {
+    expect(wordLevelSimilarity('Beyoncé - Halo', 'halo beyonce')).toBe(1);
+  });
+
+  test('tolerates an extra word but drops below 1', () => {
+    const s = wordLevelSimilarity('Karma Police Radiohead', 'Karma Police Remastered Radiohead');
+    expect(s).toBeGreaterThan(0.6);
+    expect(s).toBeLessThan(1);
+  });
+
+  test('tolerates a minor typo within a word', () => {
+    expect(wordLevelSimilarity('Radiohead', 'Radiohesd')).toBeGreaterThan(0.6);
   });
 });
 

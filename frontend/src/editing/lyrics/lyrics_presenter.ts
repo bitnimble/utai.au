@@ -5,7 +5,7 @@ import {
   nameLooksLikeVocals,
 } from 'src/lyrics/forced_align';
 import { LyricLine, parseLrc, stripLyricNoise } from 'src/lyrics/lrc';
-import { pickDurationMatch } from 'src/lyrics/auto_lyrics';
+import { pickConfidentMatch } from 'src/lyrics/auto_lyrics';
 import { LrclibMatch, searchLrclib } from 'src/lyrics/lrclib';
 import { attachPitchToLines } from 'src/lyrics/pitch_contour';
 import { LyricsSource, LyricsTrackId, lyricsStore } from 'src/lyrics/store';
@@ -127,7 +127,7 @@ export class LyricsPresenter {
     // A newer song (or a manual load) superseded this fetch.
     if (controller.signal.aborted || this.autoFetchController !== controller) return;
     if (lyricsStore.hasAnyLyrics) return;
-    const best = pickDurationMatch(matches, durationSec, { title, artist });
+    const best = pickConfidentMatch(matches, durationSec, { title, artist });
     if (best?.syncedLyrics == null) return; // no confident match
     const lines = parseLrc(best.syncedLyrics);
     if (lines.length === 0) return;
