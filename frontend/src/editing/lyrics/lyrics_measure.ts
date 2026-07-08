@@ -185,13 +185,22 @@ export type LyricWordMeasureInput = {
 export type LyricLineMeasureInput = {
   /** Index into the positioned-line array. */
   lineIdx: number;
+  /** The line's own start beat, so a word's ABSOLUTE beat (`lineStartBeat +
+   *  beatOffset`) can order it against words in other lines for global
+   *  collision resolution. */
+  lineStartBeat: number;
   words: LyricWordMeasureInput[];
 };
 
 /**
- * Per-word `--lyric-word-shift` (px) that guarantees no two words in a line
- * overlap and Latin word boundaries keep a full space, while shifting the
+ * Per-word `--lyric-word-shift` (px) that guarantees no two words in the whole
+ * track overlap and Latin word boundaries keep a full space, while shifting the
  * words the least in total.
+ *
+ * Global, not per-line: every word across every line is flattened into one
+ * time-ordered sequence, so a cluster that straddles a line boundary (a line's
+ * last word close to the next line's first) is separated too, not just
+ * within-line collisions.
  *
  * Strict, not optimistic: every word is measured at the ACTIVE weight (the
  * widest it ever renders), so a word going bold under the playhead can't spill
@@ -199,7 +208,8 @@ export type LyricLineMeasureInput = {
  * Latin words so "hello" + "world" never read as one word. Given those minimum
  * separations, {@link resolvePositions} picks the shifts minimising the total
  * displacement (words push both ways around a cluster, not one-directional
- * cascade), so a collision disturbs the layout as little as possible.
+ * cascade), so each collision cluster settles centred on its own time and words
+ * with room stay put.
  *
  * Empty result = no collisions. Pure: same inputs → same output. `fontReady`
  * is read by callers to invalidate across the web-font swap; this fn doesn't.
@@ -212,33 +222,40 @@ export function computeLyricShifts(
   const out = new Map<LyricShiftKey, number>();
   if (!Number.isFinite(pxPerBeat) || pxPerBeat <= 0) return out;
   const spacePx = Math.max(MIN_GAP_PX, lyricsMeasurer.measureWordPx(' ', pxPerBeat, false, fontSizePx));
+
+  type FlatWord = { key: LyricShiftKey; natural: number; width: number; text: string };
+  const words: FlatWord[] = [];
   for (const line of lines) {
-    const n = line.words.length;
-    if (n === 0) continue;
-    const targets = new Array<number>(n);
-    const widths = new Array<number>(n);
-    for (let i = 0; i < n; i++) {
-      const w = line.words[i];
-      targets[i] = w.beatOffset * pxPerBeat;
+    for (const w of line.words) {
       const hasRuby = w.segments?.some((s) => s.reading !== undefined) ?? false;
-      widths[i] = hasRuby
+      const width = hasRuby
         ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, true, fontSizePx)
         : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, true, fontSizePx);
+      words.push({
+        key: lyricShiftKey(line.lineIdx, w.sourceIdx),
+        natural: (line.lineStartBeat + w.beatOffset) * pxPerBeat,
+        width,
+        text: w.text,
+      });
     }
-    // Minimum left-edge distance to the next word: its text width plus a gap
-    // (a full space between Latin words, else just the anti-overlap minimum).
-    const sep = new Array<number>(Math.max(0, n - 1));
-    for (let i = 0; i < n - 1; i++) {
-      const gap = needsWordSpace(line.words[i].text, line.words[i + 1].text) ? spacePx : MIN_GAP_PX;
-      sep[i] = widths[i] + gap;
-    }
-    const positions = resolvePositions(targets, sep);
-    for (let i = 0; i < n; i++) {
-      const shift = positions[i] - targets[i];
-      if (Math.abs(shift) >= 0.5) {
-        out.set(lyricShiftKey(line.lineIdx, line.words[i].sourceIdx), shift);
-      }
-    }
+  }
+  if (words.length === 0) return out;
+  words.sort((a, b) => a.natural - b.natural);
+
+  // Minimum left-edge distance to the next word: its text width plus a gap
+  // (a full space between Latin words, else just the anti-overlap minimum).
+  const sep = new Array<number>(Math.max(0, words.length - 1));
+  for (let i = 0; i < words.length - 1; i++) {
+    const gap = needsWordSpace(words[i].text, words[i + 1].text) ? spacePx : MIN_GAP_PX;
+    sep[i] = words[i].width + gap;
+  }
+  const positions = resolvePositions(
+    words.map((w) => w.natural),
+    sep,
+  );
+  for (let i = 0; i < words.length; i++) {
+    const shift = positions[i] - words[i].natural;
+    if (Math.abs(shift) >= 0.5) out.set(words[i].key, shift);
   }
   return out;
 }
@@ -246,11 +263,16 @@ export function computeLyricShifts(
 /**
  * Strict minimal-shift 1-D separation: positions `p` (same order) minimising
  * the total displacement `sum|p_i - target_i|` subject to
- * `p_{i+1} >= p_i + sep_i` and `p_0 >= 0` (words never cross a neighbour or
- * slide before the line's start). Solved as L1 isotonic regression via
- * pool-adjacent-violators with median pooling on `q_i = p_i - S_i`
- * (`S_i` = prefix sum of `sep`), which turns the spacing constraint into a
- * plain monotone-non-decreasing one and the lower bound into `q >= 0`.
+ * `p_{i+1} >= p_i + sep_i` (words never cross a neighbour). Solved as L1
+ * isotonic regression via pool-adjacent-violators with median pooling on
+ * `q_i = p_i - S_i` (`S_i` = prefix sum of `sep`), which turns the spacing
+ * constraint into a plain monotone-non-decreasing one.
+ *
+ * No lower bound on `p`: forcing `p_0 >= 0` would (via the separations)
+ * cascade every word to `>= S_i`, stacking the whole track from the origin
+ * when it's over-packed. Leaving it free instead keeps each collision cluster
+ * centred on its own median time; only the very first word could drift a few
+ * px negative, at the track's start, which is harmless.
  */
 export function resolvePositions(targets: readonly number[], sep: readonly number[]): number[] {
   const n = targets.length;
@@ -274,11 +296,7 @@ export function resolvePositions(targets: readonly number[], sep: readonly numbe
   const p = new Array<number>(n);
   let idx = 0;
   for (const b of blocks) {
-    // Clamp the block's `q` to >= 0 so `p_0 >= 0` (and, since `S_i >= 0`, every
-    // later `p_i >= S_i >= 0`); monotonicity survives because the clamp only
-    // raises a leading run of negative blocks to zero.
-    const q = Math.max(0, b.val);
-    for (let k = 0; k < b.values.length; k++, idx++) p[idx] = q + prefix[idx];
+    for (let k = 0; k < b.values.length; k++, idx++) p[idx] = b.val + prefix[idx];
   }
   return p;
 }

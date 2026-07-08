@@ -15,12 +15,16 @@ describe('resolvePositions', () => {
     expect(resolvePositions([100, 100, 100], [10, 10])).toEqual([90, 100, 110]);
   });
 
-  test('never slides a word before the line start (p0 >= 0)', () => {
-    expect(resolvePositions([0, 0], [10])).toEqual([0, 10]);
+  test('centres a start cluster on its target (no origin clamp)', () => {
+    // Both target 0, 10 apart -> centred at 0: the first word drifts slightly
+    // negative rather than the pair anchoring to the origin.
+    expect(resolvePositions([0, 0], [10])).toEqual([-5, 5]);
   });
 
   test('does not cascade a far word when only the near pair collides', () => {
-    expect(resolvePositions([0, 5, 100], [20, 20])).toEqual([0, 20, 100]);
+    // The near pair (targets 0 and 5) centres around ~2.5; the far word (100)
+    // has room and stays put.
+    expect(resolvePositions([0, 5, 100], [20, 20])).toEqual([-7.5, 12.5, 100]);
   });
 
   test('always meets the minimum separation between adjacent words', () => {

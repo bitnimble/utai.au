@@ -114,6 +114,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
         const lineSegs = furiganaAnnotator.segmentsForWords(wp.map((w) => w.text));
         return {
           lineIdx: p.i,
+          lineStartBeat: p.startBeat,
           words: wp.map((w, j) => ({
             sourceIdx: w.sourceIdx,
             text: w.text,
