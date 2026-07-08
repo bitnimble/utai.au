@@ -136,6 +136,18 @@ def test_emits_progress_events(tmp_path, monkeypatch) -> None:
     assert [e.phase for e in events] == ["checking", "skipped"]
 
 
+def test_startup_capabilities_parses_comma_env(monkeypatch) -> None:
+    # Regression: a `list[str]` field made pydantic-settings JSON-decode the env
+    # string and crash on `STARTUP_CAPABILITIES=lyrics,pitch`. A plain str + parser
+    # accepts the comma form docker-compose sets.
+    from app.config import Settings
+
+    monkeypatch.setenv("STARTUP_CAPABILITIES", "lyrics, pitch ,")
+    assert Settings().startup_capability_list == ["lyrics", "pitch"]
+    monkeypatch.setenv("STARTUP_CAPABILITIES", "")
+    assert Settings().startup_capability_list == []
+
+
 def test_planned_assets_dedupes_and_stays_capability_scoped() -> None:
     names = provision.planned_assets("lyrics", "pitch")
     assert len(names) == len(set(names))  # deduped across the shared separation body

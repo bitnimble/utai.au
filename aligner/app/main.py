@@ -174,7 +174,7 @@ async def _run_startup_provision(app: FastAPI, status: ProvisionStatus) -> None:
     the separator. Heavy work runs off the event loop. A failure is recorded on
     `status` so /provision/status can surface it; it does not crash the process."""
     try:
-        caps = settings.startup_capabilities
+        caps = settings.startup_capability_list
         if caps:
             await asyncio.to_thread(provision, *caps, on_progress=status.on_event)
         status.set_loading()
@@ -211,7 +211,7 @@ async def lifespan(app: FastAPI):
 
     # Return fast so uvicorn accepts connections (and serves /provision/status)
     # immediately; provision the models + warm the separator in the background.
-    status = ProvisionStatus(planned_assets(*settings.startup_capabilities))
+    status = ProvisionStatus(planned_assets(*settings.startup_capability_list))
     app.state.provision_status = status
     app.state.separator = None
     task = asyncio.create_task(_run_startup_provision(app, status))
