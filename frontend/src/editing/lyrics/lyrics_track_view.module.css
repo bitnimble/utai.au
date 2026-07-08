@@ -404,7 +404,12 @@
 .lyricPitchLine {
     position: absolute;
     left: var(--lyric-word-pad-left);
-    right: 0;
+    /* An <svg> is a replaced element, so `left` + `right` don't stretch it (it
+       falls back to its viewBox-intrinsic square). Size the width explicitly:
+       the glyph start to the cell end == the word's beat span minus any
+       collision shift, i.e. the same span the cell's `width` covers past the
+       pad. */
+    width: max(0px, calc(var(--lyric-word-beat-width) * var(--px-per-beat) * 1px - var(--lyric-word-shift, 0px)));
     top: 50%;
     height: calc(var(--lyric-pitch-band) * 1px);
     transform: translateY(
