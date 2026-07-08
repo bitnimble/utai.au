@@ -71,42 +71,6 @@ class Separator:
             "Separator ready in %.2fs (%s).", time.perf_counter() - t0, settings.demucs_model
         )
 
-    # ---- GPU residency control --------------------------------------
-    # `park_*` / `unpark_*` exist so the vocals + CTC endpoints can swap GPU
-    # ownership without a disk-reload, coordinated by `app.pipeline.gpu_park`.
-    # For the ONNX `NumpySeparator` there's no torch nn.Module to move, so these
-    # are runtime no-ops today (the ORT session holds its own VRAM); the hooks
-    # stay for the gpu_park primitive and in case a movable module is wrapped.
-
-    @staticmethod
-    def _inner_module(separator: object) -> object | None:
-        # The runtime separator is the ONNX `NumpySeparator`, which keeps its
-        # weights in the onnxruntime session (GPU memory has no torch nn.Module to
-        # move) and has no `.model`, so there is nothing to park for it. Duck-typed
-        # on `.model` so this stays torch-free. NOTE: the ONNX session's VRAM is NOT
-        # freed by the /music GPU swap -- releasing the ORT session is a follow-up
-        # if that OOMs.
-        return getattr(separator, "model", None)
-
-    def park_vocals(self) -> None:
-        """Park the vocals separator's VRAM before the CTC aligner loads.
-
-        Vocals comes from the Mel-Band Roformer model (its `vocals` stem), so this
-        parks that runner. Idempotent / no-op when it was never loaded (e.g. a
-        vocals cache hit fed the aligner directly)."""
-        from app.pipeline.gpu_park import park_module
-
-        if self._stems_all is None:
-            return
-        park_module(self._inner_module(self._stems_all), "vocals")
-
-    def unpark_vocals(self) -> None:
-        from app.pipeline.gpu_park import unpark_module
-
-        if self._stems_all is None:
-            return
-        unpark_module(self._inner_module(self._stems_all), "vocals")
-
     def run_vocals(self, audio_path: Path, work_dir: Path) -> Path | None:
         """Extract a vocals stem from a full mix for CTC forced alignment.
 

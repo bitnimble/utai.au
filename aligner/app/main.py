@@ -38,7 +38,6 @@ from app.config import settings
 from app.models import HealthResponse, ProvisionStatusResponse
 from app.music.routes import aclose_facade as aclose_music_facade
 from app.music.routes import router as music_router
-from app.pipeline import gpu_park
 from app.pipeline.lyrics_align import InputLine, get_aligner, lines_to_json
 from app.pipeline.provision import ProvisionEvent, planned_assets, provision
 from app.pipeline.separate import Separator
@@ -486,16 +485,14 @@ async def _stream_lyrics_align(
     """Stream the GPU phase of /music/align as NDJSON bytes.
 
     The upload drain + vocals-cache lookup already ran in the endpoint
-    handler; this owns the GPU-serialised work: park the separation model,
-    (optionally) run the vocals separator, park it before the CTC aligner
-    loads, then run forced alignment and emit the terminal `result`.
+    handler; this owns the GPU-serialised work: (optionally) run the vocals
+    separator, then run forced alignment and emit the terminal `result`.
 
     Wrapped in `_serialized_gpu_stream` so a request that arrives while
     another GPU request is in flight emits a `queued` envelope first and
-    then waits its turn (the GPU is a single resource; serialising also
-    keeps a park from moving a model host-side under an in-flight
-    forward pass). Failures surface as `error` envelopes rather than
-    raising into the ASGI layer. The temp dir is always cleaned up.
+    then waits its turn (the GPU is a single resource). Failures surface as
+    `error` envelopes rather than raising into the ASGI layer. The temp dir
+    is always cleaned up.
 
     A `{"type": "heartbeat"}` line is interleaved every
     HEARTBEAT_INTERVAL_SECONDS while we're waiting between envelopes (the
@@ -513,14 +510,6 @@ async def _stream_lyrics_align(
     async def job() -> AsyncIterator[dict[str, Any]]:
         nonlocal vocals_path
         try:
-            # park_for_lyrics frees the separation-model VRAM;
-            # park_vocals_after_extraction (below) then frees the vocals
-            # separator's VRAM before the CTC aligner allocates.
-            try:
-                gpu_park.park_for_lyrics(separator, aligner)
-            except Exception:
-                log.exception("lyrics_align: park_for_lyrics failed; continuing")
-
             if needs_separator:
                 assert mix_path is not None
                 assert vocals_key is not None
@@ -560,17 +549,6 @@ async def _stream_lyrics_align(
                         exc,
                     )
                     vocals_path = raw_vocals
-
-            # Park the vocals separator before the CTC aligner loads.
-            # No-op when we took the cache hit / pre-supplied vocals
-            # path (the separator was never loaded into VRAM this
-            # request); important when we just ran it.
-            try:
-                gpu_park.park_vocals_after_extraction(separator)
-            except Exception:
-                log.exception(
-                    "lyrics_align: park_vocals_after_extraction failed; continuing"
-                )
 
             assert vocals_path is not None
             lines = await asyncio.to_thread(
@@ -808,7 +786,6 @@ async def _stream_lyrics_separate(
 
     async def job() -> AsyncIterator[dict[str, Any]]:
         try:
-            separator.unpark_vocals()
             paths = await asyncio.to_thread(separator.run_stems, mix_path, cleanup_dir)
             stems_dir.mkdir(parents=True, exist_ok=True)
             for role in _STEM_ROLES:

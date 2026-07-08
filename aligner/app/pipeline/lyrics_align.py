@@ -253,21 +253,6 @@ class LyricsAligner:
             return settings.lyrics_align_model_english
         return None
 
-    def park(self) -> None:
-        """Free the CTC aligners' GPU memory before another stage takes the GPU.
-        Idempotent and a no-op when no aligner has been loaded yet.
-
-        The ONNX aligners hold their VRAM in the ORT session, so parking drops
-        them; they reload lazily from the cached `.onnx` on the next request.
-        Callers must hold the process-wide GPU lock so an in-flight `realign_text`
-        isn't mid-`generate_emissions`. See `app.pipeline.gpu_park.park_for_lyrics`."""
-        self._onnx_aligners.clear()
-
-    def unpark(self) -> None:
-        """No-op: ONNX aligners reload lazily from their cached `.onnx` on the
-        next request, so there's nothing to move back onto the GPU. Kept for
-        symmetry with `park` and the `gpu_park.park_for_lyrics` call sequence."""
-
     def realign_text(
         self,
         audio_path: Path,
