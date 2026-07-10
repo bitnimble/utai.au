@@ -10,8 +10,12 @@
 // it downloads + decompresses the dump into the mounted /data volume (cached
 // across restarts), then opens it read-only.
 import { Database } from 'bun:sqlite';
+import { createWriteStream } from 'node:fs';
 import { mkdir, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { createGunzip } from 'node:zlib';
 
 const DB = process.env.LRCLIB_DB_PATH ?? '/data/db.sqlite3';
 const PORT = Number(process.env.LRCLIB_PORT ?? 3300);
@@ -34,21 +38,19 @@ async function ensureDb(): Promise<void> {
     process.exit(1);
   }
   await mkdir(dirname(DB), { recursive: true });
-  // Stream download -> gunzip -> file, so a ~19 GB decompressed dump never sits
-  // in memory. Write to a .partial and rename on success, so an interrupted run
-  // never leaves a truncated db that looks cached.
+  // Stream download -> gunzip -> file via node's pipeline, which propagates
+  // BACKPRESSURE: a ~19 GB decompressed dump streams through with bounded
+  // memory. (A manual reader + FileSink loop has no backpressure, so the write
+  // buffer grows unbounded and OOMs.) Write to a .partial and rename on success,
+  // so an interrupted run never leaves a truncated db that looks cached.
   const partial = `${DB}.partial`;
-  const body = DUMP_URL.endsWith('.gz')
-    ? res.body.pipeThrough(new DecompressionStream('gzip'))
-    : res.body;
-  const writer = Bun.file(partial).writer();
-  const reader = body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    writer.write(value);
+  const source = Readable.fromWeb(res.body);
+  const out = createWriteStream(partial);
+  if (DUMP_URL.endsWith('.gz')) {
+    await pipeline(source, createGunzip(), out);
+  } else {
+    await pipeline(source, out);
   }
-  await writer.end();
   await rename(partial, DB);
   console.log(`[lrclib] dump ready: ${DB}`);
 }
