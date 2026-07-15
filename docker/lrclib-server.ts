@@ -10,11 +10,12 @@
 // it downloads + decompresses the dump into the mounted /data volume (cached
 // across restarts), then opens it read-only.
 import { Database } from 'bun:sqlite';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createWriteStream } from 'node:fs';
-import { mkdir, rename } from 'node:fs/promises';
+import { mkdir, rename, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { createGunzip } from 'node:zlib';
+import { pipeline } from 'node:stream/promises';
 
 const DB = process.env.LRCLIB_DB_PATH ?? '/data/db.sqlite3';
 const PORT = Number(process.env.LRCLIB_PORT ?? 3300);
@@ -37,18 +38,15 @@ async function ensureDb(): Promise<void> {
     process.exit(1);
   }
   await mkdir(dirname(DB), { recursive: true });
-  // Stream the fetch body -> gunzip -> file, feeding the decompressor MANUALLY
-  // so backpressure reaches the network: pause reading when the write side is
-  // behind. `Readable.fromWeb(res.body)` (and node's pipeline over it) instead
-  // drains the fetch body eagerly into memory, so a ~19 GB output OOMs (the
-  // container then restarts and re-downloads forever). Write to a .partial and
-  // rename on success, so an interrupted run never leaves a truncated db that
-  // reads as cached. Verified bounded: ~70 MB RSS decompressing 3 GB.
   const partial = `${DB}.partial`;
-  const out = createWriteStream(partial);
-  const gunzip = DUMP_URL.endsWith('.gz') ? createGunzip() : null;
-  const sink = gunzip ?? out;
-  if (gunzip) gunzip.pipe(out);
+  const isGz = DUMP_URL.endsWith('.gz');
+  const download = isGz ? `${DB}.download.gz` : partial;
+
+  // Download to disk with a manual reader + write()/drain loop so backpressure
+  // reaches the network: pause reading when the write side is behind.
+  // `Readable.fromWeb(res.body)` and Bun's FileSink both drain the fetch body
+  // eagerly into memory, so a multi-GB download OOMs.
+  const out = createWriteStream(download);
   const reader = res.body.getReader();
   let got = 0;
   let lastLog = Date.now();
@@ -56,14 +54,27 @@ async function ensureDb(): Promise<void> {
     const { done, value } = await reader.read();
     if (done) break;
     got += value.length;
-    if (!sink.write(value)) await once(sink, 'drain');
+    if (!out.write(value)) await once(out, 'drain');
     if (Date.now() - lastLog > 15000) {
-      console.log(`[lrclib] downloaded ${(got / 1e9).toFixed(2)} GB (compressed)`);
+      console.log(`[lrclib] downloaded ${(got / 1e9).toFixed(2)} GB`);
       lastLog = Date.now();
     }
   }
-  sink.end();
+  out.end();
   await once(out, 'finish');
+
+  if (isGz) {
+    // Decompress with the SYSTEM gunzip: Bun's own zlib segfaults (exit 139) on
+    // the real multi-GB stream. gunzip's stdout streams to the .partial via
+    // node's pipeline (a real subprocess Readable that backpressures correctly).
+    console.log('[lrclib] decompressing (system gunzip)...');
+    const gz = spawn('gunzip', ['-c', download], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const exited = once(gz, 'exit');
+    await pipeline(gz.stdout, createWriteStream(partial));
+    const [code] = await exited;
+    if (code !== 0) throw new Error(`gunzip exited with code ${code}`);
+    await unlink(download).catch(() => {});
+  }
   await rename(partial, DB);
   console.log(`[lrclib] dump ready: ${DB}`);
 }
