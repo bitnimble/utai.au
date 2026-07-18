@@ -10,16 +10,29 @@
 // it downloads + decompresses the dump into the mounted /data volume (cached
 // across restarts), then opens it read-only.
 import { Database } from 'bun:sqlite';
-import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createWriteStream } from 'node:fs';
-import { mkdir, rename, unlink } from 'node:fs/promises';
+import { mkdir, rename, stat, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { pipeline } from 'node:stream/promises';
 
 const DB = process.env.LRCLIB_DB_PATH ?? '/data/db.sqlite3';
 const PORT = Number(process.env.LRCLIB_PORT ?? 3300);
 const DUMP_URL = process.env.LRCLIB_DUMP_URL ?? '';
+
+async function fileSize(p: string): Promise<number> {
+  try {
+    return (await stat(p)).size;
+  } catch {
+    return 0;
+  }
+}
+
+/** gzip magic (1f 8b). Guards against the transport having already decoded the
+ *  body (Content-Encoding), in which case the "download" is the db itself. */
+async function isGzip(p: string): Promise<boolean> {
+  const head = new Uint8Array(await Bun.file(p).slice(0, 2).arrayBuffer());
+  return head[0] === 0x1f && head[1] === 0x8b;
+}
 
 async function ensureDb(): Promise<void> {
   if (await Bun.file(DB).exists()) {
@@ -27,28 +40,36 @@ async function ensureDb(): Promise<void> {
     return;
   }
   if (!DUMP_URL) {
-    console.error('[lrclib] no db and LRCLIB_DUMP_URL is unset.');
-    console.error('[lrclib] pick a dump from https://lrclib.net/db-dumps and set LRCLIB_DUMP_URL.');
-    process.exit(1);
-  }
-  console.log(`[lrclib] fetching dump (multi-GB, one-time): ${DUMP_URL}`);
-  const res = await fetch(DUMP_URL);
-  if (!res.ok || !res.body) {
-    console.error(`[lrclib] download failed: ${res.status} ${res.statusText}`);
-    process.exit(1);
+    throw new Error(
+      'LRCLIB_DUMP_URL is unset. Pick a dump from https://lrclib.net/db-dumps and set it.',
+    );
   }
   await mkdir(dirname(DB), { recursive: true });
-  const partial = `${DB}.partial`;
   const isGz = DUMP_URL.endsWith('.gz');
-  const download = isGz ? `${DB}.download.gz` : partial;
+  const download = isGz ? `${DB}.download` : `${DB}.partial`;
+
+  // Resume a partial download (HTTP Range) so a restart doesn't re-fetch the
+  // whole multi-GB dump from scratch. `accept-encoding: identity` keeps the
+  // transport from gzip-decoding the .gz body: that would make bytes-offsets
+  // (Range resume) and the gzip-magic check meaningless.
+  let offset = await fileSize(download);
+  const headers: Record<string, string> = { 'accept-encoding': 'identity' };
+  if (offset > 0) headers.range = `bytes=${offset}-`;
+  const res = await fetch(DUMP_URL, { headers });
+  if (offset > 0 && res.status !== 206) offset = 0; // server ignored the range
+  if (!res.ok || !res.body) throw new Error(`download failed: ${res.status} ${res.statusText}`);
+  console.log(
+    offset > 0
+      ? `[lrclib] resuming download at ${(offset / 1e9).toFixed(2)} GB: ${DUMP_URL}`
+      : `[lrclib] fetching dump (multi-GB, one-time): ${DUMP_URL}`,
+  );
 
   // Download to disk with a manual reader + write()/drain loop so backpressure
-  // reaches the network: pause reading when the write side is behind.
-  // `Readable.fromWeb(res.body)` and Bun's FileSink both drain the fetch body
-  // eagerly into memory, so a multi-GB download OOMs.
-  const out = createWriteStream(download);
+  // reaches the network (Readable.fromWeb / Bun's FileSink buffer the body and
+  // OOM). This raw-download side is the one Bun path that holds up at scale.
+  const out = createWriteStream(download, { flags: offset > 0 ? 'a' : 'w' });
   const reader = res.body.getReader();
-  let got = 0;
+  let got = offset;
   let lastLog = Date.now();
   for (;;) {
     const { done, value } = await reader.read();
@@ -63,23 +84,38 @@ async function ensureDb(): Promise<void> {
   out.end();
   await once(out, 'finish');
 
-  if (isGz) {
-    // Decompress with the SYSTEM gunzip: Bun's own zlib segfaults (exit 139) on
-    // the real multi-GB stream. gunzip's stdout streams to the .partial via
-    // node's pipeline (a real subprocess Readable that backpressures correctly).
+  if (isGz && (await isGzip(download))) {
+    // Decompress with the SYSTEM gunzip via a shell redirect (`gunzip -c > db`),
+    // so NO Bun stream sits between gunzip and the file. Bun's own zlib
+    // segfaults on the real stream, and its subprocess-stdout Readable emits
+    // >2 GB chunks that overflow fs.write (ERR_OUT_OF_RANGE). The shell wires
+    // gunzip's stdout straight to the file descriptor; Bun just waits.
     console.log('[lrclib] decompressing (system gunzip)...');
-    const gz = spawn('gunzip', ['-c', download], { stdio: ['ignore', 'pipe', 'inherit'] });
-    const exited = once(gz, 'exit');
-    await pipeline(gz.stdout, createWriteStream(partial));
-    const [code] = await exited;
-    if (code !== 0) throw new Error(`gunzip exited with code ${code}`);
+    const partial = `${DB}.partial`;
+    const proc = Bun.spawn(['sh', '-c', 'exec gunzip -c "$1" > "$2"', 'sh', download, partial], {
+      stdout: 'inherit',
+      stderr: 'inherit',
+    });
+    if ((await proc.exited) !== 0) throw new Error('gunzip failed');
     await unlink(download).catch(() => {});
+    await rename(partial, DB);
+  } else {
+    // Not gzipped (or the transport already decoded it): the download IS the db.
+    await rename(download, DB);
   }
-  await rename(partial, DB);
   console.log(`[lrclib] dump ready: ${DB}`);
 }
 
-await ensureDb();
+try {
+  await ensureDb();
+} catch (err) {
+  // Don't crash-loop the multi-GB download: log and exit. The container's
+  // restart policy is `no`, so a failed setup stops here instead of retrying.
+  // (A resumed retry is a manual `docker compose restart lrclib` away.)
+  console.error(`[lrclib] setup failed: ${err instanceof Error ? err.message : String(err)}`);
+  console.error('[lrclib] not retrying automatically; restart the container to resume.');
+  process.exit(1);
+}
 
 const db = new Database(DB, { readonly: true });
 db.exec('PRAGMA query_only = ON;');
