@@ -114,6 +114,9 @@ services:
     # `no`, not unless-stopped: a failed multi-GB download must NOT auto-restart
     # and re-download from scratch. A resumed retry is a manual `restart` away.
     restart: "no"
+    # tini as PID 1: reaps the `gunzip` we spawn, so a crashed bun can't leave it
+    # orphaned burning a core (bun as PID 1 has no init to clean up after it).
+    init: true
     command: ["bun", "/repo/docker/lrclib-server.ts"]
     # Root so it can write the multi-GB dump to the host-mounted /data.
     user: "0:0"
