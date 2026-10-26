@@ -26,6 +26,31 @@ export type SkipSegment = {
 
 const API_URL = 'https://sponsor.ajay.app/api/skipSegments';
 
+const VIDEO_DURATION_MATCH_SEC = 2;
+
+/** Segments only line up with the audio when it's the same cut as the video
+ *  they were submitted against (an album track under a music video's URL isn't). */
+export function applicableSegments(segments: readonly SkipSegment[], durationSec: number): SkipSegment[] {
+  if (durationSec <= 0) return [];
+  return segments.filter(
+    (s) => s.videoDurationSec === 0 || Math.abs(s.videoDurationSec - durationSec) <= VIDEO_DURATION_MATCH_SEC,
+  );
+}
+
+/** Length of the audio left once its `music_offtopic` segments are cut out. */
+export function musicDurationSec(segments: readonly SkipSegment[], durationSec: number): number {
+  let nonMusicSec = 0;
+  let coveredUntil = 0;
+  for (const s of applicableSegments(segments, durationSec).sort((a, b) => a.startSec - b.startSec)) {
+    if (s.category !== 'music_offtopic') continue;
+    const start = Math.max(s.startSec, coveredUntil);
+    const end = Math.min(s.endSec, durationSec);
+    if (end > start) nonMusicSec += end - start;
+    coveredUntil = Math.max(coveredUntil, end);
+  }
+  return durationSec - nonMusicSec;
+}
+
 export async function fetchSkipSegments(videoId: string, signal?: AbortSignal): Promise<SkipSegment[]> {
   const params = new URLSearchParams({ videoID: videoId, categories: JSON.stringify(SKIP_CATEGORIES) });
   const res = await fetch(`${API_URL}?${params.toString()}`, { signal });

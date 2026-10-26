@@ -4,7 +4,7 @@ import type { SongStore } from 'src/karaoke/song_store';
 import type { VideoStore } from 'src/video/video_store';
 import { SkipSegmentsPresenter } from '../skip_segments_presenter';
 import { SkipSegmentsStore } from '../skip_segments_store';
-import { fetchSkipSegments, parseSkipSegments, type SkipSegment } from '../sponsorblock';
+import { fetchSkipSegments, musicDurationSec, parseSkipSegments, type SkipSegment } from '../sponsorblock';
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -59,6 +59,30 @@ describe('parseSkipSegments', () => {
   test('non-array response -> no segments', () => {
     expect(parseSkipSegments('Not Found')).toEqual([]);
     expect(parseSkipSegments(null)).toEqual([]);
+  });
+});
+
+describe('musicDurationSec', () => {
+  const seg = (category: SkipSegment['category'], startSec: number, endSec: number, videoDurationSec = 0): SkipSegment => ({
+    category,
+    startSec,
+    endSec,
+    videoDurationSec,
+  });
+
+  test('cuts the non-music segments, counting overlaps once and ignoring other categories', () => {
+    const segments = [
+      seg('music_offtopic', 250, 300),
+      seg('intro', 0, 30),
+      seg('music_offtopic', 0, 20),
+      seg('music_offtopic', 10, 25),
+    ];
+    expect(musicDurationSec(segments, 280)).toBe(225);
+  });
+
+  test('ignores segments submitted against a different cut', () => {
+    expect(musicDurationSec([seg('music_offtopic', 0, 20, 300)], 280)).toBe(280);
+    expect(musicDurationSec([seg('music_offtopic', 0, 20, 281)], 280)).toBe(260);
   });
 });
 

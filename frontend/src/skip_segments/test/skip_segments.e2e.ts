@@ -36,6 +36,7 @@ test('skip segments: offers to skip a SponsorBlock non-music section and seeks p
 
   const skip = page.getByTestId('skip-segment');
   await expect(skip).toHaveText('Skip non-music');
+  await expect(page.getByTestId('transport-time')).toHaveText(/ \/ 0:10\.00 \(0:07\.00\)$/);
   await skip.click();
 
   await expect(skip).toBeHidden();

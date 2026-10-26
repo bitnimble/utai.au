@@ -24,6 +24,7 @@ import { attachPitchToLines } from 'src/lyrics/pitch_contour';
 import { separateStems, type SeparatedStems } from 'src/lyrics/separate_stems';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import { fetchTrack, type TrackResult } from 'src/net/music_source_client';
+import { fetchSkipSegments, musicDurationSec, type SkipSegment } from 'src/skip_segments/sponsorblock';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { prefetchBackingVideo } from 'src/video/video_client';
 import { songVideoId } from 'src/video/youtube';
@@ -75,10 +76,14 @@ async function warmBackingVideo(meta: SongMeta, signal: AbortSignal): Promise<vo
 
 async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promise<PreparedSong> {
   opts.onStage({ kind: 'downloading', frac: 0 });
-  const mix = await fetchTrack(track, {
-    signal: opts.signal,
-    onProgress: (p) => opts.onStage({ kind: 'downloading', frac: p.frac }),
-  });
+  const [mix, segments] = await Promise.all([
+    fetchTrack(track, {
+      signal: opts.signal,
+      onProgress: (p) => opts.onStage({ kind: 'downloading', frac: p.frac }),
+    }),
+    lookUpSkipSegments(track.sourceUrl, opts.signal),
+  ]);
+  const durationSec = track.durationSec ?? (await decodeDurationSec(mix));
   const meta: SongMeta = {
     title: cleanStreamingTitle(track.title, track.artists),
     artist: track.artists || undefined,
@@ -86,17 +91,29 @@ async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promi
     albumArtUrl: track.coverUrl ?? undefined,
     sourceUrl: track.sourceUrl,
   };
-  return prepareMix(mix, meta, track.durationSec ?? undefined, opts);
+  return prepareMix(mix, meta, musicDurationSec(segments, durationSec), opts);
 };
+
+/** Best-effort: without segments, lyrics match against the full length. */
+async function lookUpSkipSegments(sourceUrl: string | undefined, signal: AbortSignal): Promise<SkipSegment[]> {
+  const videoId = songVideoId({ sourceUrl });
+  if (videoId == null) return [];
+  try {
+    return await fetchSkipSegments(videoId, signal);
+  } catch (err) {
+    if (!signal.aborted) console.warn('[skip-segments] SponsorBlock lookup failed:', message(err));
+    return [];
+  }
+}
 
 /** Separate, beat-track, and fetch + align lyrics for a full mix. */
 async function prepareMix(
   mix: File,
   meta: SongMeta,
-  knownDurationSec: number | undefined,
+  knownMusicDurationSec: number | undefined,
   { signal, onStage }: PrepareOptions,
 ): Promise<PreparedSong> {
-  const durationSec = knownDurationSec ?? (await decodeDurationSec(mix));
+  const musicSec = knownMusicDurationSec ?? (await decodeDurationSec(mix));
   const parsed = parseSongFilename(mix.name);
   const title = meta.title || parsed.title;
   const songLabel = title || mix.name;
@@ -113,7 +130,7 @@ async function prepareMix(
       if (!signal.aborted && !isBackendUnreachable(err)) console.warn('[beats] analysis failed:', message(err));
       return undefined;
     }),
-    findSyncedLyrics(title, meta.artist || parsed.artist, durationSec, signal),
+    findSyncedLyrics(title, meta.artist || parsed.artist, musicSec, signal),
   ]);
   signal.throwIfAborted();
 

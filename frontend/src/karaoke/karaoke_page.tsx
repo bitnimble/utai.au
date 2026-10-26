@@ -715,8 +715,10 @@ const LINE_MAX_SPAN_SEC = 12;
 const TransportBar = observer(function TransportBar() {
   const presenter = React.useContext(KaraokePresenterContext)!;
   const song = React.useContext(SongStoreContext)!;
+  const skipSegments = React.useContext(SkipSegmentsStoreContext)!;
   const playing = playbackEngine.state === 'playing';
   const canPlay = song.durationSec > 0;
+  const musicSec = skipSegments.musicDurationSec;
   return (
     <footer className={styles.transport}>
       <button
@@ -742,6 +744,7 @@ const TransportBar = observer(function TransportBar() {
       <span className={styles.transportTime} data-testid="transport-time">
         {formatPlayheadTime(playbackEngine.currentTime)}
         {song.durationSec > 0 ? ` / ${formatPlayheadTime(song.durationSec)}` : ''}
+        {musicSec < song.durationSec ? ` (${formatPlayheadTime(musicSec)})` : ''}
       </span>
       <ScoringControls />
       <div className={styles.mixControls}>
