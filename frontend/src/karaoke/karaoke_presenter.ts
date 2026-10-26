@@ -145,6 +145,10 @@ export class KaraokePresenter {
     playbackEngine.stop();
   }
 
+  seek(sec: number): void {
+    playbackEngine.seek(sec);
+  }
+
   /** Click-to-seek from a bars-row-local pixel x (0 == the row's left edge,
    *  after the sticky gutter). */
   seekToX(x: number): void {

@@ -67,3 +67,35 @@
     box-shadow: var(--shadow-sm);
     cursor: pointer;
 }
+
+/* Thin variant: hairline track, knob only on hover / keyboard focus. */
+.thin::-webkit-slider-runnable-track {
+    height: 4px;
+}
+
+.thin::-moz-range-track {
+    height: 4px;
+}
+
+.thin::-webkit-slider-thumb {
+    width: 12px;
+    height: 12px;
+    margin-top: -4px;
+    opacity: 0;
+}
+
+.thin::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    opacity: 0;
+}
+
+.thin:hover::-webkit-slider-thumb,
+.thin:focus-visible::-webkit-slider-thumb {
+    opacity: 1;
+}
+
+.thin:hover::-moz-range-thumb,
+.thin:focus-visible::-moz-range-thumb {
+    opacity: 1;
+}

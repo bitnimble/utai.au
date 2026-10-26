@@ -18,6 +18,7 @@ export const Slider = ({
   min = 0,
   max = 1,
   step,
+  thin,
   className,
   ariaLabel,
   title,
@@ -31,6 +32,7 @@ export const Slider = ({
   min?: number;
   max?: number;
   step?: number;
+  thin?: boolean;
   className?: string;
   ariaLabel?: string;
   title?: string;
@@ -43,7 +45,7 @@ export const Slider = ({
   return (
     <input
       type="range"
-      className={classNames(styles.range, className)}
+      className={classNames(styles.range, thin && styles.thin, className)}
       min={min}
       max={max}
       step={step}

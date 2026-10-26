@@ -138,6 +138,15 @@
     color: var(--color-text-muted-alt);
 }
 
+.seekBar {
+    display: block;
+    flex: 0 0 auto;
+    width: 100%;
+    height: 12px;
+    margin: 0;
+    background: var(--color-bg-overlay);
+}
+
 .transport {
     display: flex;
     flex-wrap: wrap;

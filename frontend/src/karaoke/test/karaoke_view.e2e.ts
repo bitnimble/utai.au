@@ -252,6 +252,32 @@ test('karaoke view flags a song with no lyrics', async ({ page }) => {
   await expect(page.getByTestId('karaoke-no-lyrics')).toHaveCount(0);
 });
 
+test('karaoke view has a seek bar above the footer that follows and moves the playhead', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  const seekBar = page.getByTestId('karaoke-seek-bar');
+  await expect(seekBar).toHaveCount(0);
+
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.keyboard.press('Escape');
+  await expect(seekBar).toBeEnabled();
+  await expect(seekBar).toHaveAttribute('max', '20');
+
+  const value = async (): Promise<number> => Number(await seekBar.inputValue());
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(5));
+  await expect.poll(value).toBeGreaterThanOrEqual(5);
+  expect(await value()).toBeLessThan(12);
+
+  await seekBar.fill('12');
+  await expect(page.getByTestId('transport-time')).toHaveText(/^0:1[2-9]\.\d\d /);
+});
+
 test('karaoke "Show lyric pitch" fits a long line inside the overlay', async ({ page }) => {
   await page.goto('/');
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({

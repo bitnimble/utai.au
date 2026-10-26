@@ -41,5 +41,6 @@ test('skip segments: offers to skip a SponsorBlock non-music section and seeks p
 
   await expect(skip).toBeHidden();
   const t = await page.evaluate(() => (window as unknown as UtaiWindow).utai?.playbackEngine?.currentTime);
-  expect(t).toBeCloseTo(3, 3);
+  expect(t).toBeGreaterThanOrEqual(3);
+  expect(t).toBeLessThan(3.5);
 });

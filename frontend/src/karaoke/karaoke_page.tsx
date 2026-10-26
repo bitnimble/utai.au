@@ -336,6 +336,7 @@ export const KaraokePage = observer(function KaraokePage() {
                     <QueueLoadingScreen />
                     <QueueSidebar />
                   </div>
+                  {karaokeView && <SeekBar />}
                   <TransportBar />
                   <Modals />
                   <ToastContainer />
@@ -711,6 +712,24 @@ const LINE_SPAN_PAD_FRAC = 0.06;
 /** Cap (seconds) on a followed line's span used for the fit-zoom, so a line
  *  before a long instrumental gap doesn't zoom the whole track out to nothing. */
 const LINE_MAX_SPAN_SEC = 12;
+
+const SeekBar = observer(function SeekBar() {
+  const presenter = React.useContext(KaraokePresenterContext)!;
+  const song = React.useContext(SongStoreContext)!;
+  return (
+    <Slider
+      thin
+      className={styles.seekBar}
+      value={playbackEngine.currentTime}
+      max={song.durationSec}
+      step={0.01}
+      disabled={song.durationSec <= 0}
+      onChange={(sec) => presenter.seek(sec)}
+      ariaLabel="Seek"
+      testId="karaoke-seek-bar"
+    />
+  );
+});
 
 const TransportBar = observer(function TransportBar() {
   const presenter = React.useContext(KaraokePresenterContext)!;
