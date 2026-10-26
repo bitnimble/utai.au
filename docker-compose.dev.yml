@@ -9,7 +9,7 @@
 #                 (see the backend service). Runs only pre-exported onnx, so it
 #                 needs the models present to start (can't export -- no torch).
 #   - web       : the Vite dev server over a repo bind-mount (edit -> refresh)
-#   - lrclib    : self-hosted LRCLIB lyrics mirror (opt-in; set LRCLIB_DUMP_URL)
+#   - lrclib    : self-hosted LRCLIB lyrics mirror (off; LRCLIB_LOCAL=1 enables)
 #   - caddy     : edge proxy; :5175 /api -> backend, /lrclib -> lrclib, / -> web;
 #                 :5176 -> onthespot
 #
@@ -107,11 +107,12 @@ services:
 
   # Self-hosted LRCLIB lyrics mirror: a tiny Bun script (docker/lrclib-server.ts)
   # that serves /api/search off the published SQLite dump, no build (reuses the
-  # web service's Bun image). On first run it downloads + decompresses the dump
-  # into the /data volume (cached on the host path, so it survives `down` and is
-  # fetched once). Pick a current dump from https://lrclib.net/db-dumps and set
-  # LRCLIB_DUMP_URL (in .env); without it this container exits and the frontend
-  # just uses public lrclib.net. LRCLIB keeps only the latest dump, so a pinned URL
+  # web service's Bun image). OFF by default: set LRCLIB_LOCAL=1 (in .env) to
+  # enable; unset, this container exits and the frontend uses public lrclib.net.
+  # On first enabled run it downloads + decompresses the dump into the /data
+  # volume (cached on the host path, so it survives `down` and is fetched once).
+  # Pick a current dump from https://lrclib.net/db-dumps and set LRCLIB_DUMP_URL
+  # (in .env). LRCLIB keeps only the latest dump, so a pinned URL
   # 404s once it's superseded. ~45 GB download (several times that decompressed),
   # so the first `up` is slow, until it's ready the frontend falls back to public.
   lrclib:
@@ -129,6 +130,7 @@ services:
     # Root so it can write the multi-GB dump to the host-mounted /data.
     user: "0:0"
     environment:
+      LRCLIB_LOCAL: ${LRCLIB_LOCAL:-}
       LRCLIB_DUMP_URL: ${LRCLIB_DUMP_URL:-}
     volumes:
       - ${REPO_PATH:-.}:/repo:ro
@@ -151,9 +153,10 @@ services:
       HOME: /tmp
       # Origin-relative /api (Caddy serves it on this same origin).
       VITE_ALIGNER_URL: ""
-      # Query the self-hosted LRCLIB mirror first (Caddy proxies /lrclib ->
-      # lrclib:3300), falling back to public lrclib.net. Same-origin, no CORS.
-      VITE_LRCLIB_URL: /lrclib/api
+      # With LRCLIB_LOCAL set, query the self-hosted mirror first (Caddy proxies
+      # /lrclib -> lrclib:3300), falling back to public lrclib.net. Same-origin,
+      # no CORS. Unset = public-only.
+      VITE_LRCLIB_URL: ${LRCLIB_LOCAL:+/lrclib/api}
       # Keep Vite's dep-optimizer cache off the (possibly read-only-ish) mount.
       VITE_CACHE_DIR: /tmp/utai-vite
       # Off = no auto browser reload on edit (matches the backend's disabled

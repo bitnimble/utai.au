@@ -31,25 +31,28 @@ are picked up on a browser refresh (Vite over a repo bind-mount).
 | `web` | Vite dev server | Bind-mounts the repo; hot reload. |
 | `backend` | Aligner (music facade) | Reuses the CUDA `utai-sandbox` image; runs in `WORKER_ROLE=api` (no GPU/model load for music). |
 | `onthespot` | OnTheSpot headless web API | The thing the facade wraps. Config + credentials live in the `otsconfig` volume. |
-| `lrclib` | Self-hosted LRCLIB lyrics mirror | Opt-in; see below. Searched before public lrclib.net; the client falls back if it's missing/down. |
+| `lrclib` | Self-hosted LRCLIB lyrics mirror | Off by default (`LRCLIB_LOCAL=1` enables); see below. Searched before public lrclib.net; the client falls back if it's missing/down. |
 
 ## Local lyrics mirror (LRCLIB)
 
 Public `lrclib.net` search is slow (5–8 s). The `lrclib` service runs a
-self-hosted mirror so lyric search answers in ms; the frontend queries it first
-(`VITE_LRCLIB_URL=/lrclib/api`, proxied same-origin through Caddy) and falls back
-to public `lrclib.net` on a miss or while the mirror is unavailable.
+self-hosted mirror so lyric search answers in ms; when enabled, the frontend
+queries it first (`VITE_LRCLIB_URL=/lrclib/api`, proxied same-origin through
+Caddy) and falls back to public `lrclib.net` on a miss or while the mirror is
+unavailable.
 
-It's **opt-in**: pick a current dump from <https://lrclib.net/db-dumps> and set
-its URL in the `.env` beside the compose file. Without it the `lrclib` container
-exits and everything still works against public lrclib.net. LRCLIB keeps only the
-latest dump, so the URL 404s (and the container exits) once a newer one replaces it.
+It's **off by default**: the `lrclib` container exits and the frontend searches
+public lrclib.net only. To enable, set `LRCLIB_LOCAL=1` and a current dump URL
+from <https://lrclib.net/db-dumps> in the `.env` beside the compose file. LRCLIB
+keeps only the latest dump, so the URL 404s (and the container exits) once a
+newer one replaces it.
 
 ```sh
 # A specific dump (~45 GB compressed, several times that on disk). Downloaded + decompressed
 # ONCE into the mounted volume (LRCLIB_DATA_PATH, default
 # /codebox-workspace/utai/lrclib), cached across `down`/rebuilds.
-echo "LRCLIB_DUMP_URL=https://lrclib.net/db-dumps/lrclib-db-dump-<timestamp>.sqlite3.gz" >> .env
+echo "LRCLIB_LOCAL=1" >> .env
+echo "LRCLIB_DUMP_URL=https://db-dumps.lrclib.net/lrclib-db-dump-<timestamp>.sqlite3.gz" >> .env
 ```
 
 The mirror is a tiny Bun script (`docker/lrclib-server.ts`) that serves

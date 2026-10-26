@@ -116,6 +116,11 @@ async function ensureDb(): Promise<void> {
   console.log(`[lrclib] dump ready: ${DB}`);
 }
 
+if (!process.env.LRCLIB_LOCAL) {
+  console.log('[lrclib] LRCLIB_LOCAL unset: local mirror disabled, frontend uses public lrclib.net.');
+  process.exit(0);
+}
+
 try {
   await ensureDb();
 } catch (err) {
