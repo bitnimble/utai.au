@@ -18,16 +18,23 @@ describe('lineSegments', () => {
 
   test('joins CJK words without inserting spaces', () => {
     const line = { startSec: 0, text: '君の名は', words: [word('君'), word('の'), word('名は')] };
-    expect(lineSegments(line).map((s) => s.text)).toEqual(['君', 'の', '名は']);
+    expect(lineSegments(line)).toEqual([
+      { text: '君', wordIdx: 0 },
+      { text: 'の', wordIdx: 1 },
+      { text: '名は', wordIdx: 2 },
+    ]);
   });
 
-  test('space-joins a word missing from the line text', () => {
-    const line = { startSec: 0, text: 'a b', words: [word('a'), word('zz'), word('b')] };
+  test('repeated words each claim their own occurrence', () => {
+    const line = { startSec: 0, text: 'la la la', words: [word('la'), word('la'), word('la')] };
+    expect(lineSegments(line).filter((s) => s.text === 'la').map((s) => s.wordIdx)).toEqual([0, 1, 2]);
+  });
+
+  test('falls back to space-joined words when one is missing from the line text', () => {
+    const line = { startSec: 0, text: 'Hello there', words: [word('hello'), word('there')] };
     expect(lineSegments(line)).toEqual([
-      { text: 'a', wordIdx: 0 },
-      { text: ' zz', wordIdx: 1 },
-      { text: ' ', wordIdx: 1 },
-      { text: 'b', wordIdx: 2 },
+      { text: 'hello', wordIdx: 0 },
+      { text: ' there', wordIdx: 1 },
     ]);
   });
 

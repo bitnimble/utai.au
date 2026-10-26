@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { needsWordSpace, packLine, sustainSpan } from '../lyrics_measure';
+import { lyricFontSizeAt, needsWordSpace, packLine, sustainSpan } from '../lyrics_measure';
 
 describe('sustainSpan', () => {
   test('shows from just past the text to the end of the time cell', () => {
@@ -13,6 +13,17 @@ describe('sustainSpan', () => {
   test('none when the text fills the cell or the room', () => {
     expect(sustainSpan(40, 45, Infinity)).toBe(undefined);
     expect(sustainSpan(40, 100, 46)).toBe(undefined);
+  });
+
+  test('shows from exactly 6px of room', () => {
+    expect(sustainSpan(40, 50, Infinity)).toEqual({ fromPx: 44, toPx: 50, cellPx: 50 });
+    expect(sustainSpan(40, 49.9, Infinity)).toBe(undefined);
+  });
+});
+
+describe('lyricFontSizeAt', () => {
+  test('full size from 120 px/s up, scaling down to a 40% floor', () => {
+    expect([200, 120, 60, 40, 10].map((ppb) => lyricFontSizeAt(30, ppb))).toEqual([30, 30, 15, 12, 12]);
   });
 });
 
@@ -41,6 +52,15 @@ describe('packLine', () => {
 
   test('always shows the first word', () => {
     expect(packLine([0, 10], [50, 50], [5], 10, 20).shown).toBe(1);
+  });
+
+  test('each word keeps the gap after the word before it', () => {
+    expect(packLine([0, 0, 0], [10, 10, 10], [5, 20], 0, Infinity).positions).toEqual([0, 15, 45]);
+  });
+
+  test('text ending exactly at the limit fits, with or without an ellipsis', () => {
+    expect(packLine([0, 60], [50, 40], [10], 10, 100).shown).toBe(2);
+    expect(packLine([0, 60, 120], [50, 30, 50], [10, 10], 10, 100).shown).toBe(2);
   });
 });
 

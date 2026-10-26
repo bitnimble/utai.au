@@ -72,16 +72,29 @@ test('zoomed out, a crowded line ellipsises before the next and pitch lines neve
     const w = window as unknown as {
       utai: { lyricsStore: { add: (l: unknown[], o: unknown) => string }; presenter: { setZoom: (n: number) => void } };
     };
-    const line = (startSec: number, text: string) => ({
-      startSec,
+    const word = (text: string, s: number, e: number, midi: number) => ({
+      startSec: s,
+      endSec: e,
       text,
-      words: text.split(' ').map((t, i) => {
-        const s = startSec + i * 0.25;
-        return { startSec: s, endSec: s + 0.2, text: t, midi: 60 + i, pitchSegments: [{ startSec: s, endSec: s + 0.2, midi: 60 + i }] };
-      }),
+      midi,
+      pitchSegments: [{ startSec: s, endSec: e, midi }],
     });
+    const crowded = 'I could be the twist the one to make you stop'
+      .split(' ')
+      .map((t, i) => word(t, 1 + i * 0.25, 1.2 + i * 0.25, 60 + i));
+    // Line 2 has room: "icing" holds before "on", "cake" holds to the end.
+    const roomy = [
+      word('The', 4, 4.2, 60),
+      word('icing', 4.25, 6, 62),
+      word('on', 6.1, 6.3, 64),
+      word('your', 6.35, 6.6, 65),
+      word('cake', 6.65, 9, 67),
+    ];
     w.utai.lyricsStore.add(
-      [line(1, 'I could be the twist the one to make you stop'), line(4, 'The icing on your cake')],
+      [
+        { startSec: 1, text: crowded.map((x) => x.text).join(' '), words: crowded },
+        { startSec: 4, text: 'The icing on your cake', words: roomy },
+      ],
       { source: 'plaintext', sourceLabel: 'probe' },
     );
     w.utai.presenter.setZoom(40);
@@ -105,10 +118,13 @@ test('zoomed out, a crowded line ellipsises before the next and pitch lines neve
     return { first: glyphs(0), second: glyphs(1), pitchLines };
   });
 
+  expect(state.first.length).toBeGreaterThan(1);
   expect(state.first.length).toBeLessThan(11);
   expect(state.first.at(-1)!.text.endsWith('…')).toBe(true);
   expect(state.first.at(-1)!.right).toBeLessThanOrEqual(state.second[0].left);
   expect(Math.abs(state.second[0].left - 4 * 40)).toBeLessThan(2);
+  expect(state.second.map((g) => g.text)).toEqual(['The', 'icing', 'on', 'your', 'cake']);
+  expect(state.pitchLines.length).toBeGreaterThanOrEqual(2);
   for (const l of state.pitchLines) {
     for (const g of [...state.first, ...state.second]) {
       expect(l.right <= g.left + 0.5 || l.left >= g.right - 0.5).toBe(true);
@@ -143,6 +159,7 @@ test('a held word shows its pitch line after its text, moving with it', async ({
     w.utai.presenter.setZoom(80);
   });
   await page.getByTestId('lyrics-word-0-1').waitFor();
+  await page.evaluate(() => document.fonts.ready);
 
   const geom = await page.evaluate(() => {
     const word = document.querySelector('[data-testid="lyrics-word-0-1"]') as HTMLElement;

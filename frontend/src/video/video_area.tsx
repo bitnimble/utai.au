@@ -5,9 +5,10 @@ import { VideoPresenter } from './video_presenter';
 import styles from './video_area.module.css';
 
 /**
- * The gap between the toolbar and the (bottom-anchored) score: hosts the muted
- * backing video when the loaded song came from YouTube, and is empty space
- * otherwise. Always rendered so the score stays pinned to the bottom. The
+ * The space between the toolbar and the score (or the footer, in the karaoke
+ * view): hosts the muted backing video when the loaded song came from YouTube,
+ * and is empty space otherwise. Always rendered so the score stays pinned to
+ * the bottom. The
  * primary backing is a native `<video>` over a yt-dlp-fetched stream; it swaps
  * to the YouTube IFrame embed once that video's native fetch has failed
  * (`store.useEmbed`). `children` render laid over the area.

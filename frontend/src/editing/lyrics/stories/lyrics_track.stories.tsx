@@ -5,16 +5,17 @@ import { LyricLine, PitchSegment } from 'src/lyrics/lrc';
 import { buildLinearTimeline } from 'src/editing/playback/timeline';
 import { WindowedLines } from '../lyric_chips';
 import { positionLyricLines } from '../lyric_layout';
-import { computePitchPaths, LyricWordPlacement } from '../lyrics_measure';
+import { DEFAULT_LYRIC_FONT_SIZE_PX } from 'src/settings/app_settings_store';
+import { computePitchPaths, layoutLyricWords, lyricFontSizeAt, lyricMeasureInputs } from '../lyrics_measure';
 import styles from '../lyrics_track_view.module.css';
 
 /**
  * The time-aligned lyrics row, rendered standalone from fixture data so the
  * pitch visualisation can be seen without the backend or the full app. The
  * word chips carry the same `midi` + `pitchSegments` the aligner attaches, so
- * this exercises the real layout (`positionLyricLines`) + chip components:
- * each word is lifted to its pitch, melisma shows as multiple note bars, and a
- * vibrato note gets a striped accent.
+ * this exercises the real layout (`positionLyricLines` + `layoutLyricWords`) +
+ * chip components: each word is lifted to its pitch, and its pitch line (melisma
+ * steps, vibrato waves) shows in the room after its text.
  *
  * Mirrors LyricsTrackView's row geometry (px-per-beat, pitch band, row height)
  * minus the player/seek/overflow-menu wiring, which need live stores.
@@ -109,9 +110,15 @@ function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { line
   const lineShows = (pitch || vibrato) && hasPitchData; // trailing line renders -> band
   const rowHeight = trackHasPitch ? PITCHED_ROW_HEIGHT : LYRICS_ROW_HEIGHT;
   const durationSec = Math.max(...lines.flatMap((l) => l.words?.map((w) => w.endSec) ?? [0])) + 1;
-  const timeline = buildLinearTimeline(durationSec);
-  const positioned = positionLyricLines(lines, timeline, 0, [durationSec], 0, durationSec, { pitch });
-  const noPlacements = React.useMemo(() => new Map<string, LyricWordPlacement>(), []);
+  const positioned = React.useMemo(
+    () => positionLyricLines(lines, buildLinearTimeline(durationSec), 0, [durationSec], 0, durationSec, { pitch }),
+    [lines, durationSec, pitch],
+  );
+  const fontSizePx = lyricFontSizeAt(DEFAULT_LYRIC_FONT_SIZE_PX, pxPerBeat);
+  const placements = React.useMemo(
+    () => layoutLyricWords(lyricMeasureInputs(positioned), pxPerBeat, fontSizePx),
+    [positioned, pxPerBeat, fontSizePx],
+  );
   const pitchPaths = React.useMemo(
     () => computePitchPaths(positioned, pxPerBeat, { pitch, vibrato }),
     [positioned, pxPerBeat, pitch, vibrato],
@@ -134,6 +141,7 @@ function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { line
               ['--layer-beats' as string]: durationSec,
               ['--bars-row-width' as string]: pxPerBeat * durationSec,
               ['--px-per-beat' as string]: pxPerBeat,
+              ['--lyric-font-size' as string]: `${fontSizePx}px`,
               ['--lyric-pitch-band' as string]: lineShows ? PITCH_BAND_PX : 0,
               height: rowHeight,
             } as React.CSSProperties
@@ -141,7 +149,7 @@ function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { line
         >
           <WindowedLines
             positioned={positioned}
-            placements={noPlacements}
+            placements={placements}
             pitchPaths={pitchPaths}
             playhead={IDLE_PLAYHEAD}
           />

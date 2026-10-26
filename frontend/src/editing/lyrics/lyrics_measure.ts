@@ -174,8 +174,8 @@ class LyricsMeasurer {
 export const lyricsMeasurer = new LyricsMeasurer();
 
 /** A word's identity inside the per-row placement + pitch-path maps. `lineIdx`
- *  is the positioned-line index (NOT `line.i`; keep stable across the walk),
- *  `sourceIdx` matches `PositionedWord.sourceIdx`. */
+ *  is `PositionedLine.i` (the source line index), `sourceIdx` matches
+ *  `PositionedWord.sourceIdx`. */
 export type LyricWordKey = string;
 export function lyricWordKey(lineIdx: number, sourceIdx: number): LyricWordKey {
   return `${lineIdx}:${sourceIdx}`;
@@ -196,7 +196,7 @@ export type LyricWordMeasureInput = {
 };
 
 export type LyricLineMeasureInput = {
-  /** Index into the positioned-line array. */
+  /** `PositionedLine.i`. */
   lineIdx: number;
   /** The line's own start beat, so a word's ABSOLUTE beat (`lineStartBeat +
    *  beatOffset`) can be placed against the next line's start. */
@@ -243,30 +243,25 @@ export function layoutLyricWords(
   const spacePx = Math.max(MIN_GAP_PX, lyricsMeasurer.measureWordPx(' ', pxPerBeat, false, fontSizePx));
   const ellipsisPx = lyricsMeasurer.measureWordPx(ELLIPSIS, pxPerBeat, true, fontSizePx);
 
-  type MeasuredWord = { key: LyricWordKey; natural: number; width: number; cellPx: number; text: string };
-  const measuredLines: MeasuredWord[][] = lines
-    .map((line) =>
-      line.words
-        .map((w) => {
-          const hasRuby = w.segments?.some((s) => s.reading !== undefined) ?? false;
-          return {
-            key: lyricWordKey(line.lineIdx, w.sourceIdx),
-            natural: (line.lineStartBeat + w.beatOffset) * pxPerBeat,
-            width: hasRuby
-              ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, true, fontSizePx)
-              : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, true, fontSizePx),
-            cellPx: w.beatWidth * pxPerBeat,
-            text: w.text,
-          };
-        })
-        .sort((a, b) => a.natural - b.natural),
-    )
-    .filter((words) => words.length > 0)
-    .sort((a, b) => a[0].natural - b[0].natural);
-
-  measuredLines.forEach((words, k) => {
-    const next = measuredLines[k + 1];
-    const limit = next ? next[0].natural - MIN_GAP_PX : Infinity;
+  const byStart = [...lines].sort((a, b) => a.lineStartBeat - b.lineStartBeat);
+  byStart.forEach((line, k) => {
+    if (line.words.length === 0) return;
+    const next = byStart[k + 1];
+    const limit = next ? next.lineStartBeat * pxPerBeat - MIN_GAP_PX : Infinity;
+    const words = line.words
+      .map((w) => {
+        const hasRuby = w.segments?.some((s) => s.reading != null) ?? false;
+        return {
+          key: lyricWordKey(line.lineIdx, w.sourceIdx),
+          natural: (line.lineStartBeat + w.beatOffset) * pxPerBeat,
+          width: hasRuby
+            ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, true, fontSizePx)
+            : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, true, fontSizePx),
+          cellPx: w.beatWidth * pxPerBeat,
+          text: w.text,
+        };
+      })
+      .sort((a, b) => a.natural - b.natural);
     const gaps = words
       .slice(1)
       .map((w, i) => (needsWordSpace(words[i].text, w.text) ? spacePx : MIN_GAP_PX));
@@ -304,25 +299,24 @@ export function sustainSpan(textPx: number, cellPx: number, roomPx: number): Sus
   return toPx - fromPx >= MIN_SUSTAIN_PX ? { fromPx, toPx, cellPx } : undefined;
 }
 
-/** Measure inputs for every word-aligned line, with furigana segmentation. */
+/** Measure inputs for every line, with furigana segmentation. A line without
+ *  word timings has no words but still bounds the line before it. */
 export function lyricMeasureInputs(positioned: readonly PositionedLine[]): LyricLineMeasureInput[] {
-  return positioned
-    .filter((p) => p.wordPositions !== undefined)
-    .map((p) => {
-      const wp = p.wordPositions!;
-      const lineSegs = furiganaAnnotator.segmentsForWords(wp.map((w) => w.text));
-      return {
-        lineIdx: p.i,
-        lineStartBeat: p.startBeat,
-        words: wp.map((w, j) => ({
-          sourceIdx: w.sourceIdx,
-          text: w.text,
-          beatOffset: w.beatOffset,
-          beatWidth: w.beatWidth,
-          segments: lineSegs[j],
-        })),
-      };
-    });
+  return positioned.map((p) => {
+    const wp = p.wordPositions ?? [];
+    const lineSegs = furiganaAnnotator.segmentsForWords(wp.map((w) => w.text));
+    return {
+      lineIdx: p.i,
+      lineStartBeat: p.startBeat,
+      words: wp.map((w, j) => ({
+        sourceIdx: w.sourceIdx,
+        text: w.text,
+        beatOffset: w.beatOffset,
+        beatWidth: w.beatWidth,
+        segments: lineSegs[j],
+      })),
+    };
+  });
 }
 
 /**

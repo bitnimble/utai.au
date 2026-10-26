@@ -22,7 +22,8 @@ import styles from './karaoke_lyrics_overlay.module.css';
 
 const PITCH_BAND_EM = 2.5;
 const MIN_LINE_SPAN_SEC = 0.5;
-const FIT_STEPS = 4;
+const ZOOM_FIT_STEPS = 3;
+const FIT_STEPS = 8;
 
 /** The first lyrics track's current line, karaoke style, laid over the video area. */
 export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
@@ -116,7 +117,7 @@ const KaraokeLine = React.memo(function KaraokeLine({
 });
 
 /** The line through the track view's pitched renderer, its sung time scaled to
- *  the overlay width. */
+ *  the overlay width; the plain line when none of its words can be placed. */
 const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
   lines,
   lineIdx,
@@ -138,13 +139,12 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
       (p) => p.i === lineIdx,
     );
   }, [lines, lineIdx]);
-  const fontSizePx = karaokeFontSizePx(widthPx);
   const fontReady = lyricsMeasurer.fontReady;
   const furiganaRevision = furiganaAnnotator.revision;
   const fit = React.useMemo(
-    () => (positioned ? fitLineToWidth(positioned, widthPx, fontSizePx) : undefined),
+    () => (positioned ? fitLineToWidth(positioned, widthPx, karaokeFontSizePx(widthPx)) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [positioned, widthPx, fontSizePx, fontReady, furiganaRevision],
+    [positioned, widthPx, fontReady, furiganaRevision],
   );
   const pitchPaths = React.useMemo(
     () =>
@@ -153,12 +153,27 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
         : new Map<string, string>(),
     [positioned, fit],
   );
-  if (!positioned || !fit) return null;
-  const { pxPerBeat, placements, rightPx } = fit;
+  const hasFurigana = React.useMemo(
+    () =>
+      positioned?.wordPositions != null &&
+      furiganaAnnotator
+        .segmentsForWords(positioned.wordPositions.map((w) => w.text))
+        .some((segs) => segs.some((s) => s.reading != null)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [positioned, furiganaRevision],
+  );
+  if (!positioned || !fit) {
+    return <KaraokeLine line={lines[lineIdx]} activeWordIdx={activeWordIdx} activeWordEnded={activeWordEnded} />;
+  }
+  const { pxPerBeat, fontSizePx, placements, rightPx } = fit;
   const bandPx = fontSizePx * PITCH_BAND_EM;
   return (
     <div
-      className={classNames(trackStyles.lyricsBarsRow, styles.pitchRow)}
+      className={classNames(
+        trackStyles.lyricsBarsRow,
+        hasFurigana && trackStyles.lyricsBarsRowFurigana,
+        styles.pitchRow,
+      )}
       style={
         {
           '--bars-row-width': `${rightPx}px`,
@@ -186,21 +201,26 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
   );
 });
 
-/** The zoom (px per second of the line's sung time) at which the line's laid-out
- *  text fills `widthPx`, with that layout. Iterative: the text's width itself
- *  tightens as zoom drops (see the zoom-driven axes in `lyrics_measure`). */
+/** The zoom (px per second of the line's sung time) and font size at which the
+ *  line's laid-out text fills `widthPx`, with that layout. Iterative: the text's
+ *  width itself tightens as zoom drops (see the zoom-driven axes in
+ *  `lyrics_measure`), and the font only shrinks once zoom alone can't fit it. */
 function fitLineToWidth(
   line: PositionedLine,
   widthPx: number,
-  fontSizePx: number,
-): { pxPerBeat: number; placements: Map<string, LyricWordPlacement>; rightPx: number } {
+  baseFontSizePx: number,
+): { pxPerBeat: number; fontSizePx: number; placements: Map<string, LyricWordPlacement>; rightPx: number } {
   const input = lyricMeasureInputs([line]);
   let pxPerBeat = widthPx / Math.max(MIN_LINE_SPAN_SEC, line.endBeat - line.startBeat);
+  let fontSizePx = baseFontSizePx;
   for (let step = 0; ; step++) {
     const placements = layoutLyricWords(input, pxPerBeat, fontSizePx);
-    const rightPx = Math.max(...Array.from(placements.values(), (p) => p.rightPx));
-    if (rightPx <= widthPx || step === FIT_STEPS) return { pxPerBeat, placements, rightPx };
-    pxPerBeat *= widthPx / rightPx;
+    const rightPx = Math.max(...Array.from(placements.values()).filter((p) => !p.hidden).map((p) => p.rightPx));
+    if (rightPx <= widthPx || step === FIT_STEPS) return { pxPerBeat, fontSizePx, placements, rightPx };
+    const scale = widthPx / rightPx;
+    pxPerBeat *= scale;
+    // packed edge to edge, a lower zoom no longer narrows the row; only smaller text can
+    if (step >= ZOOM_FIT_STEPS) fontSizePx *= scale;
   }
 }
 

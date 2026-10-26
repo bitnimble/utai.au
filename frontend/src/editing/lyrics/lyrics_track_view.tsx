@@ -113,9 +113,8 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
     [positioned, pxPerBeat, fontReady, furiganaRevision, lyricsFontSizePx],
   );
 
-  // Per-word pitch-line SVG paths. Kept with the placement because both need the
-  // zoom-dependent glyph measurement (the wave wavelength is derived from each
-  // word's sustain pixel width), so this re-derives on zoom / font-load too.
+  // Per-word pitch-line SVG paths. Re-derived on zoom: the vibrato wavelength
+  // is derived from each word's time-cell pixel width.
   const pitchPaths = React.useMemo(
     () => computePitchPaths(positioned, pxPerBeat, { pitch: pitchEnabled, vibrato: vibratoEnabled }),
     [positioned, pxPerBeat, pitchEnabled, vibratoEnabled],

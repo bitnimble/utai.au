@@ -12,6 +12,7 @@ describe('wordState', () => {
 
   test('the active word turns sung once its end passes', () => {
     expect(wordState(1, 1, true)).toBe('sung');
+    expect(wordState(2, 1, true)).toBe('upcoming');
   });
 });
 

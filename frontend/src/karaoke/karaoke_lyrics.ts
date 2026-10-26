@@ -25,22 +25,21 @@ export type LineSegment = { text: string; wordIdx: number };
 
 /** Split a line's text into per-word runs, preserving its original spacing and
  *  punctuation (CJK lines have no spaces between words). A word-less line is
- *  one run owned by word 0. */
+ *  one run owned by word 0; a line whose text doesn't contain every word
+ *  verbatim falls back to the words joined by spaces. */
 export function lineSegments(line: LyricLine): LineSegment[] {
   const words = line.words;
   if (!words || words.length === 0) return [{ text: line.text, wordIdx: 0 }];
   const segments: LineSegment[] = [];
   let cursor = 0;
-  words.forEach((word, wordIdx) => {
-    const at = line.text.indexOf(word.text, cursor);
-    if (at < 0) {
-      segments.push({ text: segments.length > 0 ? ` ${word.text}` : word.text, wordIdx });
-      return;
-    }
+  for (let wordIdx = 0; wordIdx < words.length; wordIdx++) {
+    const text = words[wordIdx].text;
+    const at = line.text.indexOf(text, cursor);
+    if (at < 0) return words.map((w, i) => ({ text: i > 0 ? ` ${w.text}` : w.text, wordIdx: i }));
     if (at > cursor) segments.push({ text: line.text.slice(cursor, at), wordIdx: Math.max(0, wordIdx - 1) });
-    segments.push({ text: word.text, wordIdx });
-    cursor = at + word.text.length;
-  });
+    segments.push({ text, wordIdx });
+    cursor = at + text.length;
+  }
   if (cursor < line.text.length) segments.push({ text: line.text.slice(cursor), wordIdx: words.length - 1 });
   return segments;
 }

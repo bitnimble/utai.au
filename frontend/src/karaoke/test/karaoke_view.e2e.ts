@@ -45,10 +45,12 @@ test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', as
     );
   await expect.poll(states).toEqual(['sung', 'current', 'upcoming']);
 
-  const stroke = await lines
-    .locator('[data-word-state="current"]', { hasText: 'two' })
-    .evaluate((e) => getComputedStyle(e).webkitTextStrokeWidth);
-  expect(parseFloat(stroke)).toBeGreaterThan(0);
+  const strokes = await lines.locator('[data-word-state]').evaluateAll((els) =>
+    Object.fromEntries(
+      els.map((e) => [e.getAttribute('data-word-state'), getComputedStyle(e).webkitTextStrokeColor] as const),
+    ),
+  );
+  expect(new Set([strokes.sung, strokes.current, strokes.upcoming]).size).toBe(3);
 
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(6.2));
   await expect(lines).toHaveText(['next line']);
@@ -102,4 +104,45 @@ test('karaoke "Show lyric pitch" renders the line through the pitched lyric chip
   expect(tops[0]).toBeGreaterThan(tops[1]);
   expect(tops[1]).toBeGreaterThan(tops[2]);
   expect(await page.getByTestId('karaoke-lyrics').locator('svg').count()).toBeGreaterThan(0);
+
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('karaoke-show-pitch').click();
+  await page.keyboard.press('Escape');
+  await expect(words).toHaveCount(0);
+  await expect(page.getByTestId('karaoke-line')).toHaveText('low mid high');
+});
+
+test('karaoke "Show lyric pitch" fits a long line inside the overlay', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await page.evaluate(() => {
+    const text = 'every single one of these words is sung far too quickly to ever fit at full size';
+    const words = text.split(' ').map((t, i) => {
+      const s = 2 + i * 0.12;
+      return { startSec: s, endSec: s + 0.1, text: t, midi: 60 + (i % 5), pitchSegments: [{ startSec: s, endSec: s + 0.1, midi: 60 + (i % 5) }] };
+    });
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add([{ startSec: 2, text, words }], {
+      source: 'plaintext',
+      sourceLabel: 'probe',
+    });
+  });
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.getByTestId('karaoke-show-pitch').click();
+  await page.keyboard.press('Escape');
+
+  const overlay = page.getByTestId('karaoke-lyrics');
+  await expect(overlay.locator('[data-testid^="lyrics-word-"]')).toHaveCount(17);
+  const bounds = await overlay.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const glyphs = Array.from(el.querySelectorAll('[data-testid^="lyrics-word-"]')).map((w) => w.getBoundingClientRect());
+    return { left: r.left, right: r.right, minLeft: Math.min(...glyphs.map((g) => g.left)), maxRight: Math.max(...glyphs.map((g) => g.right)) };
+  });
+  expect(bounds.minLeft).toBeGreaterThanOrEqual(bounds.left - 1);
+  expect(bounds.maxRight).toBeLessThanOrEqual(bounds.right + 1);
 });
