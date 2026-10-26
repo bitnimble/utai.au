@@ -19,14 +19,17 @@ export type QueueItem = {
   readonly status: QueueItemStatus;
 };
 
+export type QueueSidebarTab = 'current' | 'search';
+
 /**
  * Upcoming songs, in play order (the current song isn't in here), plus the
- * sidebar visibility. Data only; {@link import('./queue_presenter').QueuePresenter}
+ * sidebar state. Data only; {@link import('./queue_presenter').QueuePresenter}
  * is the sole writer.
  */
 export class QueueStore {
   items: QueueItem[] = [];
   sidebarOpen = false;
+  sidebarTab: QueueSidebarTab = 'current';
   /** The next song starts the moment it's ready. */
   awaitingNext = true;
   /** Being loaded into the session and started; already out of `items`. */

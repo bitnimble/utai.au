@@ -43,20 +43,9 @@ export class MusicSourcePresenter {
     );
   }
 
-  // --- modal visibility ---
-
-  openSearch(): void {
-    this.store.searchOpen = true;
-    void this.ensureLoaded();
-  }
-
-  closeSearch(): void {
-    this.store.searchOpen = false;
-  }
-
   // --- load ---
 
-  /** Load the service catalog + config once (on first modal open). */
+  /** Load the service catalog + config once (on first search panel open). */
   async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
     this.loaded = true;

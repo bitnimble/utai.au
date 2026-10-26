@@ -1,6 +1,9 @@
-/* Music-source search modal. Backdrop / panel / header come from the shared
-   <Modal> primitive; the search form, results list, and fetch footer are
-   bespoke and live here (mirrors the LRCLIB search modal's structure). */
+.panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
 
 .setupNote {
     composes: reset from '../ui/button/button.module.css';
@@ -49,7 +52,6 @@
 .results {
     border-top: 1px solid var(--color-border);
     flex: 1 1 auto;
-    height: 75dvh;
     min-height: 0;
     overflow-y: auto;
     background: var(--color-bg-base);
@@ -83,10 +85,10 @@
     border-left: 3px solid transparent;
     border-bottom: 1px solid var(--color-border);
     background: transparent;
-    padding: 12px 16px 12px 13px;
+    padding: 10px 16px 10px 13px;
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
     text-align: left;
     color: var(--color-text-strong);
 }
@@ -96,8 +98,8 @@
     display: grid;
     grid-template: 100% / 100%;
     place-items: center;
-    width: 192px;
-    height: 108px;
+    width: 144px;
+    height: 81px;
     border-radius: var(--radius-md);
     overflow: hidden;
     background: var(--color-bg-cream-warm);

@@ -1,8 +1,3 @@
-/* Tab strip used today by the Transcribe dropdown to switch between
-   "New" and "Resume previous" flows while keeping the shared options
-   (Beat input, Model) above the strip. Two-tab default but the
-   component is generic so any DropdownButton panel can adopt it. */
-
 .tabs {
     display: flex;
     width: 100%;

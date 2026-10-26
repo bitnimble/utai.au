@@ -3,25 +3,24 @@ import { Music, Search, Settings } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import type { TrackResult } from 'src/net/music_source_client';
-import { Modal, ModalHeader } from 'src/ui/modal/modal';
 import { Spinner } from 'src/ui/spinner/spinner';
 import { useSettingsModal } from 'src/settings/settings_modal_context';
 import { MusicSourcePresenterContext, MusicSourceStoreContext } from './music_source_contexts';
 import type { MusicSourcePresenter } from './music_source_presenter';
 import type { MusicSourceStore } from './music_source_store';
-import styles from './music_search_modal.module.css';
+import styles from './music_search_panel.module.css';
 
 /**
- * Search-a-streaming-service modal: a query box, priority-merged results across
- * the user's configured services, and an Add to queue for the selection. Stays
- * open after adding so several songs can be queued in one go. Visibility is
- * driven by `store.searchOpen` (presenter-owned).
+ * Search-a-streaming-service panel: a query box, priority-merged results across
+ * the user's configured services, and an Add to queue for the selection.
  */
-export const MusicSearchModal = observer(function MusicSearchModal() {
-  const store = React.useContext(MusicSourceStoreContext);
-  const presenter = React.useContext(MusicSourcePresenterContext);
+export const MusicSearchPanel = observer(function MusicSearchPanel() {
+  const store = React.useContext(MusicSourceStoreContext)!;
+  const presenter = React.useContext(MusicSourcePresenterContext)!;
   const settingsModal = useSettingsModal();
-  if (store == null || presenter == null || !store.searchOpen) return null;
+  React.useEffect(() => {
+    void presenter.ensureLoaded();
+  }, [presenter]);
 
   const onSubmit = (e: React.FormEvent): void => {
     e.preventDefault();
@@ -30,27 +29,12 @@ export const MusicSearchModal = observer(function MusicSearchModal() {
   const searching = store.searchPhase.kind === 'searching';
 
   return (
-    <Modal
-      open
-      onClose={() => presenter.closeSearch()}
-      ariaLabel="Add a song from a streaming service"
-      width={960}
-      maxHeight
-      testId="music-search-modal"
-    >
-      <ModalHeader
-        title="Add a song from streaming"
-        onClose={() => presenter.closeSearch()}
-        closeLabel="Close music search"
-      />
+    <div className={styles.panel} data-testid="music-search">
       {!store.anyServiceConfigured && (
         <button
           type="button"
           className={styles.setupNote}
-          onClick={() => {
-            presenter.closeSearch();
-            settingsModal.openSettings('sources');
-          }}
+          onClick={() => settingsModal.openSettings('sources')}
           data-testid="music-search-setup-note"
         >
           <Settings size={14} aria-hidden="true" /> No music services configured yet. Set one up.
@@ -81,7 +65,7 @@ export const MusicSearchModal = observer(function MusicSearchModal() {
       </form>
       <ResultsView store={store} presenter={presenter} />
       <QueueFooter store={store} presenter={presenter} />
-    </Modal>
+    </div>
   );
 });
 
@@ -145,7 +129,7 @@ const ResultRow = observer(function ResultRow({
         data-testid={`music-search-result-${result.id}`}
       >
         <span className={styles.thumbnail}>
-          <Music size={32} aria-hidden="true" />
+          <Music size={24} aria-hidden="true" />
           {result.coverUrl != null && (
             <img
               src={result.coverUrl}

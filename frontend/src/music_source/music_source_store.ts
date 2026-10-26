@@ -11,14 +11,12 @@ export type SearchPhase =
   | { kind: 'results' };
 
 /**
- * Data-only store for the music-source feature: the search modal visibility,
- * the loaded service catalog + config, and the search state.
+ * Data-only store for the music-source feature: the loaded service catalog +
+ * config, and the search state.
  * Observables + read accessors only; every mutation lives on
  * {@link import('./music_source_presenter').MusicSourcePresenter}.
  */
 export class MusicSourceStore {
-  searchOpen = false;
-
   /** Service catalog with per-service `configured` status (from the backend). */
   services: ServiceInfo[] = [];
   /** Service priority; null until first load. */
@@ -38,7 +36,7 @@ export class MusicSourceStore {
   }
 
   /** Whether search will query anything: at least one connected (configured)
-   *  service. Drives the search modal's "set one up" prompt. Anonymous services
+   *  service. Drives the search panel's "set one up" prompt. Anonymous services
    *  (YouTube Music) always count, so this is only false before the catalog
    *  loads. */
   get anyServiceConfigured(): boolean {

@@ -9,17 +9,13 @@
 }
 
 .sidebar {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 10;
+    flex: 0 0 auto;
     display: flex;
     flex-direction: column;
-    width: min(360px, 100%);
+    width: min(440px, 100%);
+    min-height: 0;
     border-left: 1px solid var(--color-border);
     background: var(--color-bg-base);
-    box-shadow: var(--shadow-lg);
 }
 
 .loadingScreen {
@@ -50,14 +46,16 @@
 .header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
+    gap: 8px;
+    padding: 4px 8px 0;
     border-bottom: 1px solid var(--color-border);
 }
 
-.heading {
-    composes: heading from '../typography.module.css';
-    margin: 0;
+.tabs {
+    flex: 1 1 auto;
+    align-self: flex-end;
+    /* Lay the tab strip's own underline track over the header border. */
+    margin-bottom: -1px;
 }
 
 .iconButton {

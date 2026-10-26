@@ -53,6 +53,9 @@ test('queue: first song plays at once, the rest queue up, and play next / remove
 
   await page.getByTestId('queue-open').click();
   await expect(page.getByTestId('queue-sidebar')).toBeVisible();
+  const sidebar = (await page.getByTestId('queue-sidebar').boundingBox())!;
+  const stage = (await page.getByTestId('score-area').boundingBox())!;
+  expect(stage.x + stage.width).toBeLessThanOrEqual(sidebar.x);
   await expect(queueTitles(page)).toHaveText(['Bravo', 'Charlie']);
   await expect(page.getByTestId('queue-count')).toHaveText('2');
   await expect(page.getByTestId('queue-item-status').first()).toHaveText('Ready');

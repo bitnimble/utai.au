@@ -5,7 +5,7 @@ import { cleanStreamingTitle, parseSongFilename } from 'src/lyrics/auto_lyrics';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import { toastStore } from 'src/ui/toasts/toasts';
 import type { PrepareSong, PrepareStage, QueueSource } from './prepare_song';
-import { QueueItem, QueueItemId, QueueStore } from './queue_store';
+import { QueueItem, QueueItemId, QueueSidebarTab, QueueStore } from './queue_store';
 
 type SongLoader = Pick<SongIoPresenter, 'loadPreparedSong' | 'clearSong'>;
 type Transport = Pick<PlaybackEngine, 'state' | 'play' | 'onEnded'>;
@@ -73,6 +73,10 @@ export class QueuePresenter {
 
   closeSidebar(): void {
     this.store.sidebarOpen = false;
+  }
+
+  setSidebarTab(tab: QueueSidebarTab): void {
+    this.store.sidebarTab = tab;
   }
 
   add(source: QueueSource): void {

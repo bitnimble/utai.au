@@ -20,16 +20,9 @@ type TabsProps<T extends string> = {
 };
 
 /**
- * Generic tab strip used inside DropdownButton panels (today: the
- * Transcribe dropdown's New ↔ Resume switch). Renders a WAI-ARIA
- * tablist; left/right arrows move selection across enabled tabs
- * (wrapping at the ends), Home/End jump to the first/last enabled tab.
- *
- * Activation is automatic on focus change (the simpler of the two
- * patterns the WAI-ARIA tabs spec permits) so a keyboard user doesn't
- * need a separate Enter/Space press to commit; for the two-tab Transcribe
- * case this matches what mouse users get and avoids a "selected but not
- * active" intermediate state.
+ * Generic tab strip. Renders a WAI-ARIA tablist; left/right arrows move
+ * selection across enabled tabs (wrapping at the ends), Home/End jump to the
+ * first/last enabled tab. Activation is automatic on focus change.
  */
 export function Tabs<T extends string>({ options, value, onChange, ariaLabel }: TabsProps<T>) {
   const refs = React.useRef<Array<HTMLButtonElement | null>>([]);

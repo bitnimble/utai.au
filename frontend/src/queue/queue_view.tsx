@@ -2,10 +2,12 @@ import classNames from 'classnames';
 import { EllipsisVertical, GripVertical, ListMusic, ListStart, SkipForward, Trash2, X } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
+import { MusicSearchPanel } from 'src/music_source/music_search_panel';
 import { ActionMenuItem, DropdownButton } from 'src/ui/dropdown/dropdown';
 import { Spinner } from 'src/ui/spinner/spinner';
+import { Tabs, type TabOption } from 'src/ui/tabs/tabs';
 import { QueuePresenterContext, QueueStoreContext } from './queue_contexts';
-import type { QueueItem, QueueItemId, QueueItemStatus } from './queue_store';
+import type { QueueItem, QueueItemId, QueueItemStatus, QueueSidebarTab } from './queue_store';
 import styles from './queue_view.module.css';
 
 const QUEUE_ITEM_DRAG_TYPE = 'application/x-utai-queue-item';
@@ -66,17 +68,28 @@ export const QueueLoadingScreen = observer(function QueueLoadingScreen() {
   );
 });
 
+const SIDEBAR_TABS: ReadonlyArray<TabOption<QueueSidebarTab>> = [
+  { value: 'current', label: 'Current', testId: 'queue-tab-current' },
+  { value: 'search', label: 'Search', testId: 'queue-tab-search' },
+];
+
 export const QueueSidebar = observer(function QueueSidebar() {
   const store = React.useContext(QueueStoreContext)!;
   const presenter = React.useContext(QueuePresenterContext)!;
-  const [draggingId, setDraggingId] = React.useState<QueueItemId>();
 
   if (!store.sidebarOpen) return null;
 
   return (
     <aside className={styles.sidebar} aria-label="Song queue" data-testid="queue-sidebar">
       <header className={styles.header}>
-        <h2 className={styles.heading}>Up next</h2>
+        <div className={styles.tabs}>
+          <Tabs
+            options={SIDEBAR_TABS}
+            value={store.sidebarTab}
+            onChange={(tab) => presenter.setSidebarTab(tab)}
+            ariaLabel="Queue"
+          />
+        </div>
         <button
           type="button"
           className={styles.iconButton}
@@ -87,48 +100,58 @@ export const QueueSidebar = observer(function QueueSidebar() {
           <X size={16} aria-hidden="true" />
         </button>
       </header>
-      {store.items.length === 0 ? (
-        <p className={styles.empty} data-testid="queue-empty">
-          Nothing queued. Add songs from the Audio or File menu.
-        </p>
-      ) : (
-        <ol className={styles.list}>
-          {store.items.map((item, index) => (
-            <li
-              key={item.id}
-              className={classNames(styles.item, draggingId === item.id && styles.itemDragging)}
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.effectAllowed = 'move';
-                // Firefox won't start a drag without data.
-                e.dataTransfer.setData(QUEUE_ITEM_DRAG_TYPE, item.id);
-                setDraggingId(item.id);
-              }}
-              onDragOver={(e) => {
-                // The type check, not just `draggingId`: a row consumed mid-drag
-                // never gets `dragend`, leaving `draggingId` stale for later drags.
-                if (draggingId == null || !e.dataTransfer.types.includes(QUEUE_ITEM_DRAG_TYPE)) return;
-                e.preventDefault();
-                presenter.move(draggingId, index);
-              }}
-              onDrop={(e) => e.preventDefault()}
-              onDragEnd={() => setDraggingId(undefined)}
-              data-testid="queue-item"
-            >
-              <GripVertical size={14} aria-hidden="true" className={styles.grip} />
-              <div className={styles.itemText}>
-                <span className={styles.itemTitle} data-testid="queue-item-title">
-                  {item.title}
-                </span>
-                {item.artist && <span className={styles.itemArtist}>{item.artist}</span>}
-                <ItemStatus status={item.status} />
-              </div>
-              <ItemMenu item={item} />
-            </li>
-          ))}
-        </ol>
-      )}
+      {store.sidebarTab === 'current' ? <CurrentQueue /> : <MusicSearchPanel />}
     </aside>
+  );
+});
+
+const CurrentQueue = observer(function CurrentQueue() {
+  const store = React.useContext(QueueStoreContext)!;
+  const presenter = React.useContext(QueuePresenterContext)!;
+  const [draggingId, setDraggingId] = React.useState<QueueItemId>();
+  if (store.items.length === 0) {
+    return (
+      <p className={styles.empty} data-testid="queue-empty">
+        Nothing queued. Load songs from the File menu, or find one in Search.
+      </p>
+    );
+  }
+  return (
+    <ol className={styles.list}>
+      {store.items.map((item, index) => (
+        <li
+          key={item.id}
+          className={classNames(styles.item, draggingId === item.id && styles.itemDragging)}
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = 'move';
+            // Firefox won't start a drag without data.
+            e.dataTransfer.setData(QUEUE_ITEM_DRAG_TYPE, item.id);
+            setDraggingId(item.id);
+          }}
+          onDragOver={(e) => {
+            // The type check, not just `draggingId`: a row consumed mid-drag
+            // never gets `dragend`, leaving `draggingId` stale for later drags.
+            if (draggingId == null || !e.dataTransfer.types.includes(QUEUE_ITEM_DRAG_TYPE)) return;
+            e.preventDefault();
+            presenter.move(draggingId, index);
+          }}
+          onDrop={(e) => e.preventDefault()}
+          onDragEnd={() => setDraggingId(undefined)}
+          data-testid="queue-item"
+        >
+          <GripVertical size={14} aria-hidden="true" className={styles.grip} />
+          <div className={styles.itemText}>
+            <span className={styles.itemTitle} data-testid="queue-item-title">
+              {item.title}
+            </span>
+            {item.artist && <span className={styles.itemArtist}>{item.artist}</span>}
+            <ItemStatus status={item.status} />
+          </div>
+          <ItemMenu item={item} />
+        </li>
+      ))}
+    </ol>
   );
 });
 

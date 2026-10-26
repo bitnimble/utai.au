@@ -38,7 +38,6 @@ import {
 } from 'src/ui/dropdown/dropdown';
 import { Slider } from 'src/ui/slider/slider';
 import { NumberStepper } from 'src/ui/number_stepper/number_stepper';
-import { MusicSearchModal } from 'src/music_source/music_search_modal';
 import {
   MusicSourcePresenterContext,
   MusicSourceStoreContext,
@@ -327,13 +326,15 @@ export const KaraokePage = observer(function KaraokePage() {
                 <SkipSegmentsPresenterContext.Provider value={skipSegmentsPresenter}>
                 <div className={styles.page}>
                   <Toolbar />
-                  <div className={styles.main}>
-                    <VideoArea>
-                      {karaokeView && <KaraokeLyricsOverlay />}
-                      <SkipSegmentButton />
-                    </VideoArea>
-                    {!karaokeView && <ScoreArea />}
-                    <QueueLoadingScreen />
+                  <div className={styles.body}>
+                    <div className={styles.main}>
+                      <VideoArea>
+                        {karaokeView && <KaraokeLyricsOverlay />}
+                        <SkipSegmentButton />
+                      </VideoArea>
+                      {!karaokeView && <ScoreArea />}
+                      <QueueLoadingScreen />
+                    </div>
                     <QueueSidebar />
                   </div>
                   {karaokeView && <SeekBar />}
@@ -367,7 +368,6 @@ export const KaraokePage = observer(function KaraokePage() {
 const Toolbar = observer(function Toolbar() {
   const lyricsPresenter = React.useContext(LyricsPresenterContext)!;
   const lyricsAlign = React.useContext(LyricsAlignStoreContext)!;
-  const musicPresenter = React.useContext(MusicSourcePresenterContext)!;
   const songIo = React.useContext(SongIoPresenterContext)!;
   const queuePresenter = React.useContext(QueuePresenterContext)!;
   const beats = React.useContext(BeatStoreContext)!;
@@ -404,13 +404,22 @@ const Toolbar = observer(function Toolbar() {
         {(close) => (
           <>
             <ActionMenuItem
-              label="Add saved song to queue"
+              label="Load song pack"
               onClick={() => {
                 openSongRef.current?.click();
                 close();
               }}
-              title="Queue a saved song bundle (.zip)"
+              title="Queue a saved song pack (.zip)"
               testId="open-song"
+            />
+            <ActionMenuItem
+              label="Load audio file"
+              onClick={() => {
+                fileRef.current?.click();
+                close();
+              }}
+              title="Queue a local audio file (auto-separates into stems)"
+              testId="load-audio"
             />
             <ActionMenuItem
               label={saveLabel}
@@ -430,34 +439,6 @@ const Toolbar = observer(function Toolbar() {
               }}
               title="Edit song title, artist, and links"
               testId="song-details-open"
-            />
-          </>
-        )}
-      </DropdownButton>
-      <DropdownButton
-        label={<MenuLabel text="Audio" />}
-        className={styles.toolButton}
-        title="Add audio"
-        testId="audio-menu"
-      >
-        {(close) => (
-          <>
-            <ActionMenuItem
-              label="Add audio file to queue"
-              onClick={() => {
-                fileRef.current?.click();
-                close();
-              }}
-              title="Queue a local audio file (auto-separates into stems)"
-              testId="load-audio"
-            />
-            <ActionMenuItem
-              label="Add from streaming to queue"
-              onClick={() => {
-                musicPresenter.openSearch();
-                close();
-              }}
-              testId="music-search-open"
             />
           </>
         )}
@@ -689,7 +670,7 @@ const ScoreArea = observer(function ScoreArea() {
     >
       {!hasContent && (
         <div className={styles.emptyState} data-testid="empty-state">
-          Add a song to the queue from the Audio or File menu.
+          Load a song from the File menu, or search for one in the Queue.
         </div>
       )}
       {!viewport.audioTracksHidden &&
@@ -908,7 +889,6 @@ const Modals = observer(function Modals() {
         onClose={() => lyricsPresenter.setLyricsTextOpen(false)}
         presenter={lyricsPresenter}
       />
-      <MusicSearchModal />
       <SettingsModal />
       <SongDetailsModal />
     </>

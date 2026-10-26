@@ -25,8 +25,8 @@ test('music search: result rows show the cover thumbnail, or a placeholder witho
   );
 
   await page.goto('/');
-  await page.getByTestId('audio-menu').click();
-  await page.getByTestId('music-search-open').click();
+  await page.getByTestId('queue-open').click();
+  await page.getByTestId('queue-tab-search').click();
   await page.getByTestId('music-search-input').fill('anything');
   await page.getByTestId('music-search-submit').click();
 
