@@ -2,22 +2,16 @@ import { ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import type { ServiceInfo } from 'src/net/music_source_client';
-import { Select } from 'src/ui/select/select';
 import { MusicSourcePresenterContext, MusicSourceStoreContext } from './music_source_contexts';
 import type { MusicSourcePresenter } from './music_source_presenter';
-import type { MusicSourceStore } from './music_source_store';
 import styles from './music_sources_settings.module.css';
-
-const AUDIO_FORMATS = ['mp3', 'm4a', 'flac', 'ogg'] as const;
-const BITRATES = ['128k', '256k', '320k', 'lossless'] as const;
 
 /**
  * Music-source settings (the "Music sources" tab): sign in to each streaming
- * service (the affordance depends on how the service authenticates), rank
- * services by priority (which one's results appear first), and pick download
- * quality. Every connected service is searched; there's no per-service search
- * toggle. Credentials are sent to the local OnTheSpot backend, never persisted
- * here.
+ * service (the affordance depends on how the service authenticates) and rank
+ * services by priority (which one's results appear first). Every connected
+ * service is searched; there's no per-service search toggle. Credentials are
+ * sent to the local OnTheSpot backend, never persisted here.
  */
 export const MusicSourcesSettings = observer(function MusicSourcesSettings() {
   const store = React.useContext(MusicSourceStoreContext);
@@ -49,7 +43,6 @@ export const MusicSourcesSettings = observer(function MusicSourcesSettings() {
           ))}
         </ul>
       )}
-      <QualitySection store={store} presenter={presenter} />
     </div>
   );
 });
@@ -295,50 +288,6 @@ const SpotifyOAuthControls = observer(function SpotifyOAuthControls({
           {busy ? 'Finishing…' : 'Finish'}
         </button>
       </form>
-    </div>
-  );
-});
-
-const QualitySection = observer(function QualitySection({
-  store,
-  presenter,
-}: {
-  store: MusicSourceStore;
-  presenter: MusicSourcePresenter;
-}) {
-  const quality = store.config?.quality;
-  if (quality == null) return null;
-  return (
-    <div className={styles.quality} data-testid="music-quality">
-      <span className={styles.qualityTitle}>Download quality</span>
-      <label className={styles.qualityField}>
-        Format
-        <Select
-          value={quality.format}
-          onChange={(e) => void presenter.setQuality({ format: e.target.value })}
-          data-testid="music-quality-format"
-        >
-          {AUDIO_FORMATS.map((f) => (
-            <option key={f} value={f}>
-              {f.toUpperCase()}
-            </option>
-          ))}
-        </Select>
-      </label>
-      <label className={styles.qualityField}>
-        Bitrate
-        <Select
-          value={quality.bitrate}
-          onChange={(e) => void presenter.setQuality({ bitrate: e.target.value })}
-          data-testid="music-quality-bitrate"
-        >
-          {BITRATES.map((b) => (
-            <option key={b} value={b}>
-              {b}
-            </option>
-          ))}
-        </Select>
-      </label>
     </div>
   );
 });

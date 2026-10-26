@@ -56,7 +56,6 @@ async def aclose_facade() -> None:
 
 class ConfigPatch(BaseModel):
     priority: list[str] | None = None
-    quality: dict[str, str] | None = None
 
 
 class FetchRequest(BaseModel):
@@ -83,7 +82,7 @@ async def get_config() -> MusicConfig:
 
 @router.put("/config", response_model=MusicConfig)
 async def put_config(patch: ConfigPatch) -> MusicConfig:
-    return get_facade().set_config(priority=patch.priority, quality=patch.quality)
+    return get_facade().set_config(priority=patch.priority)
 
 
 @router.post("/accounts", response_model=AddAccountResult)

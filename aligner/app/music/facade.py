@@ -7,7 +7,7 @@ Wraps OnTheSpot with the behaviour its raw HTTP API doesn't provide:
   service and merge);
 - a fetch state machine over OnTheSpot's download queue (enqueue -> poll status
   -> stream the finished file);
-- non-secret prefs (priority / quality) persisted separately from OnTheSpot's
+- non-secret prefs (service priority) persisted separately from OnTheSpot's
   own config, which keeps the credentials.
 
 The facade knows nothing about FastAPI / stdio; `routes.py` adapts it to HTTP,
@@ -72,6 +72,7 @@ _CONTENT_TYPE_BY_FORMAT = {
     "flac": "audio/flac",
     "ogg": "audio/ogg",
     "opus": "audio/opus",
+    "webm": "audio/webm",
     "wav": "audio/wav",
 }
 
@@ -126,22 +127,12 @@ class MusicFacade:
     def get_config(self) -> MusicConfig:
         return self._effective_config()
 
-    def set_config(
-        self,
-        *,
-        priority: list[str] | None = None,
-        quality: dict[str, str] | None = None,
-    ) -> MusicConfig:
+    def set_config(self, *, priority: list[str] | None = None) -> MusicConfig:
         cfg = self._state.config
         if priority is not None:
             # Keep only known services; drop unknowns silently so a stale client
             # can't wedge the order.
             cfg.priority = [s for s in priority if s in _CATALOG_BY_ID]
-        if quality is not None:
-            if "format" in quality:
-                cfg.quality.format = quality["format"]
-            if "bitrate" in quality:
-                cfg.quality.bitrate = quality["bitrate"]
         self._save_state()
         return self._effective_config()
 
@@ -252,6 +243,9 @@ class MusicFacade:
                     index = self._index_for_service(service)
                     if index is not None:
                         await self._client.set_active_account(index)
+                # Keep each service's original stream: OnTheSpot otherwise
+                # re-encodes everything to its default mp3, lossy-on-lossy.
+                await self._client.update_settings({"raw_media_download": True})
                 await self._client.parse_url(source_url)
         except Exception as exc:  # noqa: BLE001
             yield _error(f"Could not start the download: {exc}")
@@ -300,7 +294,7 @@ class MusicFacade:
         for s in SERVICE_CATALOG:
             if s.id not in seen:
                 seen.append(s.id)
-        return MusicConfig(priority=seen, quality=cfg.quality)
+        return MusicConfig(priority=seen)
 
     def _search_services(self) -> list[str]:
         """Every connected (configured) service, in priority order, search

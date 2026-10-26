@@ -26,7 +26,7 @@ class FetchVideoRunner:
         emit: EmitProgress,
         cancel: CancelToken,
     ) -> RunnerResult:
-        from app.pipeline.video.fetch import fetch_video, is_valid_video_id
+        from app.pipeline.video.fetch import fetch_video, is_valid_video_id, video_cache_key
 
         video_id = request.args.params.get("videoId")
         if not isinstance(video_id, str) or not is_valid_video_id(video_id):
@@ -35,7 +35,7 @@ class FetchVideoRunner:
         await emit("fetching", 0.1, None)
         out_dir = Path(os.environ.get("UTAI_OUTPUTS_DIR") or tempfile.mkdtemp(prefix="utai_video_"))
         out_dir.mkdir(parents=True, exist_ok=True)
-        dest = out_dir / f"{video_id}.mp4"
+        dest = out_dir / video_cache_key(video_id)
         if not dest.is_file():
             src = await asyncio.to_thread(fetch_video, video_id)
             cancel.check()

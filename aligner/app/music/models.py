@@ -31,19 +31,11 @@ class ServiceInfo(BaseModel):
     accountUuid: str | None = None
 
 
-class Quality(BaseModel):
-    # OnTheSpot's `track_file_format` + `file_bitrate`. mp3/320k by default; the
-    # lossless services accept flac.
-    format: str = "mp3"
-    bitrate: str = "320k"
-
-
 class MusicConfig(BaseModel):
     # Service ids in descending search priority (index 0 ranks highest in merged
     # results). Every connected (configured) service is searched; priority only
     # orders the merged results.
     priority: list[str] = Field(default_factory=list)
-    quality: Quality = Field(default_factory=Quality)
 
 
 class MusicState(BaseModel):

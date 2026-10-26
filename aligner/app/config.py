@@ -99,14 +99,16 @@ class Settings(BaseSettings):
     # karaoke page shows above the score, fetched video-only via yt-dlp because
     # the YouTube IFrame embed refuses embedding-disabled uploads. Keyed by the
     # 11-char id, bounded LRU like the others.
-    cache_video_cap_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GB
+    cache_video_cap_bytes: int = 10 * 1024 * 1024 * 1024  # 10 GB
 
     # --- Backing video ---
-    # yt-dlp format selector for the karaoke backing video. Video-only (the
-    # audio is the separated stems and the player is muted), H.264/mp4 preferred
-    # for the widest <video> + webview codec support, capped at 720p since it's a
-    # background layer. Falls back through vp9/av1 when no H.264 rung exists.
-    video_format: str = "bv*[vcodec^=avc1][height<=720]/bv*[vcodec^=avc1]/bv*[height<=720]/bv*"
+    # yt-dlp format selector + sort for the karaoke backing video: the highest
+    # resolution / fps YouTube has, video-only (the audio is the separated stems
+    # and the player is muted). `vcodec:vp9` ranks VP9 over AV1 at equal
+    # resolution: AV1 lacks hardware decode on older GPUs and in some webviews,
+    # and YouTube serves no H.264 above 1080p.
+    video_format: str = "bv*"
+    video_format_sort: list[str] = ["res", "fps", "vcodec:vp9"]
 
     # --- HTTP ---
     # The hosted web app is same-origin (no CORS needed); these cover the local

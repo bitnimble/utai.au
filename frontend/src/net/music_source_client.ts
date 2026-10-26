@@ -24,13 +24,10 @@ export type ServiceInfo = {
   accountUuid?: string | null;
 };
 
-export type Quality = { format: string; bitrate: string };
-
 export type MusicConfig = {
   /** Service ids in descending search priority (index 0 ranks highest). Every
    *  connected service is searched; priority only orders the merged results. */
   priority: string[];
-  quality: Quality;
 };
 
 export type TrackResult = {
@@ -68,7 +65,6 @@ export type FetchTrackOptions = {
 
 export type ConfigPatch = {
   priority?: string[];
-  quality?: Partial<Quality>;
 };
 
 function musicUrl(path: string): string {
@@ -299,14 +295,7 @@ function parseService(raw: unknown): ServiceInfo | undefined {
 function parseConfig(raw: unknown): MusicConfig {
   const r = (raw ?? {}) as Record<string, unknown>;
   const priority = Array.isArray(r.priority) ? r.priority.filter((s): s is string => typeof s === 'string') : [];
-  const q = r.quality != null && typeof r.quality === 'object' ? (r.quality as Record<string, unknown>) : {};
-  return {
-    priority,
-    quality: {
-      format: typeof q.format === 'string' ? q.format : 'mp3',
-      bitrate: typeof q.bitrate === 'string' ? q.bitrate : '320k',
-    },
-  };
+  return { priority };
 }
 
 function parseTrack(raw: unknown): TrackResult | undefined {

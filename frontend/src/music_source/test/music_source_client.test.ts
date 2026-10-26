@@ -87,21 +87,20 @@ describe('searchTracks', () => {
 });
 
 describe('config', () => {
-  test('getMusicConfig parses priority/quality with defaults', async () => {
-    fetchHandler = () => json({ priority: ['tidal', 42], quality: {} });
+  test('getMusicConfig parses priority', async () => {
+    fetchHandler = () => json({ priority: ['tidal', 42] });
     const cfg = await getMusicConfig();
-    expect(cfg.priority).toEqual(['tidal']); // non-strings filtered
-    expect(cfg.quality).toEqual({ format: 'mp3', bitrate: '320k' });
+    expect(cfg).toEqual({ priority: ['tidal'] }); // non-strings filtered
   });
 
   test('setMusicConfig PUTs the patch', async () => {
     fetchHandler = (call) => {
       expect(call.method).toBe('PUT');
       expect(JSON.parse(call.body as string)).toEqual({ priority: ['deezer', 'tidal'] });
-      return json({ priority: ['deezer', 'tidal'], quality: { format: 'flac', bitrate: 'lossless' } });
+      return json({ priority: ['deezer', 'tidal'] });
     };
     const cfg = await setMusicConfig({ priority: ['deezer', 'tidal'] });
-    expect(cfg.quality.format).toBe('flac');
+    expect(cfg.priority).toEqual(['deezer', 'tidal']);
   });
 });
 

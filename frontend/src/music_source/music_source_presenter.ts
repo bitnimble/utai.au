@@ -12,7 +12,6 @@ import {
   spotifyOAuthStart as apiSpotifyOAuthStart,
   type AddAccountRequest,
   type ConfigPatch,
-  type Quality,
   type TrackResult,
 } from 'src/net/music_source_client';
 import { toastStore } from 'src/ui/toasts/toasts';
@@ -289,10 +288,6 @@ export class MusicSourcePresenter {
 
   async setPriority(order: string[]): Promise<void> {
     await this.patchConfig({ priority: order });
-  }
-
-  async setQuality(quality: Partial<Quality>): Promise<void> {
-    await this.patchConfig({ quality });
   }
 
   /** Move a service one slot up/down in the priority order. */

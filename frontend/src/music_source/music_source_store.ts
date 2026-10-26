@@ -28,7 +28,7 @@ export class MusicSourceStore {
 
   /** Service catalog with per-service `configured` status (from the backend). */
   services: ServiceInfo[] = [];
-  /** Priority / quality; null until first load. */
+  /** Service priority; null until first load. */
   config: MusicConfig | null = null;
 
   searchQuery = '';
