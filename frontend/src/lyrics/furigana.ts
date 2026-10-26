@@ -57,7 +57,7 @@ export type RubySegment = {
 export function hasKanji(text: string): boolean {
   for (const ch of text) {
     const cp = ch.codePointAt(0);
-    if (cp !== undefined && isKanjiCp(cp)) return true;
+    if (cp != null && isKanjiCp(cp)) return true;
   }
   return false;
 }
@@ -68,7 +68,7 @@ function mergeBareRuns(segs: RubySegment[]): RubySegment[] {
   const out: RubySegment[] = [];
   for (const s of segs) {
     const prev = out[out.length - 1];
-    if (s.reading === undefined && prev && prev.reading === undefined) {
+    if (s.reading == null && prev && prev.reading == null) {
       prev.base += s.base;
     } else {
       out.push({ ...s });
@@ -217,7 +217,7 @@ export function expandCompounds(
     const start = off;
     const end = off + seg.base.length;
     off = end;
-    if (seg.reading === undefined || !hasInteriorBoundary(boundaries, start, end)) {
+    if (seg.reading == null || !hasInteriorBoundary(boundaries, start, end)) {
       out.push(seg);
       continue;
     }
@@ -262,7 +262,7 @@ function sliceSpan(
     const segEnd = off + seg.base.length;
     off = segEnd;
     if (segEnd <= start || segStart >= end) continue; // no overlap
-    if (seg.reading !== undefined) {
+    if (seg.reading != null) {
       if (segStart < start || segEnd > end) return null; // straddle
       out.push({ base: seg.base, reading: seg.reading });
     } else {
@@ -335,7 +335,9 @@ export function annotateTokens(tokens: readonly FuriganaToken[], dict: ReadingSo
   }
   return {
     segments: mergeBareRuns(segs),
-    romaji: words.map((w) => ({ start: w.start, end: w.end, romaji: kanaToRomaji(w.kana) })),
+    romaji: words
+      .filter((w) => hasKana(w.kana))
+      .map((w) => ({ start: w.start, end: w.end, romaji: kanaToRomaji(w.kana) })),
   };
 }
 
@@ -415,6 +417,8 @@ async function buildTokenizer(): Promise<Tokenizer<IpadicFeatures>> {
   return buildBrowserTokenizer(`${base}kuromoji-dict`);
 }
 
+const DICT_RETRY_MS = 30_000;
+
 /** URL of the furigana table, served from `public/` and honouring Vite's
  *  base URL (same pattern as the kuromoji dict path). */
 function furiganaDictUrl(): string {
@@ -472,6 +476,9 @@ class FuriganaAnnotator {
    *  can't read. Absent until then. */
   private furiganaDict: FuriganaDict | undefined;
   private furiganaDictPromise: Promise<FuriganaDict> | undefined;
+  private furiganaDictFailedAt: number | undefined;
+  /** Cached texts annotated without the table that would read differently with it. */
+  private awaitingDict = new Set<string>();
 
   constructor() {
     // Private fields must be named in the generic so MobX leaves them
@@ -485,12 +492,16 @@ class FuriganaAnnotator {
       | 'tokenizerPromise'
       | 'furiganaDict'
       | 'furiganaDictPromise'
+      | 'furiganaDictFailedAt'
+      | 'awaitingDict'
     >(this, {
       cache: false,
       pending: false,
       tokenizerPromise: false,
       furiganaDict: false,
       furiganaDictPromise: false,
+      furiganaDictFailedAt: false,
+      awaitingDict: false,
     });
   }
 
@@ -535,7 +546,8 @@ class FuriganaAnnotator {
         return inSpan.map((w) => w.romaji).join(' ');
       }
       wordSegs ??= this.segmentsForWords(words);
-      return kanaToRomaji(wordSegs[i].map((s) => s.reading ?? s.base).join(''));
+      const kana = wordSegs[i].map((s) => s.reading ?? s.base).join('');
+      return hasKana(kana) ? kanaToRomaji(kana) : '';
     });
   }
 
@@ -590,22 +602,29 @@ class FuriganaAnnotator {
   }
 
   /** Kick off the one-time fetch + parse of the table. Idempotent; on
-   *  success re-annotates the cached lines in place and bumps `revision`. A
-   *  failure clears the promise so a later request can retry. */
+   *  success re-annotates the cached lines that needed it and bumps
+   *  `revision`. After a failure a later request retries, at most every
+   *  {@link DICT_RETRY_MS}. */
   private ensureFuriganaDictLoaded(): void {
     if (this.furiganaDictPromise || this.furiganaDict) return;
+    const failedAt = this.furiganaDictFailedAt;
+    if (failedAt != null && performance.now() - failedAt < DICT_RETRY_MS) return;
     this.furiganaDictPromise = loadFuriganaDict(furiganaDictUrl());
     void this.furiganaDictPromise
       .then(async (dict) => {
         const tokenizer = await this.ensureLoaded();
         runInAction(() => {
           this.furiganaDict = dict;
-          for (const text of this.cache.keys()) this.cache.set(text, this.annotate(tokenizer, text));
+          for (const text of this.awaitingDict) {
+            if (this.cache.has(text)) this.cache.set(text, this.annotate(tokenizer, text));
+          }
+          this.awaitingDict.clear();
           this.revision++;
         });
       })
       .catch(() => {
         this.furiganaDictPromise = undefined;
+        this.furiganaDictFailedAt = performance.now();
       });
   }
 
@@ -631,7 +650,10 @@ class FuriganaAnnotator {
 
   private annotate(tokenizer: Tokenizer<IpadicFeatures>, text: string): Annotation {
     const loaded = (): FuriganaDict | undefined => {
-      if (this.furiganaDict == null) this.ensureFuriganaDictLoaded();
+      if (this.furiganaDict == null) {
+        this.awaitingDict.add(text);
+        this.ensureFuriganaDictLoaded();
+      }
       return this.furiganaDict;
     };
     return annotateTokens(tokenizer.tokenize(text), {

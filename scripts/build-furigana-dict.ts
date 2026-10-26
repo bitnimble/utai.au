@@ -35,9 +35,10 @@ const OUT_DIR = resolve(REPO, 'frontend/public/jmdict-furigana');
 
 type Span = { start: number; end: number; reading: string };
 
-/** Same Han ranges as `frontend/src/lyrics/furigana.ts::isKanjiCp`. */
+/** Same ranges as `frontend/src/lyrics/kana.ts::isKanjiCp`. */
 function isKanjiCp(cp: number): boolean {
   return (
+    cp === 0x3005 ||
     (cp >= 0x4e00 && cp <= 0x9fff) ||
     (cp >= 0x3400 && cp <= 0x4dbf) ||
     (cp >= 0xf900 && cp <= 0xfaff) ||
@@ -48,7 +49,7 @@ function isKanjiCp(cp: number): boolean {
 function hasKanji(s: string): boolean {
   for (const ch of s) {
     const cp = ch.codePointAt(0);
-    if (cp !== undefined && isKanjiCp(cp)) return true;
+    if (cp != null && isKanjiCp(cp)) return true;
   }
   return false;
 }

@@ -106,6 +106,15 @@ describe('annotateTokens', () => {
     ];
     expect(annotateTokens(tokens, source).romaji.map((w) => w.romaji)).toEqual(['kimi', 'wa', 'sora', 'e']);
   });
+
+  test('romaji skips Latin words and kanji nothing could read', () => {
+    const tokens = [
+      tok('love', '*', '名詞', '固有名詞'),
+      tok('鬱', '*', '名詞', '一般'),
+      tok('君', 'キミ', '名詞', '代名詞'),
+    ];
+    expect(annotateTokens(tokens, source).romaji).toEqual([{ start: 5, end: 6, romaji: 'kimi' }]);
+  });
 });
 
 describe('hasKanji', () => {
@@ -141,6 +150,11 @@ describe('toHiragana', () => {
 });
 
 describe('fitFurigana', () => {
+  test('the iteration mark 々 reads as part of its kanji run', () => {
+    expect(fitFurigana('日々', 'ひび')).toEqual([{ base: '日々', reading: 'ひび' }]);
+    expect(fitFurigana('時々', 'ときどき')).toEqual([{ base: '時々', reading: 'ときどき' }]);
+  });
+
   test('okurigana that also starts the reading still anchors after the kanji', () => {
     expect(fitFurigana('笑わ', 'わらわ')).toEqual([{ base: '笑', reading: 'わら' }, { base: 'わ' }]);
     expect(fitFurigana('歌う', 'うたう')).toEqual([{ base: '歌', reading: 'うた' }, { base: 'う' }]);

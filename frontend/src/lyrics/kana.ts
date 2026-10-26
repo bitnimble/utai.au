@@ -1,10 +1,13 @@
 /** Kanji (Han) code-point ranges we treat as needing furigana: CJK
  *  Unified Ideographs, Extension A, the compatibility block, and
- *  Extension B (lyrics occasionally reach for rarer glyphs). Callers
+ *  Extension B (lyrics occasionally reach for rarer glyphs), plus the
+ *  iteration mark 々 (日々), which reads as part of its kanji run. Callers
  *  iterate code-point-wise (`for…of`) so Extension B's astral chars are
- *  handled without surrogate bookkeeping. */
+ *  handled without surrogate bookkeeping. Keep in lockstep with
+ *  `scripts/build-furigana-dict.ts::isKanjiCp`. */
 export function isKanjiCp(cp: number): boolean {
   return (
+    cp === 0x3005 ||
     (cp >= 0x4e00 && cp <= 0x9fff) ||
     (cp >= 0x3400 && cp <= 0x4dbf) ||
     (cp >= 0xf900 && cp <= 0xfaff) ||

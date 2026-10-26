@@ -122,18 +122,19 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
     [positioned, pxPerBeat, pitchEnabled, vibratoEnabled],
   );
 
-  // True once any word or line has a resolved furigana reading; drives the ruby
-  // reserve strip. Re-derives on `furiganaRevision`.
-  const trackHasFurigana = React.useMemo(() => {
+  // True once any word or line carries ruby (a resolved furigana reading, or
+  // romaji when shown); drives the ruby reserve strip. Re-derives on
+  // `furiganaRevision`.
+  const trackHasRuby = React.useMemo(() => {
     for (const p of positioned) {
-      const lineSegs = p.wordPositions
-        ? furiganaAnnotator.segmentsForWords(p.wordPositions.map((w) => w.text))
-        : [furiganaAnnotator.segmentsFor(p.text)];
-      if (lineSegs.some((wordSegs) => wordSegs.some((s) => s.reading !== undefined))) return true;
+      const texts = p.wordPositions ? p.wordPositions.map((w) => w.text) : [p.text];
+      const lineSegs = furiganaAnnotator.segmentsForWords(texts);
+      if (lineSegs.some((wordSegs) => wordSegs.some((s) => s.reading != null))) return true;
+      if (showRomaji && furiganaAnnotator.romajiForWords(texts).some((r) => r !== '')) return true;
     }
     return false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positioned, furiganaRevision]);
+  }, [positioned, furiganaRevision, showRomaji]);
 
   // Reactive active-line/word state. Reading `activeLineIdx` here re-renders
   // only when the active line flips (the computed dedupes by value); child
@@ -177,7 +178,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
         />
       </div>
       <div
-        className={classNames(styles.lyricsBarsRow, trackHasFurigana && styles.lyricsBarsRowFurigana)}
+        className={classNames(styles.lyricsBarsRow, trackHasRuby && styles.lyricsBarsRowFurigana)}
         data-bars-row
         data-lyrics-bars-row="1"
         style={

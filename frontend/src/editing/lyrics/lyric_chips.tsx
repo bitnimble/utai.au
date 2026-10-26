@@ -262,14 +262,14 @@ export const RubyText = ({
   segments: readonly RubySegment[];
   romaji?: string;
 }): React.ReactNode => {
-  const text = !segments.some((s) => s.reading !== undefined) ? (
+  const text = !segments.some((s) => s.reading != null) ? (
     segments.map((s) => s.base).join('')
   ) : (
     <ruby className={styles.ruby}>
       {segments.map((seg, i) => (
         <React.Fragment key={i}>
           {seg.base}
-          {seg.reading !== undefined && <rt>{seg.reading}</rt>}
+          {seg.reading != null && <rt>{seg.reading}</rt>}
         </React.Fragment>
       ))}
     </ruby>
