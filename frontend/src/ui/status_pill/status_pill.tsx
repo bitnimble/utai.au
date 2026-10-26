@@ -5,6 +5,7 @@ import styles from './status_pill.module.css';
 const TONE_CLASS = {
   busy: styles.busy,
   error: styles.error,
+  warning: styles.warning,
   success: styles.success,
 } as const;
 

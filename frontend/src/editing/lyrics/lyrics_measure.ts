@@ -142,6 +142,11 @@ class LyricsMeasurer {
     );
   }
 
+  /** Measure `text` in the lyric font at default width and tracking. */
+  measureTextPx(text: string, sizePx: number, wght: number): number {
+    return this.measure(text, sizePx, wght, 100, 0);
+  }
+
   /** Measure a ruby-annotated word. Native `<ruby>` lays each base/reading
    *  pair as wide as the wider of the two, so a furigana reading that
    *  outruns its kanji (志 → こころざし) widens the base, which the plain

@@ -164,6 +164,73 @@ test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating sl
   await expect(top.locator('[data-word-state]')).toHaveAttribute('data-word-state', 'upcoming');
 });
 
+test('karaoke "Show 2 lines" shrinks a long line to fit its slot unwrapped', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await page.evaluate(() => {
+    const line = (startSec: number, text: string) => ({
+      startSec,
+      text,
+      words: [{ startSec, endSec: startSec + 1.5, text }],
+    });
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add(
+      [line(2, 'short'), line(4, 'a much longer line that would certainly wrap at the full karaoke font size')],
+      { source: 'plaintext', sourceLabel: 'probe' },
+    );
+  });
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.getByTestId('karaoke-two-lines').click();
+  await page.keyboard.press('Escape');
+
+  const fit = (slot: string) =>
+    page.getByTestId(slot).getByTestId('karaoke-line').evaluate((p) => {
+      const overlay = p.closest('[data-testid="karaoke-lyrics"]')!.getBoundingClientRect();
+      const r = p.getBoundingClientRect();
+      const tops = Array.from(p.querySelectorAll('span')).flatMap((s) =>
+        Array.from(s.getClientRects()).map((rect) => Math.round(rect.top)),
+      );
+      return {
+        lines: new Set(tops).size,
+        fontPx: parseFloat(getComputedStyle(p).fontSize),
+        withinOverlay: r.left >= overlay.left - 1 && r.right <= overlay.right + 1 && p.scrollWidth <= p.clientWidth + 1,
+      };
+    });
+  await expect(page.getByTestId('karaoke-slot-bottom')).toContainText('a much longer line');
+  const [short, long] = [await fit('karaoke-slot-top'), await fit('karaoke-slot-bottom')];
+  expect(long.lines).toBe(1);
+  expect(long.withinOverlay).toBe(true);
+  expect(long.fontPx).toBeLessThan(short.fontPx);
+});
+
+test('karaoke view flags a song with no lyrics', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('karaoke-no-lyrics')).toHaveCount(0);
+
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('karaoke-no-lyrics')).toHaveText('No lyrics loaded', { timeout: 15_000 });
+
+  await page.evaluate(() =>
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add([{ startSec: 2, text: 'hello' }], {
+      source: 'plaintext',
+      sourceLabel: 'probe',
+    }),
+  );
+  await expect(page.getByTestId('karaoke-no-lyrics')).toHaveCount(0);
+});
+
 test('karaoke "Show lyric pitch" fits a long line inside the overlay', async ({ page }) => {
   await page.goto('/');
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({

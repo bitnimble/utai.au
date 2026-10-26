@@ -20,6 +20,10 @@
     text-wrap: balance;
 }
 
+.oneLine {
+    white-space: nowrap;
+}
+
 .twoLines {
     align-items: stretch;
 }
@@ -28,6 +32,7 @@
 .slotTop,
 .slotBottom {
     display: flex;
+    align-items: center;
     min-height: 1.25em;
 }
 

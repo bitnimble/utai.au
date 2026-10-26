@@ -17,6 +17,7 @@ import { furiganaAnnotator } from 'src/lyrics/furigana';
 import { activeLineIndexAt, activeWordIndexAt, lineSpanSec, LyricLine, wordState } from 'src/lyrics/lrc';
 import { LyricsTrack, lyricsStore } from 'src/lyrics/store';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
+import { StatusPill } from 'src/ui/status_pill/status_pill';
 import { lineSegments, nextVocalLineIdx, shownLineIdx, vocalOrdinal } from './karaoke_lyrics';
 import styles from './karaoke_lyrics_overlay.module.css';
 
@@ -25,6 +26,8 @@ const TWO_LINE_WIDTH_FRAC = 0.75;
 const MIN_LINE_SPAN_SEC = 0.5;
 const ZOOM_FIT_STEPS = 3;
 const FIT_STEPS = 8;
+const KARAOKE_FONT_WEIGHT = 800;
+const KARAOKE_STROKE_EM = 0.16;
 
 /** The first lyrics track's current line (plus the next, top-left / bottom-right
  *  by alternating line, in two-line mode), karaoke style, over the video area. */
@@ -90,19 +93,41 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     const isActive = playhead.activeLineIdx === idx;
     const activeWordIdx = isActive ? playhead.activeWordIdx : undefined;
     const activeWordEnded = isActive && playhead.activeWordEnded;
+    const oneLineWidthPx = twoLines ? lineWidthPx : undefined;
+    const baseFontSizePx = karaokeFontSizePx(widthPx);
     return appSettingsStore.karaokeShowPitch && line.words?.length && lineWidthPx > 0 ? (
       <PitchedKaraokeLine
         key={idx}
         lines={track.lines}
         lineIdx={idx}
         widthPx={lineWidthPx}
+        baseFontSizePx={baseFontSizePx}
+        oneLineWidthPx={oneLineWidthPx}
         activeWordIdx={activeWordIdx}
         activeWordEnded={activeWordEnded}
       />
     ) : (
-      <KaraokeLine key={idx} line={line} activeWordIdx={activeWordIdx} activeWordEnded={activeWordEnded} />
+      <KaraokeLine
+        key={idx}
+        line={line}
+        baseFontSizePx={baseFontSizePx}
+        oneLineWidthPx={oneLineWidthPx}
+        activeWordIdx={activeWordIdx}
+        activeWordEnded={activeWordEnded}
+      />
     );
   };
+  if (track == null) {
+    return (
+      <div ref={ref} className={styles.overlay} data-testid="karaoke-lyrics">
+        {playbackEngine.audioTracks.size > 0 && (
+          <StatusPill tone="warning" testId="karaoke-no-lyrics">
+            No lyrics loaded
+          </StatusPill>
+        )}
+      </div>
+    );
+  }
   if (!twoLines || shownIdx == null) {
     return (
       <div ref={ref} className={styles.overlay} data-testid="karaoke-lyrics">
@@ -129,18 +154,36 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
   );
 });
 
-const KaraokeLine = React.memo(function KaraokeLine({
+/** `oneLineWidthPx` set: shrinks the font until the line fits that width unwrapped. */
+const KaraokeLine = observer(function KaraokeLine({
   line,
+  baseFontSizePx,
+  oneLineWidthPx,
   activeWordIdx,
   activeWordEnded,
 }: {
   line: LyricLine;
+  baseFontSizePx: number;
+  oneLineWidthPx: number | undefined;
   activeWordIdx: number | undefined;
   activeWordEnded: boolean;
 }) {
   const segments = React.useMemo(() => lineSegments(line), [line]);
+  const fontReady = lyricsMeasurer.fontReady;
+  const fontSizePx = React.useMemo(
+    () =>
+      oneLineWidthPx != null
+        ? oneLineFontSizePx(segments.map((s) => s.text).join(''), oneLineWidthPx, baseFontSizePx)
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [segments, oneLineWidthPx, baseFontSizePx, fontReady],
+  );
   return (
-    <p className={styles.line} data-testid="karaoke-line">
+    <p
+      className={classNames(styles.line, oneLineWidthPx != null && styles.oneLine)}
+      style={fontSizePx != null ? { fontSize: fontSizePx } : undefined}
+      data-testid="karaoke-line"
+    >
       {segments.map((s, i) => (
         <span key={i} data-word-state={wordState(s.wordIdx, activeWordIdx, activeWordEnded)}>
           {s.text}
@@ -156,12 +199,16 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
   lines,
   lineIdx,
   widthPx,
+  baseFontSizePx,
+  oneLineWidthPx,
   activeWordIdx,
   activeWordEnded,
 }: {
   lines: readonly LyricLine[];
   lineIdx: number;
   widthPx: number;
+  baseFontSizePx: number;
+  oneLineWidthPx: number | undefined;
   activeWordIdx: number | undefined;
   activeWordEnded: boolean;
 }) {
@@ -197,7 +244,15 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
     [positioned, furiganaRevision],
   );
   if (!positioned || !fit) {
-    return <KaraokeLine line={lines[lineIdx]} activeWordIdx={activeWordIdx} activeWordEnded={activeWordEnded} />;
+    return (
+      <KaraokeLine
+        line={lines[lineIdx]}
+        baseFontSizePx={baseFontSizePx}
+        oneLineWidthPx={oneLineWidthPx}
+        activeWordIdx={activeWordIdx}
+        activeWordEnded={activeWordEnded}
+      />
+    );
   }
   const { pxPerBeat, fontSizePx, placements, rightPx } = fit;
   const bandPx = fontSizePx * PITCH_BAND_EM;
@@ -256,6 +311,17 @@ function fitLineToWidth(
     // packed edge to edge, a lower zoom no longer narrows the row; only smaller text can
     if (step >= ZOOM_FIT_STEPS) fontSizePx *= scale;
   }
+}
+
+function oneLineFontSizePx(text: string, widthPx: number, baseFontSizePx: number): number {
+  let fontSizePx = baseFontSizePx;
+  for (let step = 0; step < FIT_STEPS; step++) {
+    const textPx =
+      lyricsMeasurer.measureTextPx(text, fontSizePx, KARAOKE_FONT_WEIGHT) + KARAOKE_STROKE_EM * fontSizePx;
+    if (textPx <= widthPx) break;
+    fontSizePx *= widthPx / textPx;
+  }
+  return fontSizePx;
 }
 
 /** Mirrors `typography.module.css::karaokeLyric`'s `clamp(22px, 4.2cqw, 72px)`. */
