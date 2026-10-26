@@ -7,7 +7,7 @@ import { toastStore } from 'src/ui/toasts/toasts';
 import type { PrepareSong, PrepareStage, QueueSource } from './prepare_song';
 import { QueueItem, QueueItemId, QueueStore } from './queue_store';
 
-type SongLoader = Pick<SongIoPresenter, 'loadPreparedSong'>;
+type SongLoader = Pick<SongIoPresenter, 'loadPreparedSong' | 'clearSong'>;
 type Transport = Pick<PlaybackEngine, 'state' | 'play' | 'onEnded'>;
 
 /** Sole writer for {@link QueueStore}. */
@@ -105,8 +105,10 @@ export class QueuePresenter {
     if (this.preparing?.id === id) this.preparing.controller.abort();
   }
 
+  /** Drop the current song; the next one starts as soon as it's ready. */
   skip(): void {
     if (!this.store.canSkip) return;
+    this.songIo.clearSong();
     this.store.awaitingNext = true;
   }
 
@@ -118,7 +120,7 @@ export class QueuePresenter {
   private async start(item: QueueItem): Promise<void> {
     if (item.status.kind !== 'ready') return;
     this.store.awaitingNext = false;
-    this.store.starting = true;
+    this.store.starting = item;
     this.store.items = this.store.items.filter((i) => i.id !== item.id);
     try {
       await this.songIo.loadPreparedSong(item.status.song);
@@ -131,7 +133,7 @@ export class QueuePresenter {
   }
 
   private finishStart(): void {
-    this.store.starting = false;
+    this.store.starting = undefined;
     // A song that didn't start (no decodable audio, play failed) never ends,
     // so move on rather than stall the queue behind it.
     if (this.transport.state !== 'playing') this.store.awaitingNext = true;

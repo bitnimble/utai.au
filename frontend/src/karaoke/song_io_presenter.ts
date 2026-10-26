@@ -85,7 +85,8 @@ export class SongIoPresenter {
     }
   }
 
-  private clearSong(): void {
+  /** Drop the current song's tracks, lyrics, and beat grid. */
+  clearSong(): void {
     this.karaoke.resetSong();
     this.lyrics.clearLyrics();
     runInAction(() => {

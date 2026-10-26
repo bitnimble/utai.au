@@ -22,6 +22,31 @@
     box-shadow: var(--shadow-lg);
 }
 
+.loadingScreen {
+    position: absolute;
+    inset: 0;
+    z-index: 9;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 24px;
+    background: var(--color-bg-base);
+    text-align: center;
+}
+
+.loadingHeading {
+    composes: labelSm from '../typography.module.css';
+    margin-top: 12px;
+    color: var(--color-text-muted-alt);
+}
+
+.loadingTitle {
+    composes: heading from '../typography.module.css';
+    color: var(--color-text);
+}
+
 .header {
     display: flex;
     align-items: center;

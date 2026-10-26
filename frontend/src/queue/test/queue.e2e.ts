@@ -108,6 +108,37 @@ test('queue: the next song plays when the current one ends', async ({ page }) =>
   await expectPlaying(page, 'Next');
 });
 
+test('queue: skipping to a song still preparing shows a loading screen until it plays', async ({ page }) => {
+  let releaseSeparation = (): void => {};
+  const separationHeld = new Promise<void>((resolve) => {
+    releaseSeparation = resolve;
+  });
+  await page.route('**/music/separate', async (route) => {
+    await separationHeld;
+    await route.fulfill({ status: 404, body: '' });
+  });
+
+  await page.goto('/');
+  await queueBundles(page, bundle('Alpha'));
+  await expectPlaying(page, 'Alpha');
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'Held.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(5),
+  });
+  await page.getByTestId('queue-open').click();
+  await expect(page.getByTestId('queue-item-status')).toHaveText('Separating stems…', { timeout: 15_000 });
+
+  await page.getByTestId('queue-skip').click();
+  await expect(page.getByTestId('queue-loading-title')).toHaveText('Held');
+  expect(await currentTitle(page)).toBe('');
+  expect(await playerState(page)).toBe('idle');
+
+  releaseSeparation();
+  await expectPlaying(page, 'Held');
+  await expect(page.getByTestId('queue-loading')).toBeHidden();
+});
+
 test('queue: dragging an item reorders the queue', async ({ page }) => {
   await page.goto('/');
   await queueBundles(page, bundle('Alpha'), bundle('Bravo'), bundle('Charlie'), bundle('Delta'));

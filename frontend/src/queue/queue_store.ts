@@ -29,8 +29,8 @@ export class QueueStore {
   sidebarOpen = false;
   /** The next song starts the moment it's ready. */
   awaitingNext = true;
-  /** A song is being loaded into the session and started. */
-  starting = false;
+  /** Being loaded into the session and started; already out of `items`. */
+  starting: QueueItem | undefined = undefined;
 
   constructor() {
     // Shallow: items hold large prepared songs (stems, word-timed lyrics) that
@@ -44,7 +44,12 @@ export class QueueStore {
   }
 
   get canSkip(): boolean {
-    return !this.awaitingNext && !this.starting && this.nextPlayable?.status.kind === 'ready';
+    return !this.awaitingNext && this.starting == null && this.nextPlayable != null;
+  }
+
+  /** The song the player is idle waiting on, if any. */
+  get waitingFor(): QueueItem | undefined {
+    return this.starting ?? (this.awaitingNext ? this.nextPlayable : undefined);
   }
 
   get nextToPrepare(): QueueItem | undefined {

@@ -61,6 +61,10 @@ function setup(): Harness {
       loaded.push(title);
       transport.load(!title.startsWith('silent'));
     },
+    clearSong: (): void => {
+      loaded.push('<cleared>');
+      transport.load(false);
+    },
   };
   const prepare = (source: QueueSource, opts: PrepareOptions): Promise<PreparedSong> =>
     new Promise((resolve, reject) => {
@@ -177,20 +181,28 @@ describe('QueuePresenter', () => {
     expect(h.store.canSkip).toBe(true);
     h.presenter.skip();
     await flush();
-    expect(h.loaded).toEqual(['a', 'b']);
+    expect(h.loaded).toEqual(['a', '<cleared>', 'b']);
     expect(h.order()).toEqual(['c']);
   });
 
-  test('skip does nothing until the next song is ready', async () => {
+  test('skip to a song still preparing drops the current one and waits for it', async () => {
     const h = setup();
     await playFirst(h, 'a');
     expect(h.store.canSkip).toBe(false);
+    expect(h.store.waitingFor).toBeUndefined();
     h.add('b');
-    expect(h.store.canSkip).toBe(false);
+    expect(h.store.canSkip).toBe(true);
     h.presenter.skip();
     await flush();
-    expect(h.loaded).toEqual(['a']);
+    expect(h.loaded).toEqual(['a', '<cleared>']);
+    expect(h.transport.state).toBe('idle');
+    expect(h.store.waitingFor?.title).toBe('b');
+    expect(h.store.canSkip).toBe(false);
+    h.pending[1].resolve();
+    await flush();
+    expect(h.loaded).toEqual(['a', '<cleared>', 'b']);
     expect(h.transport.state).toBe('playing');
+    expect(h.store.waitingFor).toBeUndefined();
   });
 
   test('a song that fails to start does not stall the queue', async () => {

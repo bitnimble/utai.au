@@ -48,6 +48,24 @@ export const QueueButtons = observer(function QueueButtons({ className }: { clas
   );
 });
 
+/** Covers the stage while the player waits on the next song. */
+export const QueueLoadingScreen = observer(function QueueLoadingScreen() {
+  const store = React.useContext(QueueStoreContext)!;
+  const item = store.waitingFor;
+  if (item == null) return null;
+  return (
+    <div className={styles.loadingScreen} role="status" data-testid="queue-loading">
+      <Spinner size={28} />
+      <span className={styles.loadingHeading}>Up next</span>
+      <span className={styles.loadingTitle} data-testid="queue-loading-title">
+        {item.title}
+      </span>
+      {item.artist && <span className={styles.itemArtist}>{item.artist}</span>}
+      <span className={styles.status}>{item.status.kind === 'ready' ? 'Loading…' : statusLabel(item.status)}</span>
+    </div>
+  );
+});
+
 export const QueueSidebar = observer(function QueueSidebar() {
   const store = React.useContext(QueueStoreContext)!;
   const presenter = React.useContext(QueuePresenterContext)!;

@@ -87,7 +87,7 @@ import { prepareSong } from 'src/queue/prepare_song';
 import { QueueStore } from 'src/queue/queue_store';
 import { QueuePresenter } from 'src/queue/queue_presenter';
 import { QueuePresenterContext, QueueStoreContext } from 'src/queue/queue_contexts';
-import { QueueButtons, QueueSidebar } from 'src/queue/queue_view';
+import { QueueButtons, QueueLoadingScreen, QueueSidebar } from 'src/queue/queue_view';
 import { KaraokePresenter } from './karaoke_presenter';
 import {
   KaraokePresenterContext,
@@ -333,6 +333,7 @@ export const KaraokePage = observer(function KaraokePage() {
                       <SkipSegmentButton />
                     </VideoArea>
                     {!karaokeView && <ScoreArea />}
+                    <QueueLoadingScreen />
                     <QueueSidebar />
                   </div>
                   <TransportBar />
