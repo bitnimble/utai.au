@@ -3,10 +3,13 @@ import { Check, ChevronRight } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { placeAxis, usePanelSize } from 'src/ui/dropdown/popover_placement';
 import { useMenuKeyboard } from 'src/ui/menu_keyboard';
 import styles from './dropdown.module.css';
 
 export { styles as dropdownStyles };
+
+const PANEL_GAP_PX = 6;
 
 /**
  * Registry of close callbacks for every currently-open DropdownButton.
@@ -122,7 +125,7 @@ export const DropdownButton = observer(
     children: (close: () => void) => React.ReactNode;
   }) => {
     const [open, setOpen] = React.useState(false);
-    const [anchor, setAnchor] = React.useState<{ top: number; left: number } | null>(null);
+    const [anchor, setAnchor] = React.useState<DOMRect | null>(null);
     const wrapperRef = React.useRef<HTMLDivElement>(null);
     const triggerRef = React.useRef<HTMLButtonElement>(null);
     const panelRef = React.useRef<HTMLDivElement>(null);
@@ -150,8 +153,7 @@ export const DropdownButton = observer(
       // keep it pinned as ancestors scroll / the window resizes.
       const reposition = () => {
         const rect = triggerRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        setAnchor({ top: rect.bottom + 6, left: rect.left });
+        if (rect) setAnchor(rect);
       };
       reposition();
       const onPointerDown = (e: MouseEvent) => {
@@ -178,23 +180,21 @@ export const DropdownButton = observer(
       };
     }, [open]);
 
-    // Keep the panel within the viewport horizontally: a trigger near the right
-    // edge (e.g. the Layers panel's ⋯) would otherwise open a left-anchored
-    // panel that runs off-screen. Runs after layout so the panel's real width is
-    // known; only shifts when it would overflow, so left-side dropdowns (the
-    // toolbar menus) are untouched. Converges in one extra render (the clamp
-    // equals itself on the next pass).
-    React.useLayoutEffect(() => {
-      if (!open || !anchor) return;
-      const panel = panelRef.current;
-      if (!panel) return;
-      const margin = 8;
-      const maxLeft = window.innerWidth - panel.offsetWidth - margin;
-      const clamped = Math.max(margin, Math.min(anchor.left, maxLeft));
-      if (clamped !== anchor.left) {
-        setAnchor((a) => (a ? { ...a, left: clamped } : a));
-      }
-    }, [open, anchor]);
+    const panelSize = usePanelSize(panelRef, open && anchor != null);
+    const position =
+      anchor == null
+        ? null
+        : panelSize == null
+          ? { top: anchor.bottom + PANEL_GAP_PX, left: anchor.left }
+          : {
+              top: placeAxis(
+                anchor.bottom + PANEL_GAP_PX,
+                anchor.top - PANEL_GAP_PX - panelSize.height,
+                panelSize.height,
+                window.innerHeight,
+              ),
+              left: placeAxis(anchor.left, anchor.right - panelSize.width, panelSize.width, window.innerWidth),
+            };
 
     return (
       <div className={styles.dropdown} ref={wrapperRef}>
@@ -219,14 +219,14 @@ export const DropdownButton = observer(
           {label}
         </button>
         {open &&
-          anchor &&
+          position &&
           createPortal(
             <SubmenuRegistryContext.Provider value={submenuRegistry}>
               <div
                 ref={panelRef}
                 className={classNames(styles.dropdownPanel, panelClassName)}
                 role="menu"
-                style={{ position: 'fixed', top: anchor.top, left: anchor.left }}
+                style={{ position: 'fixed', top: position.top, left: position.left }}
                 onKeyDown={onPanelKeyDown}
               >
                 {children(() => setOpen(false))}
@@ -282,6 +282,25 @@ export const SubmenuItem = ({
   const panelRef = React.useRef<HTMLDivElement>(null);
   const { onKeyDown: onPanelKeyDown } = useMenuKeyboard(panelRef);
 
+  const wrapperRef = React.useRef<HTMLDivElement>(null);
+  const panelSize = usePanelSize(panelRef, open && !disabled);
+  const [panelOffset, setPanelOffset] = React.useState<{ top: number; left: number } | null>(null);
+  React.useLayoutEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (panelSize == null || wrapper == null) {
+      setPanelOffset(null);
+      return;
+    }
+    const row = wrapper.getBoundingClientRect();
+    const { width, height } = panelSize;
+    setPanelOffset({
+      top: placeAxis(row.top, row.bottom - height, height, window.innerHeight) - row.top,
+      left:
+        placeAxis(row.right + PANEL_GAP_PX, row.left - PANEL_GAP_PX - width, width, window.innerWidth) -
+        row.left,
+    });
+  }, [panelSize]);
+
   // Hover-to-open. Mouse-enter on the trigger arms a short timer; if
   // the pointer leaves (or the panel opens some other way) before it
   // fires, the timer is cancelled. Once opened, hover plays no further
@@ -305,7 +324,7 @@ export const SubmenuItem = ({
   };
 
   return (
-    <div className={styles.submenu}>
+    <div className={styles.submenu} ref={wrapperRef}>
       <button
         type="button"
         className={classNames(styles.dropdownItem, styles.submenuTrigger)}
@@ -336,7 +355,13 @@ export const SubmenuItem = ({
       </button>
       {open && !disabled && (
         <SubmenuRegistryContext.Provider value={childRegistry}>
-          <div className={styles.submenuPanel} role="menu" ref={panelRef} onKeyDown={onPanelKeyDown}>
+          <div
+            className={styles.submenuPanel}
+            role="menu"
+            ref={panelRef}
+            style={panelOffset ?? undefined}
+            onKeyDown={onPanelKeyDown}
+          >
             {children(() => setOpen(false))}
           </div>
         </SubmenuRegistryContext.Provider>

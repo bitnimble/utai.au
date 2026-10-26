@@ -1,6 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { dropdownStyles } from 'src/ui/dropdown/dropdown';
+import { placeAxis, usePanelSize } from 'src/ui/dropdown/popover_placement';
 import { useMenuKeyboard } from 'src/ui/menu_keyboard';
 
 /**
@@ -10,9 +11,9 @@ import { useMenuKeyboard } from 'src/ui/menu_keyboard';
  * `dropdownStyles.dropdownPanel`, so callers fill it with the regular
  * {@link ActionMenuItem} / `DropdownSection` rows.
  *
- * Portaled to `document.body` and positioned `fixed` at `(x, y)`, clamped into
- * the viewport. Closes on outside pointer-down or Escape; menu items dismiss it
- * by calling `onClose` from their `onClick`.
+ * Portaled to `document.body` and positioned `fixed` at `(x, y)`, flipped or
+ * clamped into the viewport. Closes on outside pointer-down or Escape; menu
+ * items dismiss it by calling `onClose` from their `onClick`.
  */
 export function ContextMenu({
   x,
@@ -26,7 +27,6 @@ export function ContextMenu({
   children: React.ReactNode;
 }) {
   const panelRef = React.useRef<HTMLDivElement>(null);
-  const [pos, setPos] = React.useState<{ top: number; left: number }>({ top: y, left: x });
   // Arrow/Home/End roving focus over the menu rows.
   const { onKeyDown: onPanelKeyDown } = useMenuKeyboard(panelRef);
 
@@ -46,20 +46,14 @@ export function ContextMenu({
     };
   }, [onClose]);
 
-  // Clamp into the viewport once the panel's real size is known (one extra
-  // pass; only runs on open / when the cursor anchor changes, never a render
-  // hot path). Mirrors `DropdownButton`'s clamp.
-  React.useLayoutEffect(() => {
-    const panel = panelRef.current;
-    if (!panel) return;
-    const margin = 8;
-    const maxLeft = window.innerWidth - panel.offsetWidth - margin;
-    const maxTop = window.innerHeight - panel.offsetHeight - margin;
-    setPos({
-      top: Math.max(margin, Math.min(y, maxTop)),
-      left: Math.max(margin, Math.min(x, maxLeft)),
-    });
-  }, [x, y]);
+  const panelSize = usePanelSize(panelRef, true);
+  const pos =
+    panelSize == null
+      ? { top: y, left: x }
+      : {
+          top: placeAxis(y, y - panelSize.height, panelSize.height, window.innerHeight),
+          left: placeAxis(x, x - panelSize.width, panelSize.width, window.innerWidth),
+        };
 
   return createPortal(
     <div
