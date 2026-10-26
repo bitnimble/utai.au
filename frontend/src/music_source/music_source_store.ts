@@ -10,16 +10,9 @@ export type SearchPhase =
   | { kind: 'error'; message: string }
   | { kind: 'results' };
 
-/** Fetch lifecycle for the one in-flight track download, keyed by result id so
- *  the row being fetched can show its own progress / error. */
-export type FetchState =
-  | { kind: 'idle' }
-  | { kind: 'fetching'; id: string; stage: string; frac: number }
-  | { kind: 'error'; id: string; message: string };
-
 /**
  * Data-only store for the music-source feature: the search modal visibility,
- * the loaded service catalog + config, and the search + fetch state.
+ * the loaded service catalog + config, and the search state.
  * Observables + read accessors only; every mutation lives on
  * {@link import('./music_source_presenter').MusicSourcePresenter}.
  */
@@ -35,8 +28,6 @@ export class MusicSourceStore {
   searchPhase: SearchPhase = { kind: 'idle' };
   results: TrackResult[] = [];
   selectedId: string | undefined = undefined;
-
-  fetchState: FetchState = { kind: 'idle' };
 
   constructor() {
     makeAutoObservable(this);

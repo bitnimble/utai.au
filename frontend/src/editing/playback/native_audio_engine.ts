@@ -28,6 +28,8 @@ export type { PitchTelemetry };
  *  advancing iff `playing`. `currentTime` is dead-reckoned from this each frame. */
 type Anchor = { playSec: number; atMs: number; playing: boolean };
 
+const END_OF_TRACK_TOLERANCE_SEC = 0.25;
+
 /**
  * Desktop {@link PlaybackEngine}: a thin facade over the Rust/cpal engine
  * (`utai-audio`) via Tauri commands. Track bytes are decoded in-frontend for
@@ -60,11 +62,21 @@ export class NativeAudioEngine implements PlaybackEngine {
   private selOutput = '';
   private pitchChannel: Channel<PitchTelemetry> | undefined;
   private readonly pitchListeners = new Set<(f: PitchTelemetry) => void>();
+  private readonly endedListeners = new Set<() => void>();
 
   constructor() {
     makeAutoObservable<
       this,
-      'ctx' | 'channel' | 'anchor' | 'rafId' | 'trackIdCounter' | 'selInput' | 'selOutput' | 'pitchChannel' | 'pitchListeners'
+      | 'ctx'
+      | 'channel'
+      | 'anchor'
+      | 'rafId'
+      | 'trackIdCounter'
+      | 'selInput'
+      | 'selOutput'
+      | 'pitchChannel'
+      | 'pitchListeners'
+      | 'endedListeners'
     >(this, {
       ctx: false,
       channel: false,
@@ -75,7 +87,13 @@ export class NativeAudioEngine implements PlaybackEngine {
       selOutput: false,
       pitchChannel: false,
       pitchListeners: false,
+      endedListeners: false,
     });
+  }
+
+  onEnded(cb: () => void): () => void {
+    this.endedListeners.add(cb);
+    return () => this.endedListeners.delete(cb);
   }
 
   get songLeadInSec(): number {
@@ -303,12 +321,16 @@ export class NativeAudioEngine implements PlaybackEngine {
 
   private onTelemetry(msg: Telemetry): void {
     this.anchor = { playSec: msg.playSec, atMs: performance.now(), playing: msg.playing };
+    // A stop that only the engine knows about.
+    const stopped = !msg.playing && this.state === 'playing';
+    // Position check: a stale pre-play frame also reads as stopped.
+    const ended = stopped && msg.playSec >= this.durationSec - END_OF_TRACK_TOLERANCE_SEC;
     runInAction(() => {
       if (Math.abs(msg.level - this.micLevel) >= 0.01) this.micLevel = msg.level;
       if (Math.abs(msg.latencyMs - this.latencyMs) >= 0.1) this.latencyMs = msg.latencyMs;
-      // Reconcile a natural end-of-track stop that only the engine knows about.
-      if (!msg.playing && this.state === 'playing') this.state = 'idle';
+      if (stopped) this.state = 'idle';
     });
+    if (ended) for (const cb of this.endedListeners) cb();
     if (!msg.playing) {
       this.stopRaf();
       runInAction(() => {

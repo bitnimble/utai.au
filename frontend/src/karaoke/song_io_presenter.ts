@@ -1,7 +1,7 @@
 /**
- * Save / open a song bundle: the cross-domain orchestration that gathers
- * the session's up-front work (separated stems, word-aligned lyrics, song
- * metadata) into a `.zip`, and restores it on load.
+ * Load / save the session's song: applies a prepared song (from the queue)
+ * to the session, and packs the session's up-front work (separated stems,
+ * word-aligned lyrics, song metadata) into a `.zip` bundle.
  *
  * Owns only its transient UI state (busy / phase / details-modal flags);
  * every store mutation goes through the sibling presenters (the karaoke
@@ -10,38 +10,26 @@
  */
 
 import { makeAutoObservable, runInAction } from 'mobx';
-import { analyzeBeats } from 'src/editing/beats/analyze_beats_client';
 import { BeatStore } from 'src/editing/beats/beat_store';
 import { LyricsPresenter } from 'src/editing/lyrics/lyrics_presenter';
-import { AudioTrack, AudioTrackId } from 'src/editing/playback/audio_tracks';
+import { AudioTrack } from 'src/editing/playback/audio_tracks';
 import { playbackEngine } from 'src/editing/playback/player';
-import { parseSongFilename } from 'src/lyrics/auto_lyrics';
-import { separateStems } from 'src/lyrics/separate_stems';
 import { lyricsStore } from 'src/lyrics/store';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
+import type { PreparedSong } from 'src/queue/prepare_song';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { downloadBlob } from 'src/utils/download';
 import { KaraokePresenter } from './karaoke_presenter';
-import {
-  BundleLyricsInput,
-  BundleStemInput,
-  LoadedSong,
-  packSongBundle,
-  unpackSongBundle,
-} from './song_bundle';
-import { SongMeta } from './song_schema';
+import { BundleLyricsInput, BundleStemInput, packSongBundle } from './song_bundle';
 import { SongStore } from './song_store';
 
 /** Coarse stage for the busy indicator; `undefined` when idle. */
-export type SongIoPhase = 'separating' | 'packing' | 'loading' | undefined;
+export type SongIoPhase = 'packing' | 'loading' | undefined;
 
 export class SongIoPresenter {
   busy = false;
   phase: SongIoPhase = undefined;
   detailsOpen = false;
-  /** True while the backend is analysing the mix's beats (concurrent with, and
-   *  outliving, separation); drives a toolbar status. */
-  analyzingBeats = false;
 
   constructor(
     private readonly song: SongStore,
@@ -70,115 +58,43 @@ export class SongIoPresenter {
     this.detailsOpen = false;
   }
 
-  // --- load a fresh mix (auto-separates into stems) ---
+  // --- load ---
 
-  /** Load a full mix as an immediately-playable track, then separate it
-   *  into vocals + backing. The vocals stem is muted by default (karaoke:
-   *  you sing over the backing), and the now-redundant mix is dropped once
-   *  the stems land. If separation is unavailable the mix simply stays as
-   *  the sole track. */
-  async loadMix(file: File, meta?: SongMeta): Promise<void> {
-    if (this.busy) return;
-    // Fresh mix replaces whatever's loaded: drop the prior tracks, lyrics, and
-    // beat grid so the new song starts from a clean slate rather than stacking.
-    this.karaoke.resetSong();
-    this.lyrics.clearLyrics();
-    runInAction(() => {
-      this.beats.analysis = undefined;
-    });
-    const mixId = await this.karaoke.loadAudioFile(file, 'full-mix', meta);
-    if (mixId == null) return;
-    // Beat analysis runs on the full mix, independent of separation; kick it off
-    // concurrently (the backend serialises GPU work) so it isn't gated behind it.
-    void this.runBeatAnalysis(file);
-    // Optimistically fetch lyrics the moment we have the title/artist, so the
-    // line-level lyrics appear while separation runs. Word-level alignment (and
-    // the vocal pitch it carries) is applied afterwards, once the stems land.
-    this.autoFetchLyrics(file);
-    await this.separateInto(mixId, file);
-    this.lyrics.alignLoadedLyrics();
-  }
-
-  /** Analyse the mix's beats/downbeats via Beat This! and publish them to the
-   *  {@link BeatStore} for the beat-line overlay. Best-effort: a failure just
-   *  leaves the song without beat lines. */
-  private async runBeatAnalysis(file: File): Promise<void> {
-    runInAction(() => {
-      this.analyzingBeats = true;
-      this.beats.analysis = undefined;
-    });
-    try {
-      const analysis = await analyzeBeats(file);
-      runInAction(() => {
-        this.beats.analysis = analysis;
-      });
-    } catch (err) {
-      if (!isBackendUnreachable(err)) console.warn('[beats] analysis failed:', message(err));
-    } finally {
-      runInAction(() => {
-        this.analyzingBeats = false;
-      });
-    }
-  }
-
-  /** After a mix loads, best-effort auto-fetch synced lyrics from LRCLIB using
-   *  the song's title/artist (streaming metadata, else parsed from the filename)
-   *  + duration; the lyrics presenter only applies a confident duration match. */
-  private autoFetchLyrics(file: File): void {
-    const parsed = parseSongFilename(file.name);
-    console.log('[auto-lyrics] deriving query', {
-      filename: file.name,
-      metaTitle: this.song.title,
-      metaArtist: this.song.artist,
-      parsedFromFilename: parsed,
-      durationSec: this.song.durationSec,
-    });
-    this.lyrics.autoFetchLyrics({
-      title: this.song.title || parsed.title,
-      artist: this.song.artist || parsed.artist,
-      durationSec: this.song.durationSec,
-    });
-  }
-
-  private async separateInto(mixId: AudioTrackId, mixFile: File): Promise<void> {
+  /** Replace the session's song with a prepared one. The vocals stem is muted
+   *  (karaoke: you sing over the backing). */
+  async loadPreparedSong(prepared: PreparedSong): Promise<void> {
+    this.clearSong();
     runInAction(() => {
       this.busy = true;
-      this.phase = 'separating';
+      this.phase = 'loading';
     });
     try {
-      const { vocals, backing, pitchContour } = await separateStems(mixFile);
-      const backingId = await this.karaoke.loadAudioFile(backing, 'backing');
-      const vocalsId = await this.karaoke.loadAudioFile(vocals, 'vocals');
-      if (vocalsId != null && pitchContour) {
-        // Pitch is a property of the vocal stem; keep it on the vocals track so
-        // aligning lyrics later just maps it onto words (no second f0 pass).
-        this.karaoke.setTrackPitchContour(vocalsId, pitchContour);
+      for (const stem of prepared.stems) {
+        const id = await this.karaoke.loadAudioFile(stem.file, stem.role);
+        if (id == null) continue;
+        if (stem.pitchContour) this.karaoke.setTrackPitchContour(id, stem.pitchContour);
+        if (stem.role === 'vocals') this.karaoke.setTrackMuted(id, true);
       }
-      if (backingId == null || vocalsId == null) {
-        // Separation succeeded but a stem failed to decode locally: roll back
-        // whichever stem did load and keep the mix, so playback isn't left
-        // partial or silent (loadAudioFile already surfaced the decode error).
-        if (backingId != null) this.karaoke.clearAudioTrack(backingId);
-        if (vocalsId != null) this.karaoke.clearAudioTrack(vocalsId);
-        toastStore.showWarning('Kept the full mix (a separated stem could not be loaded).');
-        return;
-      }
-      this.karaoke.setTrackMuted(vocalsId, true);
-      this.karaoke.clearAudioTrack(mixId);
-      // Mid-playback, reschedule so the new stems start and the dropped mix
-      // stops cleanly (the controller schedules from the live track set).
-      if (playbackEngine.state === 'playing') playbackEngine.seek(playbackEngine.currentTime);
-      toastStore.showSuccess('Separated into vocals + backing.', { testId: 'stems-ready' });
-    } catch (err) {
-      if (!isBackendUnreachable(err)) {
-        toastStore.showWarning(`Kept the full mix (stem separation failed: ${message(err)}).`);
-      }
+      this.karaoke.updateSongMeta(prepared.meta);
+      for (const track of prepared.lyrics) this.lyrics.loadLyricsTrack(track);
+      runInAction(() => {
+        this.beats.analysis = prepared.beats;
+      });
     } finally {
       runInAction(() => {
         this.busy = false;
         this.phase = undefined;
       });
     }
+  }
+
+  /** Drop the current song's tracks, lyrics, and beat grid. */
+  clearSong(): void {
+    this.karaoke.resetSong();
+    this.lyrics.clearLyrics();
+    runInAction(() => {
+      this.beats.analysis = undefined;
+    });
   }
 
   // --- save ---
@@ -252,51 +168,6 @@ export class SongIoPresenter {
     const parts = [this.song.artist, this.song.title].filter((s) => s.trim().length > 0);
     const base = parts.join(' - ') || 'song';
     return base.replace(/[^\w.\- ]+/g, '_').trim() || 'song';
-  }
-
-  // --- open ---
-
-  /** Parse a saved-song `.zip` and restore it into the session, replacing
-   *  the current song. */
-  async loadBundleFile(file: File): Promise<void> {
-    if (this.busy) return;
-    runInAction(() => {
-      this.busy = true;
-      this.phase = 'loading';
-    });
-    try {
-      const data = new Uint8Array(await file.arrayBuffer());
-      const loaded = await unpackSongBundle(data);
-      await this.applyLoadedSong(loaded);
-      toastStore.showSuccess(`Loaded ${loaded.meta.title ?? file.name}.`, { testId: 'song-loaded' });
-    } catch (err) {
-      toastStore.showError(`Could not open song: ${message(err)}`);
-    } finally {
-      runInAction(() => {
-        this.busy = false;
-        this.phase = undefined;
-      });
-    }
-  }
-
-  private async applyLoadedSong(loaded: LoadedSong): Promise<void> {
-    this.karaoke.resetSong();
-    this.lyrics.clearLyrics();
-    // A bundle carries stems, not the original mix, so there's nothing to
-    // re-analyse; clear any prior beats so a stale grid can't bleed onto it.
-    runInAction(() => {
-      this.beats.analysis = undefined;
-    });
-    for (const stem of loaded.stems) {
-      // `new Uint8Array(...)` rebinds fflate's `ArrayBufferLike`-typed bytes
-      // to an ArrayBuffer-backed view the DOM `BlobPart` type accepts.
-      const f = new File([new Uint8Array(stem.bytes)], stem.filename, { type: stem.contentType });
-      const id = await this.karaoke.loadAudioFile(f, stem.role);
-      // Karaoke default: the vocal stem is muted so the backing plays alone.
-      if (id != null && stem.role === 'vocals') this.karaoke.setTrackMuted(id, true);
-    }
-    this.karaoke.updateSongMeta(loaded.meta);
-    for (const track of loaded.lyrics) this.lyrics.loadLyricsTrack(track);
   }
 }
 

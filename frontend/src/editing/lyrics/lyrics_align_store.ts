@@ -29,10 +29,6 @@ export class LyricsAlignStore {
    * re-render on change.
    */
   lyricsAlignStatuses: Map<LyricsTrackId, LyricsAlignStatus> = new Map();
-  /** True while the auto-fetch-on-load LRCLIB search is in flight (before any
-   *  match applies + alignment begins). Drives the toolbar "Searching for
-   *  lyrics…" pill. */
-  autoLyricsSearching: boolean = false;
   /** Lyrics search modal visibility. */
   lyricsSearchOpen: boolean = false;
   /** Lyrics plain-text load modal visibility. */
@@ -40,14 +36,6 @@ export class LyricsAlignStore {
 
   constructor() {
     makeAutoObservable(this);
-  }
-
-  /** Combined lyrics-status for the single toolbar pill: the auto-search runs
-   *  first, then (on a match) alignment, so alignment wins when both overlap. */
-  get lyricsStatusPhase(): 'idle' | 'searching' | 'queued' | 'aligning' {
-    const align = this.lyricsAlignBusyPhase;
-    if (align !== 'idle') return align;
-    return this.autoLyricsSearching ? 'searching' : 'idle';
   }
 
   /** Aggregate lyrics-alignment state across all rows, for the toolbar

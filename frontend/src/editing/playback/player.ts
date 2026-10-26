@@ -69,12 +69,19 @@ export class UtaiPlayer implements PlaybackEngine {
   private endTimerId: number | undefined;
   private pendingStartSec: number | undefined;
   private audioTrackIdCounter = 0;
+  private readonly endedListeners = new Set<() => void>();
 
   constructor() {
-    makeAutoObservable<this, 'ctx' | 'controller'>(this, {
+    makeAutoObservable<this, 'ctx' | 'controller' | 'endedListeners'>(this, {
       ctx: false,
       controller: false,
+      endedListeners: false,
     });
+  }
+
+  onEnded(cb: () => void): () => void {
+    this.endedListeners.add(cb);
+    return () => this.endedListeners.delete(cb);
   }
 
   /** Longest loaded track's duration. Drives the timeline span. */
@@ -313,7 +320,10 @@ export class UtaiPlayer implements PlaybackEngine {
     if (!ctx) return;
     const remainingSec = this.durationSec - this.playSecAt(ctx.currentTime);
     const tailMs = Math.max(0, (remainingSec + PLAYBACK_TAIL_SECONDS) * 1000);
-    this.endTimerId = window.setTimeout(() => this.stop(), tailMs);
+    this.endTimerId = window.setTimeout(() => {
+      this.stop();
+      for (const cb of this.endedListeners) cb();
+    }, tailMs);
   }
 
   private clearTailTimer(): void {

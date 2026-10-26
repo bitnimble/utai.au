@@ -1,0 +1,137 @@
+.badge {
+    composes: labelSm from '../typography.module.css';
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: var(--radius-lg);
+    background: var(--color-accent);
+    color: var(--color-bg-base);
+    text-align: center;
+}
+
+.sidebar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    width: min(360px, 100%);
+    border-left: 1px solid var(--color-border);
+    background: var(--color-bg-base);
+    box-shadow: var(--shadow-lg);
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.heading {
+    composes: heading from '../typography.module.css';
+    margin: 0;
+}
+
+.iconButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+}
+
+.iconButton:hover {
+    background: var(--color-bg-hover);
+    color: var(--color-text-strong);
+}
+
+.empty {
+    composes: bodySm from '../typography.module.css';
+    margin: 0;
+    padding: 24px 16px;
+    color: var(--color-text-muted-alt);
+}
+
+.list {
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 4px 0;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 8px 8px 12px;
+    border-bottom: 1px solid var(--color-border-soft);
+    cursor: grab;
+}
+
+.item:hover {
+    background: var(--color-bg-neutral);
+}
+
+.itemDragging {
+    opacity: 0.5;
+}
+
+.grip {
+    flex: 0 0 auto;
+    color: var(--color-text-faint-strong);
+}
+
+.itemText {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.itemTitle,
+.itemArtist,
+.status {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.itemTitle {
+    composes: bodyMd from '../typography.module.css';
+    color: var(--color-text);
+}
+
+.itemArtist {
+    composes: bodySm from '../typography.module.css';
+    color: var(--color-text-secondary);
+}
+
+.status {
+    composes: bodySm from '../typography.module.css';
+    color: var(--color-text-muted-alt);
+}
+
+.statusSpinner {
+    margin-right: 6px;
+    vertical-align: -1px;
+}
+
+.statusFailed {
+    color: var(--color-error);
+}
+
+.menuLabel {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}

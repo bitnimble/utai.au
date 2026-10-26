@@ -1,8 +1,8 @@
 /**
  * Pure helpers for the auto-lyrics-on-load feature: deriving a search query from
  * a song's filename, word-level fuzzy string matching, and picking a confident
- * LRCLIB result. The orchestration (search -> pick -> apply) lives on
- * {@link import('src/editing/lyrics/lyrics_presenter').LyricsPresenter}.
+ * LRCLIB result. The orchestration (search -> pick -> align) lives in
+ * {@link import('src/queue/prepare_song').prepareSong}.
  */
 
 import { LrclibMatch } from './lrclib';

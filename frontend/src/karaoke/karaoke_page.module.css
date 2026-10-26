@@ -56,6 +56,15 @@
     max-width: 100%;
 }
 
+/* Between the header and the transport; hosts the queue sidebar overlay. */
+.main {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 .toolButton {
     display: inline-flex;
     align-items: center;

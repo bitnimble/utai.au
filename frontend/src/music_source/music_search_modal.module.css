@@ -153,41 +153,12 @@
     color: var(--color-text-muted-alt);
 }
 
-.progress {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 0;
-}
-
-.progressLabel {
-    composes: bodySm from '../typography.module.css';
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--color-text-strong);
-}
-
-.progressTrack {
-    height: 4px;
-    border-radius: var(--radius-sm);
-    background: var(--color-border);
-    overflow: hidden;
-}
-
-.progressFill {
-    height: 100%;
-    background: var(--color-accent);
-    transition: width 120ms linear;
-}
-
-.fetchButton {
+.queueButton {
     composes: primary from '../ui/button/button.module.css';
     flex: 0 0 auto;
     border-radius: var(--radius-sm);
 }
 
-.fetchButton:disabled {
+.queueButton:disabled {
     opacity: 0.6;
 }

@@ -53,34 +53,20 @@ export class KaraokePresenter {
   // --- audio ---
 
   /** Decode a local audio file into a new track and refresh the song
-   *  duration (the longest track drives the shared time axis). Any
-   *  `meta` (e.g. from a streaming fetch) fills empty song fields.
+   *  duration (the longest track drives the shared time axis).
    *  Returns the new track's id, or undefined if decoding failed. */
-  async loadAudioFile(
-    file: File,
-    role?: AudioTrackRole,
-    meta?: SongMeta,
-  ): Promise<AudioTrackId | undefined> {
+  async loadAudioFile(file: File, role?: AudioTrackRole): Promise<AudioTrackId | undefined> {
     try {
       const id = await playbackEngine.loadAudioTrack(file, role);
       runInAction(() => {
         this.song.durationSec = playbackEngine.durationSec;
       });
-      if (meta) this.captureSongMeta(meta);
       return id;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       toastStore.showError(`Could not load ${file.name}: ${message}`);
       return undefined;
     }
-  }
-
-  /** Drop one loaded audio track (e.g. the mix, once its stems replace it). */
-  clearAudioTrack(id: AudioTrackId): void {
-    playbackEngine.clearAudioTrack(id);
-    runInAction(() => {
-      this.song.durationSec = playbackEngine.durationSec;
-    });
   }
 
   setTrackVolume(id: AudioTrackId, volume: number): void {
@@ -96,9 +82,7 @@ export class KaraokePresenter {
   }
 
   /** Tear the current song down: stop playback, drop every audio track,
-   *  and clear the song facts. Used before loading a saved-song bundle so
-   *  the incoming song starts from a clean slate. (Lyrics are the lyrics
-   *  presenter's to clear.) */
+   *  and clear the song facts. (Lyrics are the lyrics presenter's to clear.) */
   resetSong(): void {
     playbackEngine.stop();
     for (const id of Array.from(playbackEngine.audioTracks.keys())) {
@@ -130,9 +114,8 @@ export class KaraokePresenter {
     });
   }
 
-  /** Auto-capture metadata from a load (streaming fetch, LRCLIB pick,
-   *  bundle). Fills only fields the user hasn't already set, so a manual
-   *  edit is never clobbered by a later auto-source. */
+  /** Auto-capture metadata from an LRCLIB pick. Fills only fields the user
+   *  hasn't already set, so a manual edit is never clobbered. */
   captureSongMeta(meta: SongMeta): void {
     runInAction(() => {
       if (!this.song.title && meta.title) this.song.title = meta.title;

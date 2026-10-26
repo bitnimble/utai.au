@@ -2,7 +2,6 @@ import { makeAutoObservable, runInAction } from 'mobx';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import {
   addAccount as apiAddAccount,
-  fetchTrack as apiFetchTrack,
   getMusicConfig,
   listServices,
   removeAccount as apiRemoveAccount,
@@ -15,43 +14,33 @@ import {
   type TrackResult,
 } from 'src/net/music_source_client';
 import { toastStore } from 'src/ui/toasts/toasts';
-import { cleanStreamingTitle } from 'src/lyrics/auto_lyrics';
-import { SongMeta } from 'src/karaoke/song_schema';
 import { MusicSourceStore } from './music_source_store';
 
 /**
  * Sole writer for {@link MusicSourceStore}: loads the service catalog + config,
- * runs (stale-guarded) searches, drives the track fetch (streaming its
- * progress), and applies settings changes. On a successful fetch it hands the
- * audio `File` to `onAudioFetched` (wired to the karaoke presenter's
- * `loadAudioFile`), which is where this feature's job ends - stem-splitting
- * picks up from the loaded track.
+ * runs (stale-guarded) searches, and applies settings changes. A picked track
+ * goes to `onAddToQueue` (the song queue downloads and prepares it).
  */
 export class MusicSourcePresenter {
   private readonly store: MusicSourceStore;
-  private readonly onAudioFetched: (file: File, meta?: SongMeta) => void | Promise<void>;
+  private readonly onAddToQueue: (track: TrackResult) => void;
   private searchRequestId = 0;
   private searchController: AbortController | undefined;
-  private fetchController: AbortController | undefined;
   private loaded = false;
 
-  constructor(
-    store: MusicSourceStore,
-    onAudioFetched: (file: File, meta?: SongMeta) => void | Promise<void>,
-  ) {
+  constructor(store: MusicSourceStore, onAddToQueue: (track: TrackResult) => void) {
     this.store = store;
-    this.onAudioFetched = onAudioFetched;
-    makeAutoObservable<
+    this.onAddToQueue = onAddToQueue;
+    makeAutoObservable<this, 'store' | 'onAddToQueue' | 'searchController' | 'searchRequestId' | 'loaded'>(
       this,
-      'store' | 'onAudioFetched' | 'searchController' | 'fetchController' | 'searchRequestId' | 'loaded'
-    >(this, {
-      store: false,
-      onAudioFetched: false,
-      searchController: false,
-      fetchController: false,
-      searchRequestId: false,
-      loaded: false,
-    });
+      {
+        store: false,
+        onAddToQueue: false,
+        searchController: false,
+        searchRequestId: false,
+        loaded: false,
+      },
+    );
   }
 
   // --- modal visibility ---
@@ -142,83 +131,11 @@ export class MusicSourcePresenter {
     this.store.selectedId = id;
   }
 
-  // --- fetch ---
-
-  /** Download the selected track (if any). */
-  fetchSelected(): void {
+  /** Queue the selected track (if any); its audio downloads when its turn to
+   *  be prepared comes. */
+  addSelectedToQueue(): void {
     const selected = this.store.selectedResult;
-    if (selected) void this.fetchResult(selected);
-  }
-
-  /** Fetch a track's audio, streaming progress into the store, and hand the
-   *  finished `File` to `onAudioFetched`. Supersedes any in-flight fetch. */
-  async fetchResult(track: TrackResult): Promise<void> {
-    this.fetchController?.abort();
-    const controller = new AbortController();
-    this.fetchController = controller;
-    runInAction(() => {
-      this.store.fetchState = { kind: 'fetching', id: track.id, stage: 'queued', frac: 0 };
-    });
-
-    let file: File;
-    try {
-      file = await apiFetchTrack(track, {
-        signal: controller.signal,
-        onProgress: (progress) => {
-          if (this.fetchController !== controller) return;
-          runInAction(() => {
-            this.store.fetchState = {
-              kind: 'fetching',
-              id: track.id,
-              stage: progress.stage,
-              frac: progress.frac,
-            };
-          });
-        },
-      });
-    } catch (err) {
-      // A newer fetch superseded this one (it aborted this controller and now
-      // owns `fetchState`); its rejection must not clobber the new state.
-      if (this.fetchController !== controller) return;
-      this.fetchController = undefined;
-      if (controller.signal.aborted) {
-        runInAction(() => {
-          this.store.fetchState = { kind: 'idle' };
-        });
-        return;
-      }
-      runInAction(() => {
-        this.store.fetchState = { kind: 'error', id: track.id, message: message(err) };
-      });
-      if (!isBackendUnreachable(err)) {
-        toastStore.showError(`Could not fetch ${track.title}: ${message(err)}`);
-      }
-      return;
-    }
-
-    // Success. If a newer fetch took over while this one was finishing, leave
-    // its state (and audio) alone rather than loading this stale track.
-    if (this.fetchController !== controller) return;
-    this.fetchController = undefined;
-    runInAction(() => {
-      this.store.fetchState = { kind: 'idle' };
-      this.store.searchOpen = false;
-    });
-    toastStore.showSuccess(
-      `Loaded ${track.title}${track.artists ? ` by ${track.artists}` : ''}`,
-      { testId: 'music-fetch-loaded' },
-    );
-    await this.onAudioFetched(file, {
-      title: cleanStreamingTitle(track.title, track.artists),
-      artist: track.artists || undefined,
-      album: track.album ?? undefined,
-      albumArtUrl: track.coverUrl ?? undefined,
-      sourceUrl: track.sourceUrl,
-    });
-  }
-
-  cancelFetch(): void {
-    this.fetchController?.abort();
+    if (selected) this.onAddToQueue(selected);
   }
 
   // --- settings: accounts ---

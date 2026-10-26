@@ -8,8 +8,8 @@ export type BeatLine = { sec: number; downbeat: boolean };
 /**
  * The current song's beat/downbeat analysis. Data-only: the sole writer is
  * {@link import('src/karaoke/song_io_presenter').SongIoPresenter}, which sets
- * `analysis` after the backend's `analyzeBeats` op returns (or clears it on song
- * reload). The `lines` computed reshapes it for the beat-line overlay.
+ * `analysis` from the prepared song it loads (or clears it with the song). The
+ * `lines` computed reshapes it for the beat-line overlay.
  */
 export class BeatStore {
   analysis: BeatAnalysis | undefined = undefined;

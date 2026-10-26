@@ -13,10 +13,9 @@ import styles from './music_search_modal.module.css';
 
 /**
  * Search-a-streaming-service modal: a query box, priority-merged results across
- * the user's configured services, and a per-selection Fetch that streams the
- * download's progress. Visibility is driven by `store.searchOpen`
- * (presenter-owned); a completed fetch closes the modal and hands the audio to
- * the app (see {@link MusicSourcePresenter.fetchResult}).
+ * the user's configured services, and an Add to queue for the selection. Stays
+ * open after adding so several songs can be queued in one go. Visibility is
+ * driven by `store.searchOpen` (presenter-owned).
  */
 export const MusicSearchModal = observer(function MusicSearchModal() {
   const store = React.useContext(MusicSourceStoreContext);
@@ -81,7 +80,7 @@ export const MusicSearchModal = observer(function MusicSearchModal() {
         </button>
       </form>
       <ResultsView store={store} presenter={presenter} />
-      <FetchFooter store={store} presenter={presenter} />
+      <QueueFooter store={store} presenter={presenter} />
     </Modal>
   );
 });
@@ -175,42 +174,24 @@ const ResultRow = observer(function ResultRow({
   );
 });
 
-const FetchFooter = observer(function FetchFooter({
+const QueueFooter = observer(function QueueFooter({
   store,
   presenter,
 }: {
   store: MusicSourceStore;
   presenter: MusicSourcePresenter;
 }) {
-  const selected = store.selectedResult;
-  const fetch = store.fetchState;
-  const fetchingThis = fetch.kind === 'fetching' && selected != null && fetch.id === selected.id;
-  const erroredThis = fetch.kind === 'error' && selected != null && fetch.id === selected.id;
-
   return (
     <footer className={styles.footer} data-testid="music-search-footer">
-      {fetchingThis ? (
-        <div className={styles.progress} data-testid="music-fetch-progress">
-          <div className={styles.progressLabel}>
-            <Spinner size={14} tone="current" /> {stageLabel(fetch.stage)} {Math.round(fetch.frac * 100)}%
-          </div>
-          <div className={styles.progressTrack}>
-            <div className={styles.progressFill} style={{ width: `${Math.round(fetch.frac * 100)}%` }} />
-          </div>
-        </div>
-      ) : (
-        <span className={styles.footerHint}>
-          {erroredThis ? `Fetch failed: ${fetch.message}` : 'Select a track, then fetch its audio.'}
-        </span>
-      )}
+      <span className={styles.footerHint}>Select a track, then add it to the queue.</span>
       <button
         type="button"
-        className={styles.fetchButton}
-        onClick={() => presenter.fetchSelected()}
-        disabled={selected == null || fetchingThis}
-        data-testid="music-fetch-button"
+        className={styles.queueButton}
+        onClick={() => presenter.addSelectedToQueue()}
+        disabled={store.selectedResult == null}
+        data-testid="music-add-to-queue"
       >
-        Fetch
+        Add to queue
       </button>
     </footer>
   );
@@ -228,12 +209,6 @@ const SERVICE_LABELS: Record<string, string> = {
 
 function serviceLabel(id: string): string {
   return SERVICE_LABELS[id] ?? id;
-}
-
-function stageLabel(stage: string): string {
-  if (stage === 'queued') return 'Queued…';
-  if (stage === 'Downloading' || stage === 'downloading') return 'Downloading…';
-  return `${stage}…`;
 }
 
 function formatDuration(seconds: number): string {

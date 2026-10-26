@@ -9,5 +9,5 @@ export const KaraokePresenterContext = React.createContext<KaraokePresenter | nu
 /** Routes the {@link SongStore} (loaded-song data) to the view. */
 export const SongStoreContext = React.createContext<SongStore | null>(null);
 
-/** Routes the {@link SongIoPresenter} (save / open song bundle) to the view. */
+/** Routes the {@link SongIoPresenter} (load / save song) to the view. */
 export const SongIoPresenterContext = React.createContext<SongIoPresenter | null>(null);

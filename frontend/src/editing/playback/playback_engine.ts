@@ -39,4 +39,8 @@ export interface PlaybackEngine {
   resume(): Promise<void>;
   stop(): void;
   seek(seconds: number): void;
+
+  /** Fires when playback runs off the end of the song (not on a manual
+   *  `stop()`). Returns an unsubscribe fn. */
+  onEnded(cb: () => void): () => void;
 }

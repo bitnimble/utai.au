@@ -4,9 +4,7 @@ import {
   AlignLyricsRequest,
   nameLooksLikeVocals,
 } from 'src/lyrics/forced_align';
-import { LyricLine, parseLrc, stripLyricNoise } from 'src/lyrics/lrc';
-import { pickConfidentMatch } from 'src/lyrics/auto_lyrics';
-import { LrclibMatch, searchLrclib } from 'src/lyrics/lrclib';
+import { LyricLine, stripLyricNoise } from 'src/lyrics/lrc';
 import { attachPitchToLines } from 'src/lyrics/pitch_contour';
 import { LyricsSource, LyricsTrackId, lyricsStore } from 'src/lyrics/store';
 import { AudioTrackId } from 'src/editing/playback/audio_tracks';
@@ -34,9 +32,6 @@ export class LyricsPresenter {
    */
   lyricsAlignControllers: Map<LyricsTrackId, AbortController> = new Map();
 
-  /** In-flight auto-fetch-on-load LRCLIB request; a new song aborts it. */
-  private autoFetchController: AbortController | undefined;
-
   /** Fill empty song fields when a load carries metadata (e.g. an LRCLIB
    *  pick's track + artist). Delegates to the karaoke presenter, the
    *  {@link SongStore} writer, keeping the single-writer rule intact. */
@@ -45,10 +40,9 @@ export class LyricsPresenter {
   constructor(lyricsAlign: LyricsAlignStore, onSongMeta?: (meta: SongMeta) => void) {
     this.lyricsAlign = lyricsAlign;
     this.onSongMeta = onSongMeta;
-    makeAutoObservable<this, 'onSongMeta' | 'autoFetchController'>(this, {
+    makeAutoObservable<this, 'onSongMeta'>(this, {
       lyricsAlign: false,
       lyricsAlignControllers: false,
-      autoFetchController: false,
       onSongMeta: false,
     });
   }
@@ -93,144 +87,11 @@ export class LyricsPresenter {
     }
   }
 
-  /**
-   * Auto-fetch synced lyrics from LRCLIB after a song loads and apply them when a
-   * result is a confident match (per {@link pickConfidentMatch}: both a duration
-   * match and a fuzzy title+artist match, the loaded audio's length disambiguates
-   * covers / live / remixes, the name gate rejects a different song of the same
-   * length). On a miss it retries title-only (LRCLIB's search is artist-sensitive
-   * and the source's "artist" may be a mislabelling YouTube uploader). Best-effort
-   * and silent on a miss, so it never interrupts; a new song aborts a pending
-   * fetch. No-op when lyrics are already loaded or there's nothing to search with.
-   */
-  autoFetchLyrics(query: { title: string; artist: string; durationSec: number }): void {
-    const title = query.title.trim();
-    const artist = query.artist.trim();
-    console.log('[auto-lyrics] triggered', { title, artist, durationSec: query.durationSec });
-    if (title.length === 0 && artist.length === 0) {
-      console.log('[auto-lyrics] skipped: no title/artist to search with');
-      return;
-    }
-    if (lyricsStore.hasAnyLyrics) {
-      console.log('[auto-lyrics] skipped: lyrics already loaded');
-      return;
-    }
-    this.autoFetchController?.abort();
-    const controller = new AbortController();
-    this.autoFetchController = controller;
-    runInAction(() => {
-      this.lyricsAlign.autoLyricsSearching = true;
-    });
-    void this.runAutoFetch(title, artist, query.durationSec, controller);
-  }
+  // --- prepared-song load ---
 
-  private async runAutoFetch(
-    title: string,
-    artist: string,
-    durationSec: number,
-    controller: AbortController,
-  ): Promise<void> {
-    try {
-      // First pass: title + artist. If nothing confident and we had an artist,
-      // retry title-only: LRCLIB's search is artist-sensitive and the source's
-      // "artist" (e.g. a YouTube uploader) may not be the official one, so an
-      // included wrong artist yields no results / no name match. The title-only
-      // pass drops the artist from both the query and the name gate, leaning on
-      // the duration match for confidence.
-      let best = await this.searchAndPick(title, artist, durationSec, controller, { title, artist });
-      if (best === 'aborted') return;
-      if (best == null && title.length > 0 && artist.length > 0) {
-        console.log('[auto-lyrics] no match with artist; retrying title-only');
-        best = await this.searchAndPick(title, '', durationSec, controller, { title, ignoreArtist: true });
-        if (best === 'aborted') return;
-      }
-      if (best?.syncedLyrics == null) {
-        console.log('[auto-lyrics] no confident match, nothing auto-loaded');
-        return;
-      }
-      const lines = parseLrc(best.syncedLyrics);
-      if (lines.length === 0) {
-        console.log('[auto-lyrics] confident match had unparseable synced lyrics, nothing auto-loaded');
-        return;
-      }
-      console.log(`[auto-lyrics] auto-loading "${best.trackName} - ${best.artistName}" (${lines.length} lines)`);
-      this.applyLrclibResult(
-        lines,
-        { trackName: best.trackName, artistName: best.artistName },
-        // Align inline only once the vocal stem is ready (so alignment runs
-        // against vocals + carries its pitch). During an optimistic fetch the
-        // stem is still separating; the caller re-aligns via
-        // `alignLoadedLyrics` when separation lands.
-        { wordLevel: this.hasVocalsStem() },
-      );
-    } finally {
-      // Only the current fetch clears the flag; a superseding fetch (which
-      // aborted this one) owns it now and keeps the pill up.
-      if (this.autoFetchController === controller) {
-        runInAction(() => {
-          this.lyricsAlign.autoLyricsSearching = false;
-        });
-      }
-    }
-  }
-
-  /** One LRCLIB search + confident-pick attempt for {@link runAutoFetch}.
-   *  Returns the pick, undefined for no confident match, or 'aborted' when the
-   *  fetch failed or a newer song / manual load superseded it (the caller then
-   *  stops rather than retrying). */
-  private async searchAndPick(
-    searchTitle: string,
-    searchArtist: string,
-    durationSec: number,
-    controller: AbortController,
-    matchOpts: { title: string; artist?: string; ignoreArtist?: boolean },
-  ): Promise<LrclibMatch | undefined | 'aborted'> {
-    let matches: LrclibMatch[];
-    try {
-      matches = await searchLrclib({
-        trackName: searchTitle,
-        artistName: searchArtist,
-        signal: controller.signal,
-      });
-    } catch (err) {
-      console.log('[auto-lyrics] search failed', err);
-      return 'aborted'; // network error / abort: stay silent, the user can still search manually
-    }
-    console.log(
-      `[auto-lyrics] LRCLIB returned ${matches.length} result(s) for`,
-      { trackName: searchTitle, artistName: searchArtist },
-      matches.map((m) => ({ trackName: m.trackName, artistName: m.artistName, duration: m.duration })),
-    );
-    // A newer song (or a manual load) superseded this fetch.
-    if (controller.signal.aborted || this.autoFetchController !== controller) {
-      console.log('[auto-lyrics] superseded by a newer song / load, discarding results');
-      return 'aborted';
-    }
-    if (lyricsStore.hasAnyLyrics) {
-      console.log('[auto-lyrics] lyrics loaded while fetching, discarding results');
-      return 'aborted';
-    }
-    return pickConfidentMatch(matches, durationSec, {
-      ...matchOpts,
-      onTrace: (t) =>
-        console.log(
-          `[auto-lyrics] ${t.accepted ? 'ACCEPT' : 'reject'} "${t.trackName} - ${t.artistName}" (${t.reason})`,
-          {
-            duration: t.duration,
-            durationDelta: t.durationDelta,
-            tolerance: t.tolerance,
-            nameSim: t.nameSim,
-            nameThreshold: t.nameThreshold,
-          },
-        ),
-    });
-  }
-
-  // --- bundle load ---
-
-  /** Add a lyrics row restored from a saved-song bundle, preserving its
-   *  source label + time offset. Lines already carry word-level timings
-   *  (parsed from the bundle's enhanced LRC), so no re-alignment runs. */
+  /** Add a lyrics row from a prepared song, preserving its source label +
+   *  time offset. Lines already carry their final timings, so no
+   *  re-alignment runs. */
   loadLyricsTrack(input: {
     lines: readonly LyricLine[];
     source?: LyricsSource;
@@ -287,34 +148,6 @@ export class LyricsPresenter {
   private computeLyricsSpreadSec(): number {
     const longestAudio = playbackEngine.durationSec;
     return longestAudio > 0 ? longestAudio : 60;
-  }
-
-  /** True once a vocal stem is loaded (the separated `vocals` track or a file
-   *  whose name reads like an isolated vocal). Gates whether auto-fetched lyrics
-   *  align inline or wait for {@link alignLoadedLyrics}. */
-  private hasVocalsStem(): boolean {
-    for (const t of playbackEngine.audioTracks.values()) {
-      if (t.role === 'vocals' || nameLooksLikeVocals(t.filename)) return true;
-    }
-    return false;
-  }
-
-  /** Word-level-align every loaded lyrics track that isn't already word-timed
-   *  (or aligning) against the best available audio track. Called once stem
-   *  separation lands so optimistically-fetched, line-only lyrics gain word
-   *  timings + the vocal pitch. */
-  alignLoadedLyrics(): void {
-    for (const id of lyricsStore.trackIds) {
-      const track = lyricsStore.get(id);
-      if (!track) continue;
-      const wordTimed = track.lines.some((l) => l.words && l.words.length > 0);
-      if (wordTimed || this.lyricsAlignControllers.has(id)) continue;
-      void this.runWordLevelAlignment(id, track.lines, {
-        source: track.source,
-        sourceLabel: track.sourceLabel,
-        label: track.sourceLabel,
-      });
-    }
   }
 
   /** Run (or re-run) word-level forced alignment on an already-loaded

@@ -83,6 +83,11 @@ import {
   SkipSegmentsStoreContext,
 } from 'src/skip_segments/skip_segments_contexts';
 import { SkipSegmentButton } from 'src/skip_segments/skip_segment_button';
+import { prepareSong } from 'src/queue/prepare_song';
+import { QueueStore } from 'src/queue/queue_store';
+import { QueuePresenter } from 'src/queue/queue_presenter';
+import { QueuePresenterContext, QueueStoreContext } from 'src/queue/queue_contexts';
+import { QueueButtons, QueueSidebar } from 'src/queue/queue_view';
 import { KaraokePresenter } from './karaoke_presenter';
 import {
   KaraokePresenterContext,
@@ -106,6 +111,8 @@ type Session = {
   lyricsPresenter: LyricsPresenter;
   presenter: KaraokePresenter;
   songIo: SongIoPresenter;
+  queue: QueueStore;
+  queuePresenter: QueuePresenter;
   musicSource: MusicSourceStore;
   musicPresenter: MusicSourcePresenter;
   audioDevice: AudioDeviceStore;
@@ -128,9 +135,11 @@ function buildSession(): Session {
   const presenter = new KaraokePresenter(song, viewport);
   const lyricsPresenter = new LyricsPresenter(lyricsAlign, (meta) => presenter.captureSongMeta(meta));
   const songIo = new SongIoPresenter(song, presenter, lyricsPresenter, beats);
+  const queue = new QueueStore();
+  const queuePresenter = new QueuePresenter(queue, songIo, playbackEngine, prepareSong);
   const musicSource = new MusicSourceStore();
-  const musicPresenter = new MusicSourcePresenter(musicSource, (file, meta) =>
-    songIo.loadMix(file, meta),
+  const musicPresenter = new MusicSourcePresenter(musicSource, (track) =>
+    queuePresenter.add({ kind: 'streaming', track }),
   );
   // Desktop app defaults the mic to the system device; web + mobile default to
   // None so the browser never prompts for the mic on load (the user opts in).
@@ -167,6 +176,8 @@ function buildSession(): Session {
     lyricsPresenter,
     presenter,
     songIo,
+    queue,
+    queuePresenter,
     musicSource,
     musicPresenter,
     audioDevice,
@@ -191,6 +202,8 @@ export const KaraokePage = observer(function KaraokePage() {
     lyricsPresenter,
     presenter,
     songIo,
+    queue,
+    queuePresenter,
     musicSource,
     musicPresenter,
     audioDevice,
@@ -221,6 +234,11 @@ export const KaraokePage = observer(function KaraokePage() {
     return () => skipSegmentsPresenter.dispose();
   }, [skipSegmentsPresenter]);
 
+  React.useEffect(() => {
+    queuePresenter.init();
+    return () => queuePresenter.dispose();
+  }, [queuePresenter]);
+
   // Global spacebar transport toggle. Ignored while typing into a form field
   // or contenteditable so the space still types a character there.
   React.useEffect(() => {
@@ -247,6 +265,8 @@ export const KaraokePage = observer(function KaraokePage() {
       lyricsPresenter,
       presenter,
       songIo,
+      queue,
+      queuePresenter,
       musicSource,
       musicPresenter,
       audioDevice,
@@ -269,6 +289,8 @@ export const KaraokePage = observer(function KaraokePage() {
     lyricsPresenter,
     presenter,
     songIo,
+    queue,
+    queuePresenter,
     musicSource,
     musicPresenter,
     audioDevice,
@@ -292,6 +314,8 @@ export const KaraokePage = observer(function KaraokePage() {
       <ScoringPresenterContext.Provider value={scoringPresenter}>
       <SongStoreContext.Provider value={song}>
       <SongIoPresenterContext.Provider value={songIo}>
+      <QueueStoreContext.Provider value={queue}>
+      <QueuePresenterContext.Provider value={queuePresenter}>
         <StructuralContext.Provider value={structural}>
           <ViewportStoreContext.Provider value={viewport}>
             <BeatStoreContext.Provider value={beats}>
@@ -303,11 +327,14 @@ export const KaraokePage = observer(function KaraokePage() {
                 <SkipSegmentsPresenterContext.Provider value={skipSegmentsPresenter}>
                 <div className={styles.page}>
                   <Toolbar />
-                  <VideoArea>
-                    {karaokeView && <KaraokeLyricsOverlay />}
-                    <SkipSegmentButton />
-                  </VideoArea>
-                  {!karaokeView && <ScoreArea />}
+                  <div className={styles.main}>
+                    <VideoArea>
+                      {karaokeView && <KaraokeLyricsOverlay />}
+                      <SkipSegmentButton />
+                    </VideoArea>
+                    {!karaokeView && <ScoreArea />}
+                    <QueueSidebar />
+                  </div>
                   <TransportBar />
                   <Modals />
                   <ToastContainer />
@@ -321,6 +348,8 @@ export const KaraokePage = observer(function KaraokePage() {
             </BeatStoreContext.Provider>
           </ViewportStoreContext.Provider>
         </StructuralContext.Provider>
+      </QueuePresenterContext.Provider>
+      </QueueStoreContext.Provider>
       </SongIoPresenterContext.Provider>
       </SongStoreContext.Provider>
       </ScoringPresenterContext.Provider>
@@ -338,6 +367,7 @@ const Toolbar = observer(function Toolbar() {
   const lyricsAlign = React.useContext(LyricsAlignStoreContext)!;
   const musicPresenter = React.useContext(MusicSourcePresenterContext)!;
   const songIo = React.useContext(SongIoPresenterContext)!;
+  const queuePresenter = React.useContext(QueuePresenterContext)!;
   const beats = React.useContext(BeatStoreContext)!;
   const song = React.useContext(SongStoreContext)!;
   const settingsModal = useSettingsModal();
@@ -345,15 +375,15 @@ const Toolbar = observer(function Toolbar() {
   const openSongRef = React.useRef<HTMLInputElement>(null);
 
   const onPickAudio = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files ?? []);
     e.target.value = '';
-    if (file) void songIo.loadMix(file);
+    for (const file of files) queuePresenter.add({ kind: 'file', file });
   };
 
   const onPickSong = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files ?? []);
     e.target.value = '';
-    if (file) void songIo.loadBundleFile(file);
+    for (const file of files) queuePresenter.add({ kind: 'bundle', file });
   };
 
   const saveLabel = songIo.phase === 'packing' ? 'Saving…' : 'Save song';
@@ -372,13 +402,12 @@ const Toolbar = observer(function Toolbar() {
         {(close) => (
           <>
             <ActionMenuItem
-              label="Open song"
+              label="Add saved song to queue"
               onClick={() => {
                 openSongRef.current?.click();
                 close();
               }}
-              disabled={songIo.busy}
-              title="Open a saved song bundle (.zip)"
+              title="Queue a saved song bundle (.zip)"
               testId="open-song"
             />
             <ActionMenuItem
@@ -412,16 +441,16 @@ const Toolbar = observer(function Toolbar() {
         {(close) => (
           <>
             <ActionMenuItem
-              label="Load audio"
+              label="Add audio file to queue"
               onClick={() => {
                 fileRef.current?.click();
                 close();
               }}
-              title="Load a local audio file (auto-separates into stems)"
+              title="Queue a local audio file (auto-separates into stems)"
               testId="load-audio"
             />
             <ActionMenuItem
-              label="Add from streaming"
+              label="Add from streaming to queue"
               onClick={() => {
                 musicPresenter.openSearch();
                 close();
@@ -470,11 +499,19 @@ const Toolbar = observer(function Toolbar() {
         )}
       </DropdownButton>
       <ViewMenu />
-      <input ref={fileRef} type="file" accept="audio/*" className={styles.hiddenInput} onChange={onPickAudio} />
+      <input
+        ref={fileRef}
+        type="file"
+        accept="audio/*"
+        multiple
+        className={styles.hiddenInput}
+        onChange={onPickAudio}
+      />
       <input
         ref={openSongRef}
         type="file"
         accept=".zip,application/zip"
+        multiple
         className={styles.hiddenInput}
         onChange={onPickSong}
       />
@@ -485,26 +522,15 @@ const Toolbar = observer(function Toolbar() {
         </div>
       )}
       <span className={styles.toolbarSpacer} />
-      {songIo.phase === 'separating' && (
-        <span className={styles.toolStatus} data-testid="separating-status">
-          Separating stems…
-        </span>
-      )}
-      {lyricsStatusLabel(lyricsAlign.lyricsStatusPhase) && (
+      {lyricsAlign.lyricsAlignBusyPhase !== 'idle' && (
         <span className={styles.toolStatus} data-testid="lyrics-status">
-          {lyricsStatusLabel(lyricsAlign.lyricsStatusPhase)}
+          Aligning lyrics…
         </span>
       )}
-      {songIo.analyzingBeats ? (
-        <span className={styles.toolStatus} data-testid="beats-status">
-          Analysing beats…
+      {beats.analysis && (
+        <span className={styles.toolStatus} data-testid="beats-readout">
+          {formatBeatSummary(beats.analysis)}
         </span>
-      ) : (
-        beats.analysis && (
-          <span className={styles.toolStatus} data-testid="beats-readout">
-            {formatBeatSummary(beats.analysis)}
-          </span>
-        )
       )}
       <button
         type="button"
@@ -516,22 +542,10 @@ const Toolbar = observer(function Toolbar() {
       >
         <Settings size={14} aria-hidden="true" />
       </button>
+      <QueueButtons className={styles.toolButton} />
     </header>
   );
 });
-
-/** Toolbar pill label for the combined lyrics status; undefined = no pill. */
-function lyricsStatusLabel(phase: 'idle' | 'searching' | 'queued' | 'aligning'): string | undefined {
-  switch (phase) {
-    case 'searching':
-      return 'Searching for lyrics…';
-    case 'queued':
-    case 'aligning':
-      return 'Aligning lyrics…';
-    case 'idle':
-      return undefined;
-  }
-}
 
 /** A dropdown-trigger label: text + a trailing caret, so the header menus read
  *  as openable menus. */

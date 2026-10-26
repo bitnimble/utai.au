@@ -4,7 +4,7 @@ import { makeWav } from 'src/testing/wav';
 
 type UtaiWindow = {
   utai?: {
-    playbackEngine?: { currentTime?: number };
+    playbackEngine?: { currentTime?: number; state?: string };
     viewport?: { pxPerBeat?: number };
     presenter?: { setZoom?: (px: number) => void };
     lyricsStore?: {
@@ -16,14 +16,24 @@ type UtaiWindow = {
   };
 };
 
-async function loadTrackAndZoom(page: Page): Promise<void> {
+/** Queue a track and stop the auto-play once it starts, leaving it idle at 0. */
+async function loadIdleTrack(page: Page): Promise<void> {
   await page.goto('/');
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',
     buffer: makeWav(20),
   });
-  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as UtaiWindow).utai?.playbackEngine?.state), {
+      timeout: 15_000,
+    })
+    .toBe('playing');
+  await page.getByTestId('transport-stop').click();
+}
+
+async function loadTrackAndZoom(page: Page): Promise<void> {
+  await loadIdleTrack(page);
   // Zoom in so the playhead crosses a screenful within a second or two.
   await page.evaluate(() => (window as unknown as UtaiWindow).utai?.presenter?.setZoom?.(600));
 }
@@ -82,13 +92,7 @@ test('autoscroll: center pins the playhead near the viewport centre; off leaves 
 });
 
 test('autoscroll: line centres the current lyric line and fits its zoom', async ({ page }) => {
-  await page.goto('/');
-  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
-    name: 'silence.wav',
-    mimeType: 'audio/wav',
-    buffer: makeWav(20),
-  });
-  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await loadIdleTrack(page);
 
   await page.evaluate(() => {
     (window as unknown as UtaiWindow).utai?.lyricsStore?.add(
