@@ -6,6 +6,6 @@ Licensed under Creative Commons Attribution-ShareAlike (CC BY-SA),
 the same licence as JMdict. © James William Breen and the
 Electronic Dictionary Research and Development Group.
 
-Only all-kanji headwords are kept, re-expressed as
+Only headwords containing kanji are kept, re-expressed as
 `surface|<utf16len>,<reading>;...`. Regenerate with
 scripts/build-furigana-dict.ts.

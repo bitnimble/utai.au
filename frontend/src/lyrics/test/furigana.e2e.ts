@@ -28,6 +28,7 @@ async function loadJapaneseSong(page: Page): Promise<void> {
         { startSec: 5, text: '書き散らしていく' },
         { startSec: 9, text: '君と二人で行った' },
         { startSec: 13, text: '笑わないで' },
+        { startSec: 15, text: '嗤ってきた奴ら' },
       ],
       { source: 'plaintext', sourceLabel: 'probe' },
     ),
@@ -53,6 +54,7 @@ test('romaji: View option adds romaji under the lyrics in both views', async ({ 
   await page.keyboard.press('Escape');
   await expect(romaji('lyrics-line-0')).toHaveText(['hontou', 'ni'], DICT_TIMEOUT);
   await expect(romaji('lyrics-line-2')).toHaveText(['kimi to futari de itta'], DICT_TIMEOUT);
+  await expect(romaji('lyrics-line-4')).toHaveText(['waratte kita yatsura'], DICT_TIMEOUT);
 
   await page.getByTestId('view-menu').click();
   await page.getByTestId('view-mode-karaoke').click();
@@ -65,6 +67,7 @@ test('furigana: reads numeral + counter compounds, 行った, and okurigana that
   await loadJapaneseSong(page);
   await expect(page.getByTestId('lyrics-line-2').locator('rt')).toHaveText(['きみ', 'ふたり', 'い'], DICT_TIMEOUT);
   await expect(page.getByTestId('lyrics-line-3').locator('rt')).toHaveText(['わら'], DICT_TIMEOUT);
+  await expect(page.getByTestId('lyrics-line-4').locator('rt')).toHaveText(['わら', 'やつ'], DICT_TIMEOUT);
 });
 
 test('furigana: karaoke view annotates word-aligned and line-level lyrics', async ({ page }) => {

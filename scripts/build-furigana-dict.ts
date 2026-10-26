@@ -5,15 +5,16 @@
  * `JmdictFurigana.txt`). That file maps every JMdict headword to its
  * per-character ruby segmentation. The annotator uses it to split a
  * compound kanji reading across chips the aligner cut it into (盲目的 →
- * 盲/もう 目/もく 的/てき), and to read numeral + counter compounds that
- * kuromoji tokenizes apart (二人 → ふたり, 一回 → いっかい). See
+ * 盲/もう 目/もく 的/てき), to read numeral + counter compounds that
+ * kuromoji tokenizes apart (二人 → ふたり, 一回 → いっかい), and to read
+ * kanji kuromoji's dictionary lacks (嗤う → 嗤/わら). See
  * `frontend/src/lyrics/furigana.ts`.
  *
- * Only all-kanji surfaces are kept (okurigana words are already handled by
- * the kana-anchored fitter). Rows keep the source order within a surface:
- * JMdict lists a word's primary reading first. The spans are re-expressed
- * as ordered `<utf16-len>,<reading>` pairs that tile the surface, so the
- * runtime loader never has to reason about code-point vs UTF-16 indices.
+ * Every surface containing a kanji is kept. Rows keep the source order
+ * within a surface: JMdict lists a word's primary reading first. The spans
+ * are re-expressed as ordered `<utf16-len>,<reading>` pairs that tile the
+ * surface, okurigana as a pair with an empty reading, so the runtime loader
+ * never has to reason about code-point vs UTF-16 indices.
  *
  * Output: `frontend/public/jmdict-furigana/furigana.txt.gz`, committed
  * (JmdictFurigana isn't an npm dep, so unlike the kuromoji dict it can't be
@@ -44,12 +45,12 @@ function isKanjiCp(cp: number): boolean {
   );
 }
 
-function allKanji(s: string): boolean {
+function hasKanji(s: string): boolean {
   for (const ch of s) {
     const cp = ch.codePointAt(0);
-    if (cp === undefined || !isKanjiCp(cp)) return false;
+    if (cp !== undefined && isKanjiCp(cp)) return true;
   }
-  return s.length > 0;
+  return false;
 }
 
 /** Parse one `start[-end]:reading` span; returns inclusive code-point indices,
@@ -88,7 +89,7 @@ function main(): void {
     scanned++;
     const [surface, _kana, furi] = line.split('|');
     if (!surface || !furi) continue;
-    if (!allKanji(surface)) continue;
+    if (!hasKanji(surface)) continue;
 
     const spans = furi.split(';').map(parseSpan);
     if (spans.some((s) => s === null)) continue;
@@ -99,21 +100,30 @@ function main(): void {
     // lengths are UTF-16 units, matching runtime.
     const cps = Array.from(surface);
     valid.sort((a, b) => a.start - b.start);
-    // Spans must tile [0, cps.length) with no gaps/overlaps; otherwise we
-    // can't unambiguously re-derive the bases, so skip the entry.
+    // Spans cover the kanji; the gaps between them are okurigana, emitted as
+    // bare (reading-less) pairs. A kanji left in a gap, or overlapping spans,
+    // can't be re-derived unambiguously, so skip the entry.
     let cursor = 0;
     let ok = true;
     const pairs: string[] = [];
+    const pushGap = (end: number): void => {
+      if (end <= cursor) return;
+      const gap = cps.slice(cursor, end).join('');
+      if (hasKanji(gap)) ok = false;
+      pairs.push(`${gap.length},`);
+    };
     for (const s of valid) {
-      if (s.start !== cursor || s.end >= cps.length) {
+      if (s.start < cursor || s.end >= cps.length) {
         ok = false;
         break;
       }
+      pushGap(s.start);
       const base = cps.slice(s.start, s.end + 1).join('');
       pairs.push(`${base.length},${s.reading}`);
       cursor = s.end + 1;
     }
-    if (!ok || cursor !== cps.length) continue;
+    pushGap(cps.length);
+    if (!ok) continue;
 
     outLines.push({ surface, line: `${surface}|${pairs.join(';')}` });
     kept++;
@@ -138,7 +148,7 @@ function main(): void {
       'the same licence as JMdict. © James William Breen and the',
       'Electronic Dictionary Research and Development Group.',
       '',
-      'Only all-kanji headwords are kept, re-expressed as',
+      'Only headwords containing kanji are kept, re-expressed as',
       '`surface|<utf16len>,<reading>;...`. Regenerate with',
       'scripts/build-furigana-dict.ts.',
       '',

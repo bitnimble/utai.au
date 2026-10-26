@@ -36,10 +36,7 @@
  */
 import type { IpadicFeatures, Tokenizer } from '@sglkc/kuromoji';
 import { makeAutoObservable, runInAction } from 'mobx';
-import {
-  loadFuriganaSplitMap,
-  type FuriganaSplitMap,
-} from './jmdict_furigana_loader';
+import { loadFuriganaDict, type FuriganaDict } from './jmdict_furigana_loader';
 import { hasKana, isKanjiCp, toHiragana } from './kana';
 import { kanaToRomaji } from './romaji';
 
@@ -288,36 +285,51 @@ export type RomajiWord = { start: number; end: number; romaji: string };
 
 export type Annotation = { segments: RubySegment[]; romaji: RomajiWord[] };
 
+/** Dictionary readings {@link annotateTokens} falls back on where kuromoji's
+ *  own are wrong or missing. */
+export type ReadingSource = {
+  /** The primary reading of a whole surface, split across its kanji. */
+  primaryReading(surface: string): RubySegment[] | null;
+  /** A reading for a kanji run kuromoji couldn't read; `stem` when it's read
+   *  as a verb / adjective stem (嗤 in 嗤って). */
+  kanjiReading(run: string, followedByKana: boolean): { reading: string; stem: boolean } | null;
+};
+
 /**
  * Annotate a tokenized line with furigana and romaji. A numeral + counter
  * run (IPADIC splits 二人 into 二 + 人 and reads each alone: ににん) is read
- * as one word via `primaryReading`, the dictionary's primary reading for a
- * surface (ふたり), falling back to the per-token readings when it has none.
- * Tokens with no usable reading (out-of-dictionary, `'*'`) fall through as
- * bare text. Romaji is one entry per word, with inflections and auxiliaries
- * joined onto the word they follow (行っ + た → itta).
+ * as one word via the dictionary's primary reading for the surface (ふたり),
+ * falling back to the per-token readings when it has none. Kanji kuromoji
+ * can't read (嗤) take a dictionary reading, or stay bare. Romaji is one entry
+ * per word, with inflections and auxiliaries joined onto the word they follow
+ * (行っ + た → itta).
  */
-export function annotateTokens(
-  tokens: readonly FuriganaToken[],
-  primaryReading: (surface: string) => RubySegment[] | null,
-): Annotation {
+export function annotateTokens(tokens: readonly FuriganaToken[], dict: ReadingSource): Annotation {
   const segs: RubySegment[] = [];
   const words: { start: number; end: number; kana: string }[] = [];
   let offset = 0;
+  let afterStem = false;
   for (let i = 0; i < tokens.length; i++) {
     const end = numeralCounterEnd(tokens, i) ?? i;
     const run = tokens.slice(i, end + 1);
     const surface = run.map((t) => t.surface_form).join('');
-    const whole = end > i ? primaryReading(surface) : null;
-    segs.push(...(whole ?? run.flatMap(tokenSegments)));
-    const kana = whole ? whole.map((s) => s.reading ?? s.base).join('') : run.map(tokenKana).join('');
+    const whole = end > i ? dict.primaryReading(surface) : null;
+    const unread = end === i && tokenReading(run[0]) == null && hasKanji(surface);
+    const resolved = unread ? readUnknownKanji(surface, tokens[i + 1]?.surface_form ?? '', dict) : undefined;
+    const runSegs = whole ?? resolved?.segments ?? run.flatMap(tokenSegments);
+    segs.push(...runSegs);
+    const kana = whole || resolved ? runSegs.map((s) => s.reading ?? s.base).join('') : run.map(tokenKana).join('');
     const prev = words[words.length - 1];
     offset += surface.length;
-    if (prev != null && gluesToPrevious(run[0])) {
+    // kuromoji misparses the ending after a stem it couldn't read (嗤 + って as a particle).
+    const glues = gluesToPrevious(run[0]) || (afterStem && (run[0].pos === '助詞' || run[0].pos === '助動詞'));
+    afterStem = false;
+    if (prev != null && glues) {
       prev.kana += kana;
       prev.end = offset;
     } else if (run[0].pos !== '記号') {
       words.push({ start: offset - surface.length, end: offset, kana });
+      afterStem = resolved?.stem ?? false;
     }
     i = end;
   }
@@ -325,6 +337,31 @@ export function annotateTokens(
     segments: mergeBareRuns(segs),
     romaji: words.map((w) => ({ start: w.start, end: w.end, romaji: kanaToRomaji(w.kana) })),
   };
+}
+
+/** Segments for a token kuromoji has no reading for, each kanji run read from
+ *  the dictionary where it can be. `stem` when any run read as a stem. */
+function readUnknownKanji(
+  surface: string,
+  following: string,
+  dict: ReadingSource,
+): { segments: RubySegment[]; stem: boolean } {
+  const chars = Array.from(surface + following);
+  const segments: RubySegment[] = [];
+  let stem = false;
+  let i = 0;
+  const surfaceLen = Array.from(surface).length;
+  while (i < surfaceLen) {
+    const kanji = isKanjiCp(chars[i].codePointAt(0)!);
+    let j = i;
+    while (j < surfaceLen && isKanjiCp(chars[j].codePointAt(0)!) === kanji) j++;
+    const base = chars.slice(i, j).join('');
+    const found = kanji ? dict.kanjiReading(base, chars[j] != null && hasKana(chars[j])) : null;
+    if (found) stem ||= found.stem;
+    segments.push(found ? { base, reading: found.reading } : { base });
+    i = j;
+  }
+  return { segments, stem };
 }
 
 function gluesToPrevious(t: FuriganaToken): boolean {
@@ -378,13 +415,37 @@ async function buildTokenizer(): Promise<Tokenizer<IpadicFeatures>> {
   return buildBrowserTokenizer(`${base}kuromoji-dict`);
 }
 
-/** URL of the per-kanji split table, served from `public/` and honouring
- *  Vite's base URL (same pattern as the kuromoji dict path). */
-function furiganaSplitsUrl(): string {
+/** URL of the furigana table, served from `public/` and honouring Vite's
+ *  base URL (same pattern as the kuromoji dict path). */
+function furiganaDictUrl(): string {
   const base =
     (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ??
     '/';
   return `${base}jmdict-furigana/furigana.txt.gz`;
+}
+
+/** A reading for a kanji run kuromoji couldn't read. Followed by kana, the
+ *  run is most likely a verb / adjective stem (嗤って → わら); otherwise a
+ *  word of its own, or read kanji by kanji. */
+export function readKanjiRun(
+  dict: FuriganaDict,
+  run: string,
+  followedByKana: boolean,
+): { reading: string; stem: boolean } | null {
+  const leading = dict.leading.get(run);
+  const asStem = leading?.okurigana != null ? { reading: leading.okurigana, stem: true } : null;
+  const asWord = leading?.whole != null ? { reading: leading.whole, stem: false } : readKanjiByKanji(dict, run);
+  return followedByKana ? (asStem ?? asWord) : (asWord ?? asStem);
+}
+
+function readKanjiByKanji(dict: FuriganaDict, run: string): { reading: string; stem: false } | null {
+  let reading = '';
+  for (const ch of run) {
+    const r = dict.leading.get(ch)?.whole ?? dict.compoundFirst.get(ch);
+    if (r == null) return null;
+    reading += r;
+  }
+  return { reading, stem: false };
 }
 
 /**
@@ -407,28 +468,29 @@ class FuriganaAnnotator {
   private pending = new Set<string>();
   private tokenizerPromise: Promise<Tokenizer<IpadicFeatures>> | undefined;
   /** JmdictFurigana table, loaded lazily the first time a compound straddles
-   *  a chip boundary or a line has a numeral + counter. Absent until then. */
-  private furiganaSplits: FuriganaSplitMap | undefined;
-  private furiganaSplitsPromise: Promise<FuriganaSplitMap> | undefined;
+   *  a chip boundary or a line has a numeral + counter or a kanji kuromoji
+   *  can't read. Absent until then. */
+  private furiganaDict: FuriganaDict | undefined;
+  private furiganaDictPromise: Promise<FuriganaDict> | undefined;
 
   constructor() {
     // Private fields must be named in the generic so MobX leaves them
     // unobserved (the cache + pending set + builder/loader promises +
-    // split table are plumbing, not reactive state; reactivity is the
+    // table are plumbing, not reactive state; reactivity is the
     // `revision` counter).
     makeAutoObservable<
       FuriganaAnnotator,
       | 'cache'
       | 'pending'
       | 'tokenizerPromise'
-      | 'furiganaSplits'
-      | 'furiganaSplitsPromise'
+      | 'furiganaDict'
+      | 'furiganaDictPromise'
     >(this, {
       cache: false,
       pending: false,
       tokenizerPromise: false,
-      furiganaSplits: false,
-      furiganaSplitsPromise: false,
+      furiganaDict: false,
+      furiganaDictPromise: false,
     });
   }
 
@@ -510,7 +572,7 @@ class FuriganaAnnotator {
     });
     // Lazy-load the split table on first straddle so the next render can
     // divide the compound instead of leaning on the standalone fallback.
-    if (straddled) this.ensureFuriganaSplitsLoaded();
+    if (straddled) this.ensureFuriganaDictLoaded();
     return out;
   }
 
@@ -520,30 +582,30 @@ class FuriganaAnnotator {
    *  drifts in spelling (long vowels, small kana); homographs must match
    *  the reading exactly. */
   private lookupSplit(base: string, reading: string): RubySegment[] | null {
-    const entries = this.furiganaSplits?.get(base);
+    const entries = this.furiganaDict?.splits.get(base);
     if (!entries || entries.length === 0) return null;
     if (entries.length === 1) return entries[0].segs;
     const hit = entries.find((e) => e.reading === reading);
     return hit ? hit.segs : null;
   }
 
-  /** Kick off the one-time fetch + parse of the split table. Idempotent; on
-   *  success bumps `revision` so in-place renders re-split. A failure clears
-   *  the promise so a later straddle can retry. */
-  private ensureFuriganaSplitsLoaded(): void {
-    if (this.furiganaSplitsPromise || this.furiganaSplits) return;
-    this.furiganaSplitsPromise = loadFuriganaSplitMap(furiganaSplitsUrl());
-    void this.furiganaSplitsPromise
-      .then(async (map) => {
+  /** Kick off the one-time fetch + parse of the table. Idempotent; on
+   *  success re-annotates the cached lines in place and bumps `revision`. A
+   *  failure clears the promise so a later request can retry. */
+  private ensureFuriganaDictLoaded(): void {
+    if (this.furiganaDictPromise || this.furiganaDict) return;
+    this.furiganaDictPromise = loadFuriganaDict(furiganaDictUrl());
+    void this.furiganaDictPromise
+      .then(async (dict) => {
         const tokenizer = await this.ensureLoaded();
         runInAction(() => {
-          this.furiganaSplits = map;
+          this.furiganaDict = dict;
           for (const text of this.cache.keys()) this.cache.set(text, this.annotate(tokenizer, text));
           this.revision++;
         });
       })
       .catch(() => {
-        this.furiganaSplitsPromise = undefined;
+        this.furiganaDictPromise = undefined;
       });
   }
 
@@ -568,12 +630,16 @@ class FuriganaAnnotator {
   }
 
   private annotate(tokenizer: Tokenizer<IpadicFeatures>, text: string): Annotation {
-    return annotateTokens(tokenizer.tokenize(text), (surface) => {
-      if (this.furiganaSplits == null) {
-        this.ensureFuriganaSplitsLoaded();
-        return null;
-      }
-      return this.furiganaSplits.get(surface)?.[0]?.segs ?? null;
+    const loaded = (): FuriganaDict | undefined => {
+      if (this.furiganaDict == null) this.ensureFuriganaDictLoaded();
+      return this.furiganaDict;
+    };
+    return annotateTokens(tokenizer.tokenize(text), {
+      primaryReading: (surface) => loaded()?.splits.get(surface)?.[0]?.segs ?? null,
+      kanjiReading: (run, followedByKana) => {
+        const dict = loaded();
+        return dict ? readKanjiRun(dict, run, followedByKana) : null;
+      },
     });
   }
 
