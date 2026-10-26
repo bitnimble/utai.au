@@ -93,7 +93,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     const isActive = playhead.activeLineIdx === idx;
     const activeWordIdx = isActive ? playhead.activeWordIdx : undefined;
     const activeWordEnded = isActive && playhead.activeWordEnded;
-    const oneLineWidthPx = twoLines ? lineWidthPx : undefined;
+    const oneLineWidthPx = twoLines && lineWidthPx > 0 ? lineWidthPx : undefined;
     const baseFontSizePx = karaokeFontSizePx(widthPx);
     return appSettingsStore.karaokeShowPitch && line.words?.length && lineWidthPx > 0 ? (
       <PitchedKaraokeLine

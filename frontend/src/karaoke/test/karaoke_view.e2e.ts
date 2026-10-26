@@ -188,24 +188,24 @@ test('karaoke "Show 2 lines" shrinks a long line to fit its slot unwrapped', asy
   await page.getByTestId('karaoke-two-lines').click();
   await page.keyboard.press('Escape');
 
-  const fit = (slot: string) =>
-    page.getByTestId(slot).getByTestId('karaoke-line').evaluate((p) => {
-      const overlay = p.closest('[data-testid="karaoke-lyrics"]')!.getBoundingClientRect();
-      const r = p.getBoundingClientRect();
-      const tops = Array.from(p.querySelectorAll('span')).flatMap((s) =>
+  await expect(page.getByTestId('karaoke-slot-bottom')).toContainText('a much longer line');
+  const fit = () =>
+    page.getByTestId('karaoke-lyrics').evaluate((overlay) => {
+      const line = (slot: string): HTMLElement =>
+        overlay.querySelector(`[data-testid="${slot}"] [data-testid="karaoke-line"]`)!;
+      const [short, long] = [line('karaoke-slot-top'), line('karaoke-slot-bottom')];
+      const tops = Array.from(long.querySelectorAll('span')).flatMap((s) =>
         Array.from(s.getClientRects()).map((rect) => Math.round(rect.top)),
       );
+      const slotPx = long.parentElement!.clientWidth * 0.75;
       return {
-        lines: new Set(tops).size,
-        fontPx: parseFloat(getComputedStyle(p).fontSize),
-        withinOverlay: r.left >= overlay.left - 1 && r.right <= overlay.right + 1 && p.scrollWidth <= p.clientWidth + 1,
+        oneRow: new Set(tops).size === 1,
+        unclipped: long.scrollWidth <= long.clientWidth + 1,
+        fillsSlot: long.getBoundingClientRect().width >= slotPx * 0.9,
+        shrunk: parseFloat(getComputedStyle(long).fontSize) < parseFloat(getComputedStyle(short).fontSize),
       };
     });
-  await expect(page.getByTestId('karaoke-slot-bottom')).toContainText('a much longer line');
-  const [short, long] = [await fit('karaoke-slot-top'), await fit('karaoke-slot-bottom')];
-  expect(long.lines).toBe(1);
-  expect(long.withinOverlay).toBe(true);
-  expect(long.fontPx).toBeLessThan(short.fontPx);
+  await expect.poll(fit).toEqual({ oneRow: true, unclipped: true, fillsSlot: true, shrunk: true });
 });
 
 test('karaoke view flags a song with no lyrics', async ({ page }) => {
@@ -213,6 +213,7 @@ test('karaoke view flags a song with no lyrics', async ({ page }) => {
   await page.getByTestId('view-menu').click();
   await page.getByTestId('view-mode-karaoke').click();
   await page.keyboard.press('Escape');
+  await expect(page.getByTestId('karaoke-lyrics')).toBeAttached();
   await expect(page.getByTestId('karaoke-no-lyrics')).toHaveCount(0);
 
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({

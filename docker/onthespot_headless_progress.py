@@ -21,9 +21,10 @@ chunk_re = re.compile(
     re.M,
 )
 src, chunk_sites = chunk_re.subn(
-    r'''\1item['progress'] = min(98, \3)\n\1if self.gui:\n\2self.progress.emit(item, self.tr("Downloading"), \3)''',
+    r'''\1if total_size:\n\2item['progress'] = min(98, \3)\n\1if self.gui:\n\2self.progress.emit(item, self.tr("Downloading"), \3)''',
     src,
 )
+chunk_emits = src.count('self.progress.emit(item, self.tr("Downloading"), int((downloaded / total_size) * 100))')
 
 hook_re = re.compile(
     r"^([ \t]*)if self\.gui:\n[ \t]*ydl_opts\['progress_hooks'\] = \[lambda d: self\.yt_dlp_progress_hook\(item, d\)\]$",
@@ -33,6 +34,7 @@ src, hook_sites = hook_re.subn(
     r"\1ydl_opts['progress_hooks'] = [lambda d: self.yt_dlp_progress_hook(item, d) if self.gui else _headless_ytdlp_progress(item, d)]",
     src,
 )
+unpatched_hooks = src.count("ydl_opts['progress_hooks'] = [lambda d: self.yt_dlp_progress_hook(item, d)]")
 
 src += '''
 
@@ -44,7 +46,10 @@ def _headless_ytdlp_progress(item, d):
         item['progress'] = min(98, int(d.get('downloaded_bytes', 0) * 100 / total))
 '''
 
-if chunk_sites == 0 or hook_sites == 0:
-    sys.exit(f"onthespot progress patch no longer applies (chunk sites {chunk_sites}, yt-dlp hook sites {hook_sites})")
+if chunk_sites == 0 or hook_sites == 0 or chunk_emits != chunk_sites or unpatched_hooks:
+    sys.exit(
+        f"onthespot progress patch no longer applies (patched {chunk_sites} of {chunk_emits} chunk sites, "
+        f"{hook_sites} yt-dlp hook sites with {unpatched_hooks} left over)"
+    )
 open(path, "w", encoding="utf-8").write(src)
 print(f"patched {chunk_sites} chunk sites, {hook_sites} yt-dlp hook sites")

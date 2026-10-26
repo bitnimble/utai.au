@@ -67,6 +67,8 @@ export class SongIoPresenter {
       this.busy = true;
     });
     try {
+      // before the stems: karaoke view flags "No lyrics loaded" for audio without lyrics
+      for (const track of prepared.lyrics) this.lyrics.loadLyricsTrack(track);
       for (const stem of prepared.stems) {
         const id = await this.karaoke.loadAudioFile(stem.file, stem.role);
         if (id == null) continue;
@@ -74,7 +76,6 @@ export class SongIoPresenter {
         if (stem.role === 'vocals') this.karaoke.setTrackMuted(id, true);
       }
       this.karaoke.updateSongMeta(prepared.meta);
-      for (const track of prepared.lyrics) this.lyrics.loadLyricsTrack(track);
       runInAction(() => {
         this.beats.analysis = prepared.beats;
       });
