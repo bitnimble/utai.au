@@ -1,4 +1,23 @@
-import { isBlankLyricLine, LyricLine } from 'src/lyrics/lrc';
+import { activeLineIndexAt, isBlankLyricLine, lineSpanSec, LyricLine } from 'src/lyrics/lrc';
+
+export const LINE_LEAD_IN_SEC = 3;
+export const LINE_HOLD_SEC = 0.5;
+
+/** The line to display at `audioTimeSec`: the active line until shortly after
+ *  its last word, then the next line once it's within the lead-in; nothing
+ *  through intros and instrumental gaps. */
+export function shownLineIdx(
+  lines: readonly LyricLine[],
+  audioTimeSec: number,
+  offsetSec: number,
+): number | undefined {
+  const t = audioTimeSec - offsetSec;
+  const active = activeLineIndexAt(lines, audioTimeSec, offsetSec);
+  if (active != null && t < lineSpanSec(lines, active).endSec + LINE_HOLD_SEC) return active;
+  const next = nextVocalLineIdx(lines, active);
+  if (next != null && lineSpanSec(lines, next).startSec - t <= LINE_LEAD_IN_SEC) return next;
+  return undefined;
+}
 
 export type WordState = 'sung' | 'current' | 'upcoming';
 

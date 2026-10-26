@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { lineSegments, nextVocalLineIdx, wordState } from '../karaoke_lyrics';
+import { lineSegments, nextVocalLineIdx, shownLineIdx, wordState } from '../karaoke_lyrics';
 
 const word = (text: string) => ({ startSec: 0, endSec: 0, text });
 
@@ -47,6 +47,37 @@ describe('wordState', () => {
 
   test('the active word turns sung once its end passes', () => {
     expect(wordState(1, 1, true)).toBe('sung');
+  });
+});
+
+describe('shownLineIdx', () => {
+  const timed = (startSec: number, endSec: number, text: string) => ({
+    startSec,
+    text,
+    words: [{ startSec, endSec, text }],
+  });
+  const lines = [timed(20, 22, 'first'), timed(23, 25, 'second'), timed(40, 42, 'after gap')];
+
+  test('hides the first line through the intro until its lead-in', () => {
+    expect(shownLineIdx(lines, 5, 0)).toBe(undefined);
+    expect(shownLineIdx(lines, 16.9, 0)).toBe(undefined);
+    expect(shownLineIdx(lines, 17, 0)).toBe(0);
+  });
+
+  test('shows the active line, then the next once it is within the lead-in', () => {
+    expect(shownLineIdx(lines, 21, 0)).toBe(0);
+    expect(shownLineIdx(lines, 22.6, 0)).toBe(1);
+  });
+
+  test('hides through an instrumental gap', () => {
+    expect(shownLineIdx(lines, 25.2, 0)).toBe(1);
+    expect(shownLineIdx(lines, 30, 0)).toBe(undefined);
+    expect(shownLineIdx(lines, 37, 0)).toBe(2);
+  });
+
+  test('applies the track offset', () => {
+    expect(shownLineIdx(lines, 19, 5)).toBe(undefined);
+    expect(shownLineIdx(lines, 22, 5)).toBe(0);
   });
 });
 

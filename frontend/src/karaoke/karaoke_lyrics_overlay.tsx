@@ -4,7 +4,7 @@ import React from 'react';
 import { playbackEngine } from 'src/editing/playback/player';
 import { activeLineIndexAt, activeWordIndexAt, LyricLine } from 'src/lyrics/lrc';
 import { LyricsTrack, lyricsStore } from 'src/lyrics/store';
-import { lineSegments, nextVocalLineIdx, wordState, WordState } from './karaoke_lyrics';
+import { lineSegments, shownLineIdx, wordState, WordState } from './karaoke_lyrics';
 import styles from './karaoke_lyrics_overlay.module.css';
 
 const WORD_STATE_CLASS: Record<WordState, string> = {
@@ -27,10 +27,9 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
       const t = this.track;
       return t ? activeLineIndexAt(t.lines, this.audioTimeNow, t.offsetSec) : undefined;
     },
-    get shownLineIdx(): number | undefined {
+    get shownIdx(): number | undefined {
       const t = this.track;
-      if (!t) return undefined;
-      return this.activeLineIdx ?? nextVocalLineIdx(t.lines, undefined);
+      return t ? shownLineIdx(t.lines, this.audioTimeNow, t.offsetSec) : undefined;
     },
     get activeWordIdx(): number | undefined {
       const t = this.track;
@@ -50,7 +49,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
   }));
 
   const track = playhead.track;
-  const shownIdx = playhead.shownLineIdx;
+  const shownIdx = playhead.shownIdx;
   if (!track || shownIdx == null) return null;
   const shownIsActive = playhead.activeLineIdx === shownIdx;
   return (

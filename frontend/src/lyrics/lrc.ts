@@ -183,6 +183,27 @@ export function activeLineIndexAt(
   return active;
 }
 
+/** Track-local start/end seconds spanned by one lyric line: the first word's
+ *  start to the last word's end when the line is word-timed, else the line
+ *  stamp to the next line's stamp (a 4 s fallback for the final, word-less
+ *  line). Uses only FINITE word times: the aligner can emit a NaN for a
+ *  held/edge word (e.g. a long-sustained final note). */
+export function lineSpanSec(lines: readonly LyricLine[], idx: number): { startSec: number; endSec: number } {
+  const line = lines[idx];
+  const words = line.words;
+  if (words && words.length > 0) {
+    const starts = words.map((w) => w.startSec).filter(Number.isFinite);
+    const ends = words.map((w) => w.endSec).filter(Number.isFinite);
+    if (starts.length > 0 && ends.length > 0) {
+      return { startSec: Math.min(...starts), endSec: Math.max(...ends) };
+    }
+  }
+  const next = lines[idx + 1];
+  const startSec = Number.isFinite(line.startSec) ? line.startSec : 0;
+  const nextSec = next && Number.isFinite(next.startSec) ? next.startSec : startSec + 4;
+  return { startSec, endSec: nextSec };
+}
+
 /**
  * Index of the word inside `lines[lineIndex]` that the playhead is
  * currently inside (the last word whose `startSec + offsetSec <=

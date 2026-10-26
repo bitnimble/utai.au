@@ -4,7 +4,7 @@ import { ChevronDown, Pause, Play, Settings, Square } from 'lucide-react';
 import React from 'react';
 import { nativeAudioEngine, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
-import { activeLineIndexAt, LyricLine } from 'src/lyrics/lrc';
+import { activeLineIndexAt, lineSpanSec } from 'src/lyrics/lrc';
 import { formatPlayheadTime } from 'src/editing/playback/playhead_label';
 import { AudioTrackView } from 'src/editing/mixer/audio_track_view';
 import { StemMixControls } from 'src/editing/mixer/stem_mix_controls';
@@ -665,28 +665,6 @@ const LINE_SPAN_PAD_FRAC = 0.06;
 /** Cap (seconds) on a followed line's span used for the fit-zoom, so a line
  *  before a long instrumental gap doesn't zoom the whole track out to nothing. */
 const LINE_MAX_SPAN_SEC = 12;
-
-/** Track-local start/end seconds spanned by one lyric line: the first word's
- *  start to the last word's end when the line is word-timed, else the line
- *  stamp to the next line's stamp (a 4 s fallback for the final, word-less
- *  line). Feeds the follow-`line` centre + fit-zoom math. Uses only FINITE word
- *  times, the aligner can emit a NaN for a held/edge word (e.g. a long-sustained
- *  final note), and a NaN span would collapse the whole score. */
-function lineSpanSec(lines: readonly LyricLine[], idx: number): { startSec: number; endSec: number } {
-  const line = lines[idx];
-  const words = line.words;
-  if (words && words.length > 0) {
-    const starts = words.map((w) => w.startSec).filter(Number.isFinite);
-    const ends = words.map((w) => w.endSec).filter(Number.isFinite);
-    if (starts.length > 0 && ends.length > 0) {
-      return { startSec: Math.min(...starts), endSec: Math.max(...ends) };
-    }
-  }
-  const next = lines[idx + 1];
-  const startSec = Number.isFinite(line.startSec) ? line.startSec : 0;
-  const nextSec = next && Number.isFinite(next.startSec) ? next.startSec : startSec + 4;
-  return { startSec, endSec: nextSec };
-}
 
 const TransportBar = observer(function TransportBar() {
   const presenter = React.useContext(KaraokePresenterContext)!;
