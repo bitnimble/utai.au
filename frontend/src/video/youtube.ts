@@ -25,6 +25,11 @@ export function parseYouTubeId(url: string | undefined | null): string | undefin
   return undefined;
 }
 
+/** The song's backing video: its source's, else its music video's. */
+export function songVideoId(song: { sourceUrl?: string; musicVideoUrl?: string }): string | undefined {
+  return parseYouTubeId(song.sourceUrl) ?? parseYouTubeId(song.musicVideoUrl);
+}
+
 function isValidId(id: string): boolean {
   return /^[\w-]{11}$/.test(id);
 }

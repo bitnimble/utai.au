@@ -4,6 +4,8 @@ shape. yt-dlp itself is stubbed (no network); only our glue is exercised."""
 from __future__ import annotations
 
 import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -53,6 +55,34 @@ def test_fetch_video_caches(tmp_path, monkeypatch):
     # Second call is a cache hit: same path, no second download.
     second = video_fetch.fetch_video(vid)
     assert second == first
+    assert calls == [vid]
+
+
+def test_fetch_video_concurrent_calls_share_one_download(tmp_path, monkeypatch):
+    monkeypatch.setattr(video_fetch.settings, "cache_dir", tmp_path)
+    monkeypatch.setattr(video_fetch, "_cache", None)
+
+    calls: list[str] = []
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_download(video_id: str, dest_dir: Path) -> Path:
+        calls.append(video_id)
+        started.set()
+        release.wait(5)
+        produced = dest_dir / f"{video_id}.mp4"
+        produced.write_bytes(b"fake-mp4")
+        return produced
+
+    monkeypatch.setattr(video_fetch, "_download", slow_download)
+
+    vid = "dQw4w9WgXcQ"
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(video_fetch.fetch_video, vid)
+        assert started.wait(5)
+        second = pool.submit(video_fetch.fetch_video, vid)
+        release.set()
+        assert first.result(5) == second.result(5)
     assert calls == [vid]
 
 

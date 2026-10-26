@@ -755,10 +755,11 @@ async def lyrics_stem(stem_id: str, name: str) -> FileResponse:
     )
 
 
-@app.get("/video/{video_id}")
+@app.api_route("/video/{video_id}", methods=["GET", "HEAD"])
 async def get_video(video_id: str) -> FileResponse:
     """Serve the muted backing video for the karaoke page, fetched video-only
-    via yt-dlp on a cache miss.
+    via yt-dlp on a cache miss. HEAD warms the cache without the transfer: the
+    queue issues it while preparing a song so the video is ready at playback.
 
     The YouTube IFrame embed refuses embedding-disabled uploads ("Video
     unavailable"); serving a native `<video>` over a fetched stream sidesteps

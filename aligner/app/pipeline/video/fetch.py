@@ -25,6 +25,7 @@ _VIDEO_ID_RE = re.compile(r"^[\w-]{11}$")
 
 _cache: BlobCache | None = None
 _cache_lock = threading.Lock()
+_fetch_locks: dict[str, threading.Lock] = {}
 
 
 def is_valid_video_id(video_id: str) -> bool:
@@ -56,7 +57,8 @@ def _video_cache() -> BlobCache:
 
 def fetch_video(video_id: str) -> Path:
     """Return a local mp4 of the backing video for `video_id`, downloading it
-    video-only via yt-dlp on a cache miss.
+    video-only via yt-dlp on a cache miss. A call for a video already being
+    downloaded waits for that download rather than starting another.
 
     Raises ValueError for a malformed id and RuntimeError when yt-dlp produces
     no mp4.
@@ -65,13 +67,16 @@ def fetch_video(video_id: str) -> Path:
         raise ValueError(f"invalid YouTube video id: {video_id!r}")
     key = video_cache_key(video_id)
     cache = _video_cache()
-    cached = cache.get(key)
-    if cached is not None:
-        return cached
-    # Stage on the cache's disk: /tmp may be RAM-backed tmpfs, and 4K runs to GBs.
-    with tempfile.TemporaryDirectory(prefix="utai_video_", dir=cache.dir) as tmp:
-        produced = _download(video_id, Path(tmp))
-        return cache.put_path(key, produced)
+    with _cache_lock:
+        fetch_lock = _fetch_locks.setdefault(key, threading.Lock())
+    with fetch_lock:
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        # Stage on the cache's disk: /tmp may be RAM-backed tmpfs, and 4K runs to GBs.
+        with tempfile.TemporaryDirectory(prefix="utai_video_", dir=cache.dir) as tmp:
+            produced = _download(video_id, Path(tmp))
+            return cache.put_path(key, produced)
 
 
 def _download(video_id: str, dest_dir: Path) -> Path:

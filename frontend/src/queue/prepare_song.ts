@@ -25,6 +25,8 @@ import { separateStems, type SeparatedStems } from 'src/lyrics/separate_stems';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import { fetchTrack, type TrackResult } from 'src/net/music_source_client';
 import { toastStore } from 'src/ui/toasts/toasts';
+import { prefetchBackingVideo } from 'src/video/video_client';
+import { songVideoId } from 'src/video/youtube';
 
 export type QueueSource =
   | { kind: 'file'; file: File }
@@ -45,12 +47,33 @@ export type PrepareSong = (source: QueueSource, opts: PrepareOptions) => Promise
 
 export const prepareSong: PrepareSong = async (source, opts) => {
   if (source.kind === 'bundle') {
-    return fromBundle(await unpackSongBundle(new Uint8Array(await source.file.arrayBuffer())));
+    const prepared = fromBundle(await unpackSongBundle(new Uint8Array(await source.file.arrayBuffer())));
+    await warmBackingVideo(prepared.meta, opts.signal);
+    return prepared;
   }
   if (source.kind === 'file') {
     return prepareMix(source.file, {}, undefined, opts);
   }
   const { track } = source;
+  const video = warmBackingVideo({ sourceUrl: track.sourceUrl }, opts.signal);
+  const prepared = await prepareStreaming(track, opts);
+  await video;
+  return prepared;
+};
+
+/** Best-effort: the video area just starts blank (or falls back to the embed)
+ *  when this fails. */
+async function warmBackingVideo(meta: SongMeta, signal: AbortSignal): Promise<void> {
+  const videoId = songVideoId(meta);
+  if (videoId == null) return;
+  try {
+    await prefetchBackingVideo(videoId, { signal });
+  } catch (err) {
+    if (!signal.aborted) console.warn('[video] prefetch failed:', message(err));
+  }
+}
+
+async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promise<PreparedSong> {
   opts.onStage({ kind: 'downloading', frac: 0 });
   const mix = await fetchTrack(track, {
     signal: opts.signal,

@@ -1,6 +1,6 @@
 import { makeAutoObservable } from 'mobx';
 import { SongStore } from 'src/karaoke/song_store';
-import { parseYouTubeId } from './youtube';
+import { songVideoId } from './youtube';
 
 /**
  * Data-only store for the song's embedded video. `videoId` is a reshape of the
@@ -20,7 +20,7 @@ export class VideoStore {
   }
 
   get videoId(): string | undefined {
-    return parseYouTubeId(this.song.sourceUrl) ?? parseYouTubeId(this.song.musicVideoUrl);
+    return songVideoId(this.song);
   }
 
   /** True when the current video should use the YouTube IFrame embed instead of

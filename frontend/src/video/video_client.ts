@@ -7,6 +7,7 @@
  * transport split as the alignment / beats clients, so callers don't branch.
  */
 
+import { backendFetch } from 'src/net/backend_fetch';
 import { fetchVideoSidecar, isSidecarAvailable } from 'src/net/sidecar_transport';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 
@@ -17,5 +18,20 @@ export function resolveBackingVideoUrl(
   opts: ResolveVideoOptions = {},
 ): Promise<string> {
   if (isSidecarAvailable()) return fetchVideoSidecar(videoId, opts);
-  return Promise.resolve(`${appSettingsStore.apiBase}/video/${videoId}`);
+  return Promise.resolve(httpVideoUrl(videoId));
+}
+
+/** Get the backing video downloaded ahead of playback, so the `<video>` starts
+ *  on a cached file. Resolves once it's ready. */
+export async function prefetchBackingVideo(videoId: string, opts: ResolveVideoOptions = {}): Promise<void> {
+  if (isSidecarAvailable()) {
+    await fetchVideoSidecar(videoId, opts);
+    return;
+  }
+  const res = await backendFetch(httpVideoUrl(videoId), { method: 'HEAD', signal: opts.signal }, { silent: true });
+  if (!res.ok) throw new Error(`video prefetch failed (${res.status})`);
+}
+
+function httpVideoUrl(videoId: string): string {
+  return `${appSettingsStore.apiBase}/video/${videoId}`;
 }
