@@ -18,6 +18,7 @@ test('skip segments: offers to skip a SponsorBlock non-music section and seeks p
       ]),
     }),
   );
+  await page.route('**/video/R03cqGg40GU', (route) => route.abort());
   await page.route('https://www.youtube.com/**', (route) => route.abort());
   await page.goto('/');
 
@@ -39,5 +40,5 @@ test('skip segments: offers to skip a SponsorBlock non-music section and seeks p
 
   await expect(skip).toBeHidden();
   const t = await page.evaluate(() => (window as unknown as UtaiWindow).utai?.playbackEngine?.currentTime);
-  expect(t).toBeGreaterThanOrEqual(3);
+  expect(t).toBeCloseTo(3, 3);
 });

@@ -39,9 +39,9 @@ export async function fetchSkipSegments(videoId: string, signal?: AbortSignal): 
 export function parseSkipSegments(json: unknown): SkipSegment[] {
   if (!Array.isArray(json)) return [];
   const out: SkipSegment[] = [];
-  for (const row of json as ApiSegment[]) {
-    if (row?.actionType !== 'skip' || !isSkipCategory(row.category)) continue;
-    const [startSec, endSec] = Array.isArray(row.segment) ? row.segment : [];
+  for (const row of json) {
+    if (!isApiSegment(row) || row.actionType !== 'skip' || !isSkipCategory(row.category)) continue;
+    const [startSec, endSec]: unknown[] = Array.isArray(row.segment) ? row.segment : [];
     if (typeof startSec !== 'number' || typeof endSec !== 'number' || !(endSec > startSec)) continue;
     out.push({
       category: row.category,
@@ -54,12 +54,16 @@ export function parseSkipSegments(json: unknown): SkipSegment[] {
 }
 
 function isSkipCategory(category: unknown): category is SkipCategory {
-  return (SKIP_CATEGORIES as readonly unknown[]).includes(category);
+  return SKIP_CATEGORIES.some((c) => c === category);
+}
+
+function isApiSegment(row: unknown): row is ApiSegment {
+  return typeof row === 'object' && row != null;
 }
 
 type ApiSegment = {
-  category?: string;
-  actionType?: string;
+  category?: unknown;
+  actionType?: unknown;
   segment?: unknown;
-  videoDuration?: number;
+  videoDuration?: unknown;
 };

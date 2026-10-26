@@ -1,4 +1,4 @@
-import { makeAutoObservable } from 'mobx';
+import { makeAutoObservable, observable } from 'mobx';
 import type { PlaybackEngine } from 'src/editing/playback/playback_engine';
 import { SongStore } from 'src/karaoke/song_store';
 import type { SkipSegment } from './sponsorblock';
@@ -17,7 +17,7 @@ export class SkipSegmentsStore {
     private readonly song: SongStore,
     private readonly clock: Pick<PlaybackEngine, 'currentTime'>,
   ) {
-    makeAutoObservable<this, 'song' | 'clock'>(this, { song: false, clock: false });
+    makeAutoObservable<this, 'song' | 'clock'>(this, { song: false, clock: false, segments: observable.ref });
   }
 
   /** Segments only line up with the audio when it's the same cut as the video
@@ -30,8 +30,13 @@ export class SkipSegmentsStore {
     );
   }
 
+  /** The furthest-reaching segment under the playhead, so overlapping rows skip in one click. */
   get activeSegment(): SkipSegment | undefined {
     const t = this.clock.currentTime;
-    return this.applicableSegments.find((s) => t >= s.startSec && t < s.endSec);
+    let active: SkipSegment | undefined;
+    for (const s of this.applicableSegments) {
+      if (t >= s.startSec && t < s.endSec && (active == null || s.endSec > active.endSec)) active = s;
+    }
+    return active;
   }
 }
