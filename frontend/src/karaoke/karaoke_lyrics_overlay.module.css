@@ -42,6 +42,21 @@
     -webkit-text-stroke-color: var(--color-karaoke-outline-current);
 }
 
+/* A word's pitch line (pitch mode) follows its word's state. */
+.overlay [data-word-state] path {
+    stroke: var(--color-karaoke-text);
+    transition: stroke 80ms linear;
+}
+
+.overlay [data-word-state='sung'] path {
+    stroke: var(--color-karaoke-outline-sung);
+}
+
+.overlay [data-word-state='current'] path {
+    stroke: var(--color-karaoke-outline-current);
+    stroke-width: 4;
+}
+
 /* The track view's chips opt back into pointer events; over the video they'd eat its clicks. */
 .overlay .pitchRow * {
     pointer-events: none;

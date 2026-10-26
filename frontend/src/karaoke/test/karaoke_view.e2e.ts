@@ -45,12 +45,15 @@ test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', as
     );
   await expect.poll(states).toEqual(['sung', 'current', 'upcoming']);
 
-  const strokes = await lines.locator('[data-word-state]').evaluateAll((els) =>
-    Object.fromEntries(
-      els.map((e) => [e.getAttribute('data-word-state'), getComputedStyle(e).webkitTextStrokeColor] as const),
-    ),
-  );
-  expect(new Set([strokes.sung, strokes.current, strokes.upcoming]).size).toBe(3);
+  const distinctStrokes = async (): Promise<number> => {
+    const strokes = await lines.locator('[data-word-state]').evaluateAll((els) =>
+      Object.fromEntries(
+        els.map((e) => [e.getAttribute('data-word-state'), getComputedStyle(e).webkitTextStrokeColor] as const),
+      ),
+    );
+    return new Set([strokes.sung, strokes.current, strokes.upcoming]).size;
+  };
+  await expect.poll(distinctStrokes).toBe(3);
 
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(6.2));
   await expect(lines).toHaveText(['next line']);
@@ -103,7 +106,15 @@ test('karaoke "Show lyric pitch" renders the line through the pitched lyric chip
   const tops = await words.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top));
   expect(tops[0]).toBeGreaterThan(tops[1]);
   expect(tops[1]).toBeGreaterThan(tops[2]);
-  expect(await page.getByTestId('karaoke-lyrics').locator('svg').count()).toBeGreaterThan(0);
+  const lineStrokes = (): Promise<(string | null)[]> =>
+    words.evaluateAll((els) =>
+      els.map((e) => {
+        const path = e.querySelector('path');
+        return path ? getComputedStyle(path).stroke : null;
+      }),
+    );
+  await expect.poll(async () => (await lineStrokes()).every((s) => s != null)).toBe(true);
+  await expect.poll(async () => new Set(await lineStrokes()).size).toBe(3);
 
   await page.getByTestId('view-menu').click();
   await page.getByTestId('karaoke-show-pitch').click();
