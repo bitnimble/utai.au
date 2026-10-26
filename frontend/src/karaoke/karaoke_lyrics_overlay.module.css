@@ -49,6 +49,11 @@
 .slotTop > *,
 .slotBottom > * {
     max-width: calc(var(--karaoke-slot-width-frac) * 100%);
+    transition: opacity 150ms linear;
+}
+
+.slotNext > * {
+    opacity: 0.5;
 }
 
 .slotTop .line {

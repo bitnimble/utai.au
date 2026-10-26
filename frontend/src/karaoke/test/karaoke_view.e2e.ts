@@ -155,10 +155,16 @@ test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating sl
   const [topBox, bottomBox] = [await lineBox(top), await lineBox(bottom)];
   expect(topBox.left).toBeLessThan(bottomBox.left);
   expect(topBox.bottom).toBeLessThanOrEqual(bottomBox.top);
+  const opacity = (slot: typeof top) => () =>
+    slot.getByTestId('karaoke-line').evaluate((e) => Number(getComputedStyle(e).opacity));
+  await expect.poll(opacity(top)).toBe(1);
+  await expect.poll(opacity(bottom)).toBeLessThan(1);
 
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(4.2));
   await expect(top).toHaveText('line three');
   await expect(bottom).toHaveText('line two');
+  await expect.poll(opacity(top)).toBeLessThan(1);
+  await expect.poll(opacity(bottom)).toBe(1);
   await expect(bottom.locator('[data-word-state="current"]')).toHaveText('line two');
   await expect(top.locator('[data-word-state]')).toHaveText('line three');
   await expect(top.locator('[data-word-state]')).toHaveAttribute('data-word-state', 'upcoming');

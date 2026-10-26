@@ -144,10 +144,13 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
       style={{ '--karaoke-slot-width-frac': TWO_LINE_WIDTH_FRAC } as React.CSSProperties}
       data-testid="karaoke-lyrics"
     >
-      <div className={styles.slotTop} data-testid="karaoke-slot-top">
+      <div className={classNames(styles.slotTop, !playhead.shownOnTop && styles.slotNext)} data-testid="karaoke-slot-top">
         {lineView(topIdx, slotWidthPx)}
       </div>
-      <div className={styles.slotBottom} data-testid="karaoke-slot-bottom">
+      <div
+        className={classNames(styles.slotBottom, playhead.shownOnTop && styles.slotNext)}
+        data-testid="karaoke-slot-bottom"
+      >
         {lineView(bottomIdx, slotWidthPx)}
       </div>
     </div>
