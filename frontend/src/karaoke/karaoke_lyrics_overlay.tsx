@@ -190,7 +190,7 @@ const TwoLineSlots = observer(function TwoLineSlots({
         return positioned && fitLineToWidth(positioned, slotWidthPx, baseFontSizePx).fontSizePx;
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [lines, topIdx, bottomIdx, slotWidthPx, baseFontSizePx, appSettingsStore.karaokeShowPitch, fontReady, furiganaRevision],
+    [lines, topIdx, bottomIdx, slotWidthPx, baseFontSizePx, appSettingsStore.karaokeShowPitch, appSettingsStore.showRomaji, fontReady, furiganaRevision],
   );
   const fontSizePx = Math.min(
     baseFontSizePx,
@@ -294,10 +294,12 @@ const LineGlyphs = observer(function LineGlyphs({
   activeWordEnded: boolean;
 }) {
   const segments = React.useMemo(() => lineSegments(line), [line]);
-  const ruby = furiganaAnnotator.segmentsForWords(segments.map((s) => s.text));
+  const texts = segments.map((s) => s.text);
+  const ruby = furiganaAnnotator.segmentsForWords(texts);
+  const romaji = appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords(texts) : [];
   return segments.map((s, i) => (
     <span key={i} data-word-state={wordState(s.wordIdx, activeWordIdx, activeWordEnded)}>
-      <RubyText segments={ruby[i]} />
+      <RubyText segments={ruby[i]} romaji={romaji[i]} />
     </span>
   ));
 });
@@ -327,7 +329,7 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
   const fit = React.useMemo(
     () => (positioned ? fitLineToWidth(positioned, widthPx, baseFontSizePx) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [positioned, widthPx, baseFontSizePx, fontReady, furiganaRevision],
+    [positioned, widthPx, baseFontSizePx, fontReady, furiganaRevision, appSettingsStore.showRomaji],
   );
   const pitchPaths = React.useMemo(
     () =>
@@ -400,7 +402,7 @@ function fitLineToWidth(
   widthPx: number,
   baseFontSizePx: number,
 ): { pxPerBeat: number; fontSizePx: number; placements: Map<string, LyricWordPlacement>; rightPx: number } {
-  const input = lyricMeasureInputs([line]);
+  const input = lyricMeasureInputs([line], { romaji: appSettingsStore.showRomaji });
   let pxPerBeat = widthPx / Math.max(MIN_LINE_SPAN_SEC, line.endBeat - line.startBeat);
   let fontSizePx = baseFontSizePx;
   for (let step = 0; ; step++) {

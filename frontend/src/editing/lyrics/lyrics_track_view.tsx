@@ -107,10 +107,12 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // resolution.
   const fontReady = lyricsMeasurer.fontReady;
   const furiganaRevision = furiganaAnnotator.revision;
+  const showRomaji = appSettingsStore.showRomaji;
   const placements = React.useMemo(
-    () => layoutLyricWords(lyricMeasureInputs(positioned), pxPerBeat, lyricsFontSizePx),
+    () =>
+      layoutLyricWords(lyricMeasureInputs(positioned, { romaji: showRomaji }), pxPerBeat, lyricsFontSizePx),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [positioned, pxPerBeat, fontReady, furiganaRevision, lyricsFontSizePx],
+    [positioned, pxPerBeat, fontReady, furiganaRevision, lyricsFontSizePx, showRomaji],
   );
 
   // Per-word pitch-line SVG paths. Re-derived on zoom: the vibrato wavelength

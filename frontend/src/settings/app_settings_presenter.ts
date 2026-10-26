@@ -34,6 +34,7 @@ export class AppSettingsPresenter {
         viewMode: this.settings.viewMode,
         karaokeShowPitch: this.settings.karaokeShowPitch,
         karaokeTwoLines: this.settings.karaokeTwoLines,
+        showRomaji: this.settings.showRomaji,
       });
       try {
         localStorage.setItem(STORAGE_KEY, snapshot);
@@ -69,6 +70,10 @@ export class AppSettingsPresenter {
 
   setKaraokeTwoLines(on: boolean): void {
     this.settings.karaokeTwoLines = on;
+  }
+
+  setShowRomaji(on: boolean): void {
+    this.settings.showRomaji = on;
   }
 
   setLyricsFontSize(px: number): void {
@@ -118,6 +123,9 @@ export class AppSettingsPresenter {
       }
       if (typeof obj.karaokeTwoLines === 'boolean') {
         this.settings.karaokeTwoLines = obj.karaokeTwoLines;
+      }
+      if (typeof obj.showRomaji === 'boolean') {
+        this.settings.showRomaji = obj.showRomaji;
       }
     } catch {
       // corrupt JSON; keep defaults

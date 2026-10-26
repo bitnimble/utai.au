@@ -3,6 +3,7 @@ import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { RubySegment, furiganaAnnotator } from 'src/lyrics/furigana';
 import { LyricWord, wordState, WordState } from 'src/lyrics/lrc';
+import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { ViewportStoreContext } from '../viewport/viewport_contexts';
 import { intersectsBeatRange } from '../utils/windowing';
 import { PositionedLine, PositionedWord } from './lyric_layout';
@@ -237,20 +238,33 @@ const LyricWordChip = observer(
  *  exactly as before. */
 const WordText = observer(
   ({ words, index }: { words: readonly string[]; index: number }) => (
-    <RubyText segments={furiganaAnnotator.segmentsForWords(words)[index] ?? [{ base: words[index] ?? '' }]} />
+    <RubyText
+      segments={furiganaAnnotator.segmentsForWords(words)[index] ?? [{ base: words[index] ?? '' }]}
+      romaji={appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords(words)[index] : undefined}
+    />
   ),
 );
 
 /** A line-level (word-less) chip's text, with furigana over its kanji. */
 const LineText = observer(({ text }: { text: string }) => (
-  <RubyText segments={furiganaAnnotator.segmentsFor(text)} />
+  <RubyText
+    segments={furiganaAnnotator.segmentsFor(text)}
+    romaji={appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords([text])[0] : undefined}
+  />
 ));
 
 /** `segments` as `<ruby>` (reading over each kanji run), or plain text when
- *  none carries a reading. */
-export const RubyText = ({ segments }: { segments: readonly RubySegment[] }): React.ReactNode => {
-  if (!segments.some((s) => s.reading !== undefined)) return segments.map((s) => s.base).join('');
-  return (
+ *  none carries a reading, with `romaji` (when non-empty) under the lot. */
+export const RubyText = ({
+  segments,
+  romaji,
+}: {
+  segments: readonly RubySegment[];
+  romaji?: string;
+}): React.ReactNode => {
+  const text = !segments.some((s) => s.reading !== undefined) ? (
+    segments.map((s) => s.base).join('')
+  ) : (
     <ruby className={styles.ruby}>
       {segments.map((seg, i) => (
         <React.Fragment key={i}>
@@ -258,6 +272,13 @@ export const RubyText = ({ segments }: { segments: readonly RubySegment[] }): Re
           {seg.reading !== undefined && <rt>{seg.reading}</rt>}
         </React.Fragment>
       ))}
+    </ruby>
+  );
+  if (!romaji) return text;
+  return (
+    <ruby className={styles.romajiRuby}>
+      {text}
+      <rt data-romaji>{romaji}</rt>
     </ruby>
   );
 };

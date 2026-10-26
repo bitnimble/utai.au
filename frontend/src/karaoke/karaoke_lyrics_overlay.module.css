@@ -38,6 +38,11 @@
     line-height: 1;
 }
 
+.line rt[data-romaji],
+.rowWidthProbe rt[data-romaji] {
+    padding-top: 0.3em;
+}
+
 .twoLines {
     align-items: stretch;
 }

@@ -169,6 +169,11 @@ class LyricsMeasurer {
     }
     return total;
   }
+
+  /** Width of a ruby annotation (`rt`) over or under text at `fontSizePx`. */
+  measureAnnotationPx(text: string, fontSizePx: number): number {
+    return this.measure(text, fontSizePx * RT_FONT_RATIO, RT_FONT_WEIGHT, RT_WDTH, 0);
+  }
 }
 
 export const lyricsMeasurer = new LyricsMeasurer();
@@ -193,6 +198,8 @@ export type LyricWordMeasureInput = {
    *  drives the wider ruby-aware width measure; absent falls back to
    *  plain base-text measurement. */
   segments?: readonly RubySegment[];
+  /** Romaji rendered under the word, which widens it when longer. */
+  romaji?: string;
 };
 
 export type LyricLineMeasureInput = {
@@ -251,12 +258,13 @@ export function layoutLyricWords(
     const words = line.words
       .map((w) => {
         const hasRuby = w.segments?.some((s) => s.reading != null) ?? false;
+        const textPx = hasRuby
+          ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, true, fontSizePx)
+          : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, true, fontSizePx);
         return {
           key: lyricWordKey(line.lineIdx, w.sourceIdx),
           natural: (line.lineStartBeat + w.beatOffset) * pxPerBeat,
-          width: hasRuby
-            ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, true, fontSizePx)
-            : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, true, fontSizePx),
+          width: w.romaji ? Math.max(textPx, lyricsMeasurer.measureAnnotationPx(w.romaji, fontSizePx)) : textPx,
           cellPx: w.beatWidth * pxPerBeat,
           text: w.text,
         };
@@ -299,12 +307,18 @@ export function sustainSpan(textPx: number, cellPx: number, roomPx: number): Sus
   return toPx - fromPx >= MIN_SUSTAIN_PX ? { fromPx, toPx, cellPx } : undefined;
 }
 
-/** Measure inputs for every line, with furigana segmentation. A line without
- *  word timings has no words but still bounds the line before it. */
-export function lyricMeasureInputs(positioned: readonly PositionedLine[]): LyricLineMeasureInput[] {
+/** Measure inputs for every line, with furigana segmentation (and romaji when
+ *  shown). A line without word timings has no words but still bounds the line
+ *  before it. */
+export function lyricMeasureInputs(
+  positioned: readonly PositionedLine[],
+  opts: { romaji: boolean },
+): LyricLineMeasureInput[] {
   return positioned.map((p) => {
     const wp = p.wordPositions ?? [];
-    const lineSegs = furiganaAnnotator.segmentsForWords(wp.map((w) => w.text));
+    const texts = wp.map((w) => w.text);
+    const lineSegs = furiganaAnnotator.segmentsForWords(texts);
+    const romaji = opts.romaji ? furiganaAnnotator.romajiForWords(texts) : [];
     return {
       lineIdx: p.i,
       lineStartBeat: p.startBeat,
@@ -314,6 +328,7 @@ export function lyricMeasureInputs(positioned: readonly PositionedLine[]): Lyric
         beatOffset: w.beatOffset,
         beatWidth: w.beatWidth,
         segments: lineSegs[j],
+        romaji: romaji[j],
       })),
     };
   });

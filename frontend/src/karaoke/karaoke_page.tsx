@@ -809,6 +809,14 @@ const ViewMenu = observer(function ViewMenu() {
               />
             </DropdownSection>
           )}
+          <DropdownSection label="Japanese">
+            <ToggleMenuItem
+              label="Show romaji"
+              active={appSettingsStore.showRomaji}
+              onToggle={() => appSettingsPresenter.setShowRomaji(!appSettingsStore.showRomaji)}
+              testId="show-romaji"
+            />
+          </DropdownSection>
         </>
       )}
     </DropdownButton>

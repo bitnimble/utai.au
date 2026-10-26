@@ -5,20 +5,21 @@ import {
   fitFurigana,
   hasKanji,
   sliceLineSegments,
-  toHiragana,
   wordBoundaries,
   type FuriganaToken,
 } from '../furigana';
+import { toHiragana } from '../kana';
 import type { RubySegment } from '../furigana';
 
 describe('annotateTokens', () => {
-  const tok = (surface_form: string, reading: string, pos_detail_1 = '*', pos_detail_2 = '*', basic_form = surface_form): FuriganaToken => ({
-    surface_form,
-    reading,
-    pos_detail_1,
-    pos_detail_2,
-    basic_form,
-  });
+  const tok = (
+    surface_form: string,
+    reading: string,
+    pos: string,
+    pos_detail_1 = '*',
+    pos_detail_2 = '*',
+    basic_form = surface_form,
+  ): FuriganaToken => ({ surface_form, reading, pos, pos_detail_1, pos_detail_2, basic_form });
   const JMDICT: Record<string, RubySegment[]> = {
     二人: [{ base: '二人', reading: 'ふたり' }],
     二十日: [{ base: '二十日', reading: 'はつか' }],
@@ -28,38 +29,59 @@ describe('annotateTokens', () => {
     ],
   };
   const primary = (surface: string): RubySegment[] | null => JMDICT[surface] ?? null;
+  const KIMI_TO_FUTARI = [
+    tok('君', 'キミ', '名詞', '代名詞'),
+    tok('と', 'ト', '助詞', '格助詞'),
+    tok('二', 'ニ', '名詞', '数'),
+    tok('人', 'ニン', '名詞', '接尾', '助数詞'),
+  ];
 
   test('reads a numeral + counter as one word from the dictionary', () => {
-    const tokens = [tok('君', 'キミ'), tok('と', 'ト'), tok('二', 'ニ', '数'), tok('人', 'ニン', '接尾', '助数詞')];
-    expect(annotateTokens(tokens, primary)).toEqual([
-      { base: '君', reading: 'きみ' },
-      { base: 'と' },
-      { base: '二人', reading: 'ふたり' },
-    ]);
+    expect(annotateTokens(KIMI_TO_FUTARI, primary)).toEqual({
+      segments: [{ base: '君', reading: 'きみ' }, { base: 'と' }, { base: '二人', reading: 'ふたり' }],
+      romaji: [
+        { start: 0, end: 1, romaji: 'kimi' },
+        { start: 1, end: 2, romaji: 'to' },
+        { start: 2, end: 4, romaji: 'futari' },
+      ],
+    });
   });
 
   test('merges multi-token numerals and keeps per-kanji splits', () => {
-    expect(annotateTokens([tok('二', 'ニ', '数'), tok('十', 'ジュウ', '数'), tok('日', 'ニチ', '接尾', '助数詞')], primary)).toEqual([
-      { base: '二十日', reading: 'はつか' },
-    ]);
-    expect(annotateTokens([tok('一', 'イチ', '数'), tok('回', 'カイ', '接尾', '助数詞')], primary)).toEqual([
+    const hatsuka = [tok('二', 'ニ', '名詞', '数'), tok('十', 'ジュウ', '名詞', '数'), tok('日', 'ニチ', '名詞', '接尾', '助数詞')];
+    expect(annotateTokens(hatsuka, primary).segments).toEqual([{ base: '二十日', reading: 'はつか' }]);
+    const ikkai = annotateTokens([tok('一', 'イチ', '名詞', '数'), tok('回', 'カイ', '名詞', '接尾', '助数詞')], primary);
+    expect(ikkai.segments).toEqual([
       { base: '一', reading: 'いっ' },
       { base: '回', reading: 'かい' },
     ]);
+    expect(ikkai.romaji).toEqual([{ start: 0, end: 2, romaji: 'ikkai' }]);
   });
 
   test('falls back to per-token readings for an unknown numeral + counter', () => {
-    expect(annotateTokens([tok('七', 'ナナ', '数'), tok('人', 'ニン', '接尾', '助数詞')], primary)).toEqual([
+    const shichinin = annotateTokens([tok('七', 'ナナ', '名詞', '数'), tok('人', 'ニン', '名詞', '接尾', '助数詞')], primary);
+    expect(shichinin.segments).toEqual([
       { base: '七', reading: 'なな' },
       { base: '人', reading: 'にん' },
     ]);
+    expect(shichinin.romaji).toEqual([{ start: 0, end: 2, romaji: 'nananin' }]);
   });
 
-  test('reads the 行っ stem as 行く, not 行う', () => {
-    expect(annotateTokens([tok('行っ', 'オコナッ', '自立', '*', '行う'), tok('た', 'タ')], primary)).toEqual([
-      { base: '行', reading: 'い' },
-      { base: 'った' },
-    ]);
+  test('reads the 行っ stem as 行く, not 行う, and joins its ending in romaji', () => {
+    const itta = annotateTokens([tok('行っ', 'オコナッ', '動詞', '自立', '*', '行う'), tok('た', 'タ', '助動詞')], primary);
+    expect(itta.segments).toEqual([{ base: '行', reading: 'い' }, { base: 'った' }]);
+    expect(itta.romaji).toEqual([{ start: 0, end: 3, romaji: 'itta' }]);
+  });
+
+  test('romaji pronounces the は / へ particles and skips symbols', () => {
+    const tokens = [
+      tok('君', 'キミ', '名詞', '代名詞'),
+      tok('は', 'ハ', '助詞', '係助詞'),
+      tok('、', '、', '記号', '読点'),
+      tok('空', 'ソラ', '名詞', '一般'),
+      tok('へ', 'ヘ', '助詞', '格助詞'),
+    ];
+    expect(annotateTokens(tokens, primary).romaji.map((w) => w.romaji)).toEqual(['kimi', 'wa', 'sora', 'e']);
   });
 });
 
@@ -96,6 +118,12 @@ describe('toHiragana', () => {
 });
 
 describe('fitFurigana', () => {
+  test('okurigana that also starts the reading still anchors after the kanji', () => {
+    expect(fitFurigana('笑わ', 'わらわ')).toEqual([{ base: '笑', reading: 'わら' }, { base: 'わ' }]);
+    expect(fitFurigana('歌う', 'うたう')).toEqual([{ base: '歌', reading: 'うた' }, { base: 'う' }]);
+    expect(fitFurigana('失う', 'うしなう')).toEqual([{ base: '失', reading: 'うしな' }, { base: 'う' }]);
+  });
+
   test('single okurigana run: reading sits over the kanji only', () => {
     expect(fitFurigana('食べる', 'たべる')).toEqual([
       { base: '食', reading: 'た' },

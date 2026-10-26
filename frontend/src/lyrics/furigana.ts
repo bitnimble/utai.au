@@ -30,7 +30,7 @@
  * standalone (chip-local) tokenize. The same table reads the numeral +
  * counter compounds kuromoji splits apart (二人 → ふたり, not ににん).
  *
- * This module's pure helpers (`hasKanji`, `toHiragana`, `fitFurigana`,
+ * This module's pure helpers (`hasKanji`, `fitFurigana`,
  * `annotateTokens`, `sliceLineSegments`, `expandCompounds`) carry the testable logic; the
  * singleton wires them to kuromoji + the split table + MobX.
  */
@@ -40,6 +40,8 @@ import {
   loadFuriganaSplitMap,
   type FuriganaSplitMap,
 } from './jmdict_furigana_loader';
+import { hasKana, toHiragana } from './kana';
+import { kanaToRomaji } from './romaji';
 
 /** One run of base text with an optional reading. A reading is present
  *  only on kanji runs; okurigana / kana / punctuation runs carry just
@@ -75,18 +77,6 @@ export function hasKanji(text: string): boolean {
     if (cp !== undefined && isKanjiCp(cp)) return true;
   }
   return false;
-}
-
-/** Convert a katakana reading to hiragana (furigana convention). Shifts
- *  the katakana block (U+30A1–U+30F6) down by 0x60; leaves the prolonged
- *  sound mark `ー`, punctuation, and any already-hiragana chars intact. */
-export function toHiragana(text: string): string {
-  let out = '';
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    out += cp >= 0x30a1 && cp <= 0x30f6 ? String.fromCodePoint(cp - 0x60) : ch;
-  }
-  return out;
 }
 
 /** Coalesce neighbouring reading-less runs so the rendered `<ruby>` and
@@ -153,7 +143,9 @@ export function fitFurigana(surface: string, reading: string): RubySegment[] {
       slice = reading.slice(ri);
       ri = reading.length;
     } else {
-      const idx = reading.indexOf(next.text, ri);
+      // A kanji run reads at least one kana; searching from `ri` would anchor
+      // 笑わ / わらわ's okurigana on the reading's first わ.
+      const idx = reading.indexOf(next.text, ri + 1);
       if (idx < 0) return bare;
       slice = reading.slice(ri, idx);
       ri = idx;
@@ -302,33 +294,58 @@ function sliceSpan(
 /** The kuromoji token fields {@link annotateTokens} reads. */
 export type FuriganaToken = Pick<
   IpadicFeatures,
-  'surface_form' | 'reading' | 'pos_detail_1' | 'pos_detail_2' | 'basic_form'
+  'surface_form' | 'reading' | 'pos' | 'pos_detail_1' | 'pos_detail_2' | 'basic_form'
 >;
 
+/** A romanized word and the UTF-16 span of the line it covers. */
+export type RomajiWord = { start: number; end: number; romaji: string };
+
+export type Annotation = { segments: RubySegment[]; romaji: RomajiWord[] };
+
 /**
- * Annotate a tokenized line. A numeral + counter run (IPADIC splits 二人
- * into 二 + 人 and reads each alone: ににん) is read as one word via
- * `primaryReading`, the dictionary's primary reading for a surface (ふたり),
- * falling back to the per-token readings when it has none. Tokens with no
- * usable reading (out-of-dictionary, `'*'`) fall through as bare text.
+ * Annotate a tokenized line with furigana and romaji. A numeral + counter
+ * run (IPADIC splits 二人 into 二 + 人 and reads each alone: ににん) is read
+ * as one word via `primaryReading`, the dictionary's primary reading for a
+ * surface (ふたり), falling back to the per-token readings when it has none.
+ * Tokens with no usable reading (out-of-dictionary, `'*'`) fall through as
+ * bare text. Romaji is one entry per word, with inflections and auxiliaries
+ * joined onto the word they follow (行っ + た → itta).
  */
 export function annotateTokens(
   tokens: readonly FuriganaToken[],
   primaryReading: (surface: string) => RubySegment[] | null,
-): RubySegment[] {
+): Annotation {
   const segs: RubySegment[] = [];
+  const words: { start: number; end: number; kana: string }[] = [];
+  let offset = 0;
   for (let i = 0; i < tokens.length; i++) {
-    const end = numeralCounterEnd(tokens, i);
-    if (end == null) {
-      segs.push(...tokenSegments(tokens[i]));
-      continue;
-    }
+    const end = numeralCounterEnd(tokens, i) ?? i;
     const run = tokens.slice(i, end + 1);
-    const whole = primaryReading(run.map((t) => t.surface_form).join(''));
+    const surface = run.map((t) => t.surface_form).join('');
+    const whole = end > i ? primaryReading(surface) : null;
     segs.push(...(whole ?? run.flatMap(tokenSegments)));
+    const kana = whole ? whole.map((s) => s.reading ?? s.base).join('') : run.map(tokenKana).join('');
+    const prev = words[words.length - 1];
+    offset += surface.length;
+    if (prev != null && gluesToPrevious(run[0])) {
+      prev.kana += kana;
+      prev.end = offset;
+    } else if (run[0].pos !== '記号') {
+      words.push({ start: offset - surface.length, end: offset, kana });
+    }
     i = end;
   }
-  return mergeBareRuns(segs);
+  return {
+    segments: mergeBareRuns(segs),
+    romaji: words.map((w) => ({ start: w.start, end: w.end, romaji: kanaToRomaji(w.kana) })),
+  };
+}
+
+function gluesToPrevious(t: FuriganaToken): boolean {
+  if (t.pos === '助動詞') return true;
+  if (t.pos === '助詞') return t.pos_detail_1 === '接続助詞';
+  if (t.pos === '動詞') return t.pos_detail_1 === '非自立' || t.pos_detail_1 === '接尾';
+  return t.pos === '名詞' && t.pos_detail_1 === '接尾';
 }
 
 /** Index of the counter closing a numeral + counter run that starts at `i`. */
@@ -341,12 +358,23 @@ function numeralCounterEnd(tokens: readonly FuriganaToken[], i: number): number 
 }
 
 function tokenSegments(t: FuriganaToken): RubySegment[] {
-  const surface = t.surface_form;
-  let reading = t.reading;
-  if (!reading || reading === '*') return [{ base: surface }];
+  const reading = tokenReading(t);
+  return reading == null ? [{ base: t.surface_form }] : fitFurigana(t.surface_form, toHiragana(reading));
+}
+
+/** How the token sounds, for romaji: the topic / direction particles は and へ
+ *  are pronounced わ and え. */
+function tokenKana(t: FuriganaToken): string {
+  if (t.pos === '助詞' && t.surface_form === 'は') return 'わ';
+  if (t.pos === '助詞' && t.surface_form === 'へ') return 'え';
+  return tokenReading(t) ?? t.surface_form;
+}
+
+function tokenReading(t: FuriganaToken): string | undefined {
+  if (!t.reading || t.reading === '*') return undefined;
   // 行っ is the shared stem of 行く and 行う (行った); IPADIC picks 行う, lyrics mean 行く.
-  if (t.basic_form === '行う' && surface.startsWith('行っ')) reading = reading.replace(/^オコナッ/, 'イッ');
-  return fitFurigana(surface, toHiragana(reading));
+  if (t.basic_form === '行う' && t.surface_form.startsWith('行っ')) return t.reading.replace(/^オコナッ/, 'イッ');
+  return t.reading;
 }
 
 /** Build the browser tokenizer. The loader module is dynamic-imported so
@@ -389,7 +417,7 @@ class FuriganaAnnotator {
    *  readings. */
   revision = 0;
 
-  private cache = new Map<string, RubySegment[]>();
+  private cache = new Map<string, Annotation>();
   private pending = new Set<string>();
   private tokenizerPromise: Promise<Tokenizer<IpadicFeatures>> | undefined;
   /** JmdictFurigana table, loaded lazily the first time a compound straddles
@@ -427,9 +455,40 @@ class FuriganaAnnotator {
     void this.revision;
     if (!hasKanji(text)) return [{ base: text }];
     const cached = this.cache.get(text);
-    if (cached) return cached;
+    if (cached) return cached.segments;
     this.schedule(text);
     return [{ base: text }];
+  }
+
+  /** Romaji for each of a line's display words, read in the context of the
+   *  whole line: a display word holding several tokenized words reads as
+   *  several (`kimi to`). One whose span cuts through a tokenized word (the
+   *  aligner split 本当に into 本当 · に) romanizes its own furigana reading
+   *  instead. Empty strings until the dictionary resolves, and for
+   *  non-Japanese text. */
+  romajiForWords(words: readonly string[]): string[] {
+    void this.revision;
+    const line = words.join('');
+    const empty = words.map(() => '');
+    if (!hasKanji(line) && !hasKana(line)) return empty;
+    const cached = this.cache.get(line);
+    if (!cached) {
+      this.schedule(line);
+      return empty;
+    }
+    let start = 0;
+    let wordSegs: RubySegment[][] | undefined;
+    return words.map((word, i) => {
+      const end = start + word.length;
+      const span = { start, end };
+      start = end;
+      const inSpan = cached.romaji.filter((w) => w.end > span.start && w.start < span.end);
+      if (inSpan.every((w) => w.start >= span.start && w.end <= span.end)) {
+        return inSpan.map((w) => w.romaji).join(' ');
+      }
+      wordSegs ??= this.segmentsForWords(words);
+      return kanaToRomaji(wordSegs[i].map((s) => s.reading ?? s.base).join(''));
+    });
   }
 
   /** Context-aware furigana for a run of display words that together form
@@ -507,9 +566,9 @@ class FuriganaAnnotator {
     this.pending.add(text);
     void this.ensureLoaded()
       .then((tokenizer) => {
-        const segs = this.annotate(tokenizer, text);
+        const annotation = this.annotate(tokenizer, text);
         runInAction(() => {
-          this.cache.set(text, segs);
+          this.cache.set(text, annotation);
           this.revision++;
         });
       })
@@ -522,7 +581,7 @@ class FuriganaAnnotator {
       });
   }
 
-  private annotate(tokenizer: Tokenizer<IpadicFeatures>, text: string): RubySegment[] {
+  private annotate(tokenizer: Tokenizer<IpadicFeatures>, text: string): Annotation {
     return annotateTokens(tokenizer.tokenize(text), (surface) => {
       if (this.furiganaSplits == null) {
         this.ensureFuriganaSplitsLoaded();

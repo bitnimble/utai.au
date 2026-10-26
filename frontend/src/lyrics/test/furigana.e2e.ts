@@ -27,6 +27,7 @@ async function loadJapaneseSong(page: Page): Promise<void> {
         },
         { startSec: 5, text: '書き散らしていく' },
         { startSec: 9, text: '君と二人で行った' },
+        { startSec: 13, text: '笑わないで' },
       ],
       { source: 'plaintext', sourceLabel: 'probe' },
     ),
@@ -41,9 +42,29 @@ test('furigana: tracks view annotates word-aligned and line-level lyrics', async
   await expect(page.getByTestId('lyrics-line-1').locator('rt')).toHaveText(['か', 'ち'], DICT_TIMEOUT);
 });
 
-test('furigana: reads numeral + counter compounds and 行った as words', async ({ page }) => {
+test('romaji: View option adds romaji under the lyrics in both views', async ({ page }) => {
+  await loadJapaneseSong(page);
+  const romaji = (testId: string) => page.getByTestId(testId).locator('rt[data-romaji]');
+  await expect(page.getByTestId('lyrics-line-0').locator('rt')).toHaveText(['ほんとう'], DICT_TIMEOUT);
+  await expect(romaji('lyrics-line-0')).toHaveCount(0);
+
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('show-romaji').click();
+  await page.keyboard.press('Escape');
+  await expect(romaji('lyrics-line-0')).toHaveText(['hontou', 'ni'], DICT_TIMEOUT);
+  await expect(romaji('lyrics-line-2')).toHaveText(['kimi to futari de itta'], DICT_TIMEOUT);
+
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(9.2));
+  await expect(romaji('karaoke-line')).toHaveText(['kimi to futari de itta'], DICT_TIMEOUT);
+});
+
+test('furigana: reads numeral + counter compounds, 行った, and okurigana that repeats the reading', async ({ page }) => {
   await loadJapaneseSong(page);
   await expect(page.getByTestId('lyrics-line-2').locator('rt')).toHaveText(['きみ', 'ふたり', 'い'], DICT_TIMEOUT);
+  await expect(page.getByTestId('lyrics-line-3').locator('rt')).toHaveText(['わら'], DICT_TIMEOUT);
 });
 
 test('furigana: karaoke view annotates word-aligned and line-level lyrics', async ({ page }) => {

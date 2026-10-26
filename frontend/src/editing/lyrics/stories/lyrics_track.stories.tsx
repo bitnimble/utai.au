@@ -116,7 +116,7 @@ function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { line
   );
   const fontSizePx = lyricFontSizeAt(DEFAULT_LYRIC_FONT_SIZE_PX, pxPerBeat);
   const placements = React.useMemo(
-    () => layoutLyricWords(lyricMeasureInputs(positioned), pxPerBeat, fontSizePx),
+    () => layoutLyricWords(lyricMeasureInputs(positioned, { romaji: false }), pxPerBeat, fontSizePx),
     [positioned, pxPerBeat, fontSizePx],
   );
   const pitchPaths = React.useMemo(

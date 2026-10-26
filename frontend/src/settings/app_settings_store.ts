@@ -66,6 +66,9 @@ export class AppSettingsStore {
   /** Karaoke overlay: show the next line too, alternating top-left / bottom-right. */
   karaokeTwoLines: boolean = false;
 
+  /** Romaji under Japanese lyrics, below the text (furigana sits above). */
+  showRomaji: boolean = false;
+
   constructor() {
     makeAutoObservable(this);
   }

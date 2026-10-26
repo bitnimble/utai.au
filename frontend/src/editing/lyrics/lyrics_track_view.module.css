@@ -296,6 +296,11 @@
     ruby-align: center;
 }
 
+.romajiRuby {
+    ruby-position: under;
+    ruby-align: center;
+}
+
 .lyricLine rt {
     /* 0.65em of the lyric font size (shared var). Keep in lockstep with
        lyrics_measure.ts::RT_FONT_RATIO. */
