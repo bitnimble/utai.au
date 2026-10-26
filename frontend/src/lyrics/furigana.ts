@@ -24,13 +24,14 @@
  * inside 実は, not the lone-token み). When the forced aligner split a
  * compound across chips (盲目 · 的) but kuromoji kept it as one token, the
  * single fitted reading can't be cut; a second lazy asset, a trimmed
- * JmdictFurigana per-kanji split table (see `jmdict_furigana_loader.ts` +
+ * JmdictFurigana table (see `jmdict_furigana_loader.ts` +
  * `scripts/build-furigana-dict.ts`), supplies the per-kanji division
  * (盲/もう · 目/もく · 的/てき). Words it can't divide fall back to a
- * standalone (chip-local) tokenize.
+ * standalone (chip-local) tokenize. The same table reads the numeral +
+ * counter compounds kuromoji splits apart (二人 → ふたり, not ににん).
  *
  * This module's pure helpers (`hasKanji`, `toHiragana`, `fitFurigana`,
- * `sliceLineSegments`, `expandCompounds`) carry the testable logic; the
+ * `annotateTokens`, `sliceLineSegments`, `expandCompounds`) carry the testable logic; the
  * singleton wires them to kuromoji + the split table + MobX.
  */
 import type { IpadicFeatures, Tokenizer } from '@sglkc/kuromoji';
@@ -298,24 +299,54 @@ function sliceSpan(
   return out.length > 0 ? mergeBareRuns(out) : null;
 }
 
-/** Tokenize `text` and annotate every token, concatenating the per-token
- *  segments. Tokens with no usable reading (out-of-dictionary, `'*'`)
- *  fall through as bare text. */
-function annotateText(
-  tokenizer: Tokenizer<IpadicFeatures>,
-  text: string,
+/** The kuromoji token fields {@link annotateTokens} reads. */
+export type FuriganaToken = Pick<
+  IpadicFeatures,
+  'surface_form' | 'reading' | 'pos_detail_1' | 'pos_detail_2' | 'basic_form'
+>;
+
+/**
+ * Annotate a tokenized line. A numeral + counter run (IPADIC splits 二人
+ * into 二 + 人 and reads each alone: ににん) is read as one word via
+ * `primaryReading`, the dictionary's primary reading for a surface (ふたり),
+ * falling back to the per-token readings when it has none. Tokens with no
+ * usable reading (out-of-dictionary, `'*'`) fall through as bare text.
+ */
+export function annotateTokens(
+  tokens: readonly FuriganaToken[],
+  primaryReading: (surface: string) => RubySegment[] | null,
 ): RubySegment[] {
   const segs: RubySegment[] = [];
-  for (const t of tokenizer.tokenize(text)) {
-    const surface = t.surface_form;
-    const reading = t.reading;
-    if (!reading || reading === '*') {
-      segs.push({ base: surface });
+  for (let i = 0; i < tokens.length; i++) {
+    const end = numeralCounterEnd(tokens, i);
+    if (end == null) {
+      segs.push(...tokenSegments(tokens[i]));
       continue;
     }
-    segs.push(...fitFurigana(surface, toHiragana(reading)));
+    const run = tokens.slice(i, end + 1);
+    const whole = primaryReading(run.map((t) => t.surface_form).join(''));
+    segs.push(...(whole ?? run.flatMap(tokenSegments)));
+    i = end;
   }
   return mergeBareRuns(segs);
+}
+
+/** Index of the counter closing a numeral + counter run that starts at `i`. */
+function numeralCounterEnd(tokens: readonly FuriganaToken[], i: number): number | undefined {
+  let j = i;
+  while (j < tokens.length && tokens[j].pos_detail_1 === '数') j++;
+  if (j === i || j === tokens.length) return undefined;
+  const t = tokens[j];
+  return t.pos_detail_1 === '接尾' && t.pos_detail_2 === '助数詞' ? j : undefined;
+}
+
+function tokenSegments(t: FuriganaToken): RubySegment[] {
+  const surface = t.surface_form;
+  let reading = t.reading;
+  if (!reading || reading === '*') return [{ base: surface }];
+  // 行っ is the shared stem of 行く and 行う (行った); IPADIC picks 行う, lyrics mean 行く.
+  if (t.basic_form === '行う' && surface.startsWith('行っ')) reading = reading.replace(/^オコナッ/, 'イッ');
+  return fitFurigana(surface, toHiragana(reading));
 }
 
 /** Build the browser tokenizer. The loader module is dynamic-imported so
@@ -361,8 +392,8 @@ class FuriganaAnnotator {
   private cache = new Map<string, RubySegment[]>();
   private pending = new Set<string>();
   private tokenizerPromise: Promise<Tokenizer<IpadicFeatures>> | undefined;
-  /** Per-kanji split table (JmdictFurigana), loaded lazily the first time a
-   *  compound straddles a chip boundary. Absent until then. */
+  /** JmdictFurigana table, loaded lazily the first time a compound straddles
+   *  a chip boundary or a line has a numeral + counter. Absent until then. */
   private furiganaSplits: FuriganaSplitMap | undefined;
   private furiganaSplitsPromise: Promise<FuriganaSplitMap> | undefined;
 
@@ -458,9 +489,11 @@ class FuriganaAnnotator {
     if (this.furiganaSplitsPromise || this.furiganaSplits) return;
     this.furiganaSplitsPromise = loadFuriganaSplitMap(furiganaSplitsUrl());
     void this.furiganaSplitsPromise
-      .then((map) => {
+      .then(async (map) => {
+        const tokenizer = await this.ensureLoaded();
         runInAction(() => {
           this.furiganaSplits = map;
+          for (const text of this.cache.keys()) this.cache.set(text, this.annotate(tokenizer, text));
           this.revision++;
         });
       })
@@ -474,7 +507,7 @@ class FuriganaAnnotator {
     this.pending.add(text);
     void this.ensureLoaded()
       .then((tokenizer) => {
-        const segs = annotateText(tokenizer, text);
+        const segs = this.annotate(tokenizer, text);
         runInAction(() => {
           this.cache.set(text, segs);
           this.revision++;
@@ -487,6 +520,16 @@ class FuriganaAnnotator {
       .finally(() => {
         this.pending.delete(text);
       });
+  }
+
+  private annotate(tokenizer: Tokenizer<IpadicFeatures>, text: string): RubySegment[] {
+    return annotateTokens(tokenizer.tokenize(text), (surface) => {
+      if (this.furiganaSplits == null) {
+        this.ensureFuriganaSplitsLoaded();
+        return null;
+      }
+      return this.furiganaSplits.get(surface)?.[0]?.segs ?? null;
+    });
   }
 
   private ensureLoaded(): Promise<Tokenizer<IpadicFeatures>> {

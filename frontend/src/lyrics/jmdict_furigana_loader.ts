@@ -1,12 +1,12 @@
 /**
- * Loader for the per-kanji furigana split table (a trimmed JmdictFurigana
- * derivative; see `scripts/build-furigana-dict.ts`).
+ * Loader for the furigana table (a trimmed JmdictFurigana derivative; see
+ * `scripts/build-furigana-dict.ts`).
  *
- * The table answers one question for {@link FuriganaAnnotator}: given an
- * all-kanji compound and its reading, how does that reading divide across
- * the individual kanji (盲目的 + もうもくてき → 盲/もう 目/もく 的/てき)? It's
- * consulted only when the lyrics aligner split a compound across chips and
- * kuromoji's token-level reading can't otherwise be cut.
+ * The table gives {@link FuriganaAnnotator} each all-kanji word's readings,
+ * primary first, and how each divides across the individual kanji (盲目的 +
+ * もうもくてき → 盲/もう 目/もく 的/てき). It's consulted when the lyrics
+ * aligner split a compound across chips and kuromoji's token-level reading
+ * can't otherwise be cut, and to read numeral + counter compounds.
  *
  * The asset (`public/jmdict-furigana/furigana.txt.gz`) is one entry per
  * line, `surface|<utf16len>,<reading>;…`, where the length/reading pairs
@@ -30,7 +30,7 @@ export type FuriganaSplit = {
   segs: RubySegment[];
 };
 
-/** Surface → its split readings. */
+/** Surface → its split readings, primary first. */
 export type FuriganaSplitMap = Map<string, FuriganaSplit[]>;
 
 /** gzip magic (RFC 1952): every member starts with 0x1f 0x8b. */

@@ -1,22 +1,19 @@
 /**
- * Build the trimmed per-kanji furigana split table from JmdictFurigana.
+ * Build the trimmed furigana table from JmdictFurigana.
  *
  * Source: https://github.com/Doublevil/JmdictFurigana (releases →
  * `JmdictFurigana.txt`). That file maps every JMdict headword to its
- * per-character ruby segmentation; we only need the slice that lets us
- * split a *compound kanji reading* across the individual kanji, for the
- * case where the lyrics forced-aligner cut a compound across chips and
- * kuromoji's token-level reading can't be divided (盲目的 → 盲/もう 目/もく
- * 的/てき). See `frontend/src/lyrics/furigana.ts`.
+ * per-character ruby segmentation. The annotator uses it to split a
+ * compound kanji reading across chips the aligner cut it into (盲目的 →
+ * 盲/もう 目/もく 的/てき), and to read numeral + counter compounds that
+ * kuromoji tokenizes apart (二人 → ふたり, 一回 → いっかい). See
+ * `frontend/src/lyrics/furigana.ts`.
  *
- * Filtering keeps only entries that are (a) entirely kanji in the surface
- * (okurigana words are already handled by the kana-anchored fitter) and
- * (b) split into ≥2 ruby spans (a single whole-span jukujikun like
- * 今日→きょう can't be divided, so it earns nothing here and is dropped,
- * the annotator's standalone fallback covers it). The spans are
- * re-expressed as ordered `<utf16-len>,<reading>` pairs that tile the
- * surface, so the runtime loader never has to reason about code-point vs
- * UTF-16 indices.
+ * Only all-kanji surfaces are kept (okurigana words are already handled by
+ * the kana-anchored fitter). Rows keep the source order within a surface:
+ * JMdict lists a word's primary reading first. The spans are re-expressed
+ * as ordered `<utf16-len>,<reading>` pairs that tile the surface, so the
+ * runtime loader never has to reason about code-point vs UTF-16 indices.
  *
  * Output: `frontend/public/jmdict-furigana/furigana.txt.gz`, committed
  * (JmdictFurigana isn't an npm dep, so unlike the kuromoji dict it can't be
@@ -82,7 +79,7 @@ function main(): void {
     process.exit(2);
   }
   const text = readFileSync(src, 'utf8');
-  const outLines: string[] = [];
+  const outLines: { surface: string; line: string }[] = [];
   let kept = 0;
   let scanned = 0;
   for (const raw of text.split('\n')) {
@@ -94,7 +91,7 @@ function main(): void {
     if (!allKanji(surface)) continue;
 
     const spans = furi.split(';').map(parseSpan);
-    if (spans.some((s) => s === null) || spans.length < 2) continue;
+    if (spans.some((s) => s === null)) continue;
     const valid = spans as Span[];
 
     // Code-point view of the surface so span indices (which are code-point
@@ -118,13 +115,14 @@ function main(): void {
     }
     if (!ok || cursor !== cps.length) continue;
 
-    outLines.push(`${surface}|${pairs.join(';')}`);
+    outLines.push({ surface, line: `${surface}|${pairs.join(';')}` });
     kept++;
   }
 
-  // Stable order keeps the gzipped asset byte-identical across rebuilds.
-  outLines.sort();
-  const body = outLines.join('\n') + '\n';
+  // Sorted for a byte-identical asset across rebuilds; by surface only, as
+  // the stable sort must keep each surface's primary reading first.
+  outLines.sort((a, b) => (a.surface < b.surface ? -1 : a.surface > b.surface ? 1 : 0));
+  const body = outLines.map((l) => l.line).join('\n') + '\n';
   const gz = gzipSync(Buffer.from(body, 'utf8'), { level: 9 });
 
   mkdirSync(OUT_DIR, { recursive: true });
@@ -140,8 +138,8 @@ function main(): void {
       'the same licence as JMdict. © James William Breen and the',
       'Electronic Dictionary Research and Development Group.',
       '',
-      'Only all-kanji headwords with a per-kanji ruby split are kept, re-',
-      'expressed as `surface|<utf16len>,<reading>;...`. Regenerate with',
+      'Only all-kanji headwords are kept, re-expressed as',
+      '`surface|<utf16len>,<reading>;...`. Regenerate with',
       'scripts/build-furigana-dict.ts.',
       '',
     ].join('\n'),

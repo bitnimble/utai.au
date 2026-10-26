@@ -1,13 +1,67 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  annotateTokens,
   expandCompounds,
   fitFurigana,
   hasKanji,
   sliceLineSegments,
   toHiragana,
   wordBoundaries,
+  type FuriganaToken,
 } from '../furigana';
 import type { RubySegment } from '../furigana';
+
+describe('annotateTokens', () => {
+  const tok = (surface_form: string, reading: string, pos_detail_1 = '*', pos_detail_2 = '*', basic_form = surface_form): FuriganaToken => ({
+    surface_form,
+    reading,
+    pos_detail_1,
+    pos_detail_2,
+    basic_form,
+  });
+  const JMDICT: Record<string, RubySegment[]> = {
+    二人: [{ base: '二人', reading: 'ふたり' }],
+    二十日: [{ base: '二十日', reading: 'はつか' }],
+    一回: [
+      { base: '一', reading: 'いっ' },
+      { base: '回', reading: 'かい' },
+    ],
+  };
+  const primary = (surface: string): RubySegment[] | null => JMDICT[surface] ?? null;
+
+  test('reads a numeral + counter as one word from the dictionary', () => {
+    const tokens = [tok('君', 'キミ'), tok('と', 'ト'), tok('二', 'ニ', '数'), tok('人', 'ニン', '接尾', '助数詞')];
+    expect(annotateTokens(tokens, primary)).toEqual([
+      { base: '君', reading: 'きみ' },
+      { base: 'と' },
+      { base: '二人', reading: 'ふたり' },
+    ]);
+  });
+
+  test('merges multi-token numerals and keeps per-kanji splits', () => {
+    expect(annotateTokens([tok('二', 'ニ', '数'), tok('十', 'ジュウ', '数'), tok('日', 'ニチ', '接尾', '助数詞')], primary)).toEqual([
+      { base: '二十日', reading: 'はつか' },
+    ]);
+    expect(annotateTokens([tok('一', 'イチ', '数'), tok('回', 'カイ', '接尾', '助数詞')], primary)).toEqual([
+      { base: '一', reading: 'いっ' },
+      { base: '回', reading: 'かい' },
+    ]);
+  });
+
+  test('falls back to per-token readings for an unknown numeral + counter', () => {
+    expect(annotateTokens([tok('七', 'ナナ', '数'), tok('人', 'ニン', '接尾', '助数詞')], primary)).toEqual([
+      { base: '七', reading: 'なな' },
+      { base: '人', reading: 'にん' },
+    ]);
+  });
+
+  test('reads the 行っ stem as 行く, not 行う', () => {
+    expect(annotateTokens([tok('行っ', 'オコナッ', '自立', '*', '行う'), tok('た', 'タ')], primary)).toEqual([
+      { base: '行', reading: 'い' },
+      { base: 'った' },
+    ]);
+  });
+});
 
 describe('hasKanji', () => {
   test('detects kanji', () => {

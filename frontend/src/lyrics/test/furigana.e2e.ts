@@ -26,6 +26,7 @@ async function loadJapaneseSong(page: Page): Promise<void> {
           ],
         },
         { startSec: 5, text: '書き散らしていく' },
+        { startSec: 9, text: '君と二人で行った' },
       ],
       { source: 'plaintext', sourceLabel: 'probe' },
     ),
@@ -37,7 +38,13 @@ const DICT_TIMEOUT = { timeout: 20_000 };
 test('furigana: tracks view annotates word-aligned and line-level lyrics', async ({ page }) => {
   await loadJapaneseSong(page);
   await expect(page.getByTestId('lyrics-line-0').locator('rt')).toHaveText(['ほんとう'], DICT_TIMEOUT);
-  await expect(page.getByTestId('lyrics-line-1').locator('rt')).toHaveText(['か', 'ち'], DICT_TIMEOUT);});
+  await expect(page.getByTestId('lyrics-line-1').locator('rt')).toHaveText(['か', 'ち'], DICT_TIMEOUT);
+});
+
+test('furigana: reads numeral + counter compounds and 行った as words', async ({ page }) => {
+  await loadJapaneseSong(page);
+  await expect(page.getByTestId('lyrics-line-2').locator('rt')).toHaveText(['きみ', 'ふたり', 'い'], DICT_TIMEOUT);
+});
 
 test('furigana: karaoke view annotates word-aligned and line-level lyrics', async ({ page }) => {
   await loadJapaneseSong(page);
