@@ -25,6 +25,9 @@ RUN f="$(python -c 'import onthespot, os; print(os.path.dirname(onthespot.__file
     && grep -q "default_format = '.webm'" "$f" \
     && grep -q "ydl_opts\['format'\] = 'bestaudio'$" "$f"
 
+COPY docker/onthespot_headless_progress.py /tmp/onthespot_headless_progress.py
+RUN python /tmp/onthespot_headless_progress.py && rm /tmp/onthespot_headless_progress.py
+
 # OnTheSpot reads/writes its config (account pool + credentials) here; the compose
 # shares this dir with the backend so the facade can read the account pool.
 ENV ONTHESPOTDIR=/config
