@@ -763,7 +763,8 @@ async def get_video(video_id: str) -> FileResponse:
     The YouTube IFrame embed refuses embedding-disabled uploads ("Video
     unavailable"); serving a native `<video>` over a fetched stream sidesteps
     that. Cross-run cached under `cache_dir/video`, keyed by the 11-char id
-    (validated to foreclose path traversal). Needs no GPU / model, so it's
+    (validated to foreclose path traversal) + a digest of the format
+    selection. Needs no GPU / model, so it's
     served regardless of worker role or provisioning state, and `FileResponse`
     honours Range requests so the `<video>` element can seek."""
     if not is_valid_video_id(video_id):
@@ -775,7 +776,14 @@ async def get_video(video_id: str) -> FileResponse:
     except Exception as exc:
         log.exception("get_video: fetch failed (%s)", video_id)
         raise HTTPException(status_code=502, detail=f"Could not fetch video: {exc}") from exc
-    return FileResponse(str(path), media_type="video/mp4", filename=f"{video_id}.mp4")
+    return FileResponse(
+        str(path),
+        media_type="video/mp4",
+        filename=f"{video_id}.mp4",
+        # Same URL across format-selection changes: revalidate so a browser
+        # never replays a heuristically cached video picked by the old one.
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 async def _emit_stems_result(request_id: str, stem_id: str) -> AsyncIterator[bytes]:

@@ -136,16 +136,19 @@ class BlobCache:
                 self._total_bytes -= old.size
             self._entries[key] = _Entry(name=key, size=size, atime=time.time())
             self._total_bytes += size
-            self._evict()
+            self._evict(keep=key)
 
-    def _evict(self) -> None:
-        """Drop LRU entries until total bytes <= cap. Lock-held."""
+    def _evict(self, keep: str) -> None:
+        """Drop LRU entries until total bytes <= cap, never `keep` (the entry
+        just written, whose path the caller is about to return). Lock-held."""
         if self._total_bytes <= self._cap_bytes:
             return
         ordered = sorted(self._entries.values(), key=lambda e: e.atime)
         for entry in ordered:
             if self._total_bytes <= self._cap_bytes:
                 break
+            if entry.name == keep:
+                continue
             with contextlib.suppress(FileNotFoundError):
                 (self._dir / entry.name).unlink()
             self._entries.pop(entry.name, None)

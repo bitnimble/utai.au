@@ -79,8 +79,7 @@ def test_fetch_video_runner_returns_video_artifact(tmp_path, monkeypatch):
     art = result.artifacts[0]
     assert art.role == "video"
     assert art.ref.kind == "path"
-    assert Path(art.ref.path).parent == tmp_path
-    assert Path(art.ref.path).name.startswith("dQw4w9WgXcQ-")
+    assert Path(art.ref.path) == tmp_path / video_fetch.video_cache_key("dQw4w9WgXcQ")
     assert Path(art.ref.path).read_bytes() == b"fake-mp4"
 
 

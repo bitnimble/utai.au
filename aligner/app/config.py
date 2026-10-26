@@ -98,17 +98,17 @@ class Settings(BaseSettings):
     # Backing-video cache (`video/`): the muted, playback-synced video the
     # karaoke page shows above the score, fetched video-only via yt-dlp because
     # the YouTube IFrame embed refuses embedding-disabled uploads. Keyed by the
-    # 11-char id, bounded LRU like the others.
+    # 11-char id + a digest of the format selection, bounded LRU like the others.
     cache_video_cap_bytes: int = 10 * 1024 * 1024 * 1024  # 10 GB
 
     # --- Backing video ---
     # yt-dlp format selector + sort for the karaoke backing video: the highest
     # resolution / fps YouTube has, video-only (the audio is the separated stems
-    # and the player is muted). `vcodec:vp9` ranks VP9 over AV1 at equal
-    # resolution: AV1 lacks hardware decode on older GPUs and in some webviews,
-    # and YouTube serves no H.264 above 1080p.
+    # and the player is muted). `vcodec:vp9` ranks ahead of `res` so SDR VP9
+    # beats a higher-res AV1 or HDR (vp9.2/AV1) rung: AV1 lacks hardware decode
+    # on older GPUs and in some webviews, and HDR plays washed out in webviews.
     video_format: str = "bv*"
-    video_format_sort: list[str] = ["res", "fps", "vcodec:vp9"]
+    video_format_sort: list[str] = ["vcodec:vp9", "res", "fps"]
 
     # --- HTTP ---
     # The hosted web app is same-origin (no CORS needed); these cover the local
@@ -161,9 +161,8 @@ class Settings(BaseSettings):
     # timeout error rather than streaming forever.
     music_fetch_timeout_sec: float = 20 * 60.0
     music_poll_interval_sec: float = 1.0
-    # Facade-owned, NON-secret prefs: service priority order, per-service enabled
-    # flags, and quality. Credentials themselves live only in OnTheSpot's own
-    # config, never here.
+    # Facade-owned, NON-secret prefs (service priority order). Credentials
+    # themselves live only in OnTheSpot's own config, never here.
     music_config_path: Path = Path("/config/music_config.json")
     # OnTheSpot's own config file (its account pool + credentials), shared with
     # the OnTheSpot container via a volume so the facade can read the account

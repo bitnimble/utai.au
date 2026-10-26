@@ -59,7 +59,7 @@ def fetch_video(video_id: str) -> Path:
     video-only via yt-dlp on a cache miss.
 
     Raises ValueError for a malformed id and RuntimeError when yt-dlp produces
-    no file.
+    no mp4.
     """
     if not is_valid_video_id(video_id):
         raise ValueError(f"invalid YouTube video id: {video_id!r}")
@@ -68,7 +68,8 @@ def fetch_video(video_id: str) -> Path:
     cached = cache.get(key)
     if cached is not None:
         return cached
-    with tempfile.TemporaryDirectory(prefix="utai_video_") as tmp:
+    # Stage on the cache's disk: /tmp may be RAM-backed tmpfs, and 4K runs to GBs.
+    with tempfile.TemporaryDirectory(prefix="utai_video_", dir=cache.dir) as tmp:
         produced = _download(video_id, Path(tmp))
         return cache.put_path(key, produced)
 
@@ -90,11 +91,6 @@ def _download(video_id: str, dest_dir: Path) -> Path:
     with YoutubeDL(opts) as ydl:
         ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
     produced = dest_dir / f"{video_id}.mp4"
-    if produced.is_file():
-        return produced
-    # Remux was skipped for an edge-case container: take whatever single file
-    # landed for this id.
-    candidates = sorted(dest_dir.glob(f"{video_id}.*"))
-    if not candidates:
-        raise RuntimeError(f"yt-dlp produced no file for {video_id}")
-    return candidates[0]
+    if not produced.is_file():
+        raise RuntimeError(f"yt-dlp produced no mp4 for {video_id}")
+    return produced

@@ -32,7 +32,7 @@ class FakeClient:
         self.added: list[dict[str, Any]] = []
         self.removed: list[str] = []
         self.restarted = 0
-        self.raw_media_download = False
+        self.calls: list[str] = []
         self._queue_i = 0
 
     async def search(self, query: str) -> list[dict[str, Any]]:
@@ -52,9 +52,10 @@ class FakeClient:
         if "active_account_number" in patch:
             self.active_index = patch["active_account_number"]
         if "raw_media_download" in patch:
-            self.raw_media_download = patch["raw_media_download"]
+            self.calls.append(f"raw_media_download={patch['raw_media_download']}")
 
     async def parse_url(self, url: str) -> None:
+        self.calls.append("parse_url")
         self.parsed_urls.append(url)
 
     async def download_queue(self) -> dict[str, dict[str, Any]]:
@@ -333,7 +334,7 @@ def test_fetch_success(tmp_path, monkeypatch):
     facade = _facade(tmp_path, client, FakePool([{"service": "youtube_music", "uuid": "y"}]))
     events = _collect(facade.fetch(url, "youtube_music"))
 
-    assert client.raw_media_download is True
+    assert client.calls == ["raw_media_download=True", "parse_url"]
     assert client.parsed_urls == [url]
     assert events[0] == {"type": "running", "stage": "queued", "frac": 0.0}
     assert any(e["type"] == "running" and e.get("frac") == 0.4 for e in events)

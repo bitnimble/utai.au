@@ -39,7 +39,10 @@ class FetchVideoRunner:
         if not dest.is_file():
             src = await asyncio.to_thread(fetch_video, video_id)
             cancel.check()
-            await asyncio.to_thread(shutil.copyfile, src, dest)
+            # Via .part + rename: a copy cut short would otherwise pass is_file() forever.
+            part = dest.with_suffix(".part")
+            await asyncio.to_thread(shutil.copyfile, src, part)
+            os.replace(part, dest)
         await emit("done", 1.0, None)
         return RunnerResult(
             artifacts=[Artifact(role="video", ref=PathRef(kind="path", path=str(dest)))]
