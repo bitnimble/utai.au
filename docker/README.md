@@ -42,10 +42,11 @@ to public `lrclib.net` on a miss or while the mirror is unavailable.
 
 It's **opt-in**: pick a current dump from <https://lrclib.net/db-dumps> and set
 its URL in the `.env` beside the compose file. Without it the `lrclib` container
-exits and everything still works against public lrclib.net.
+exits and everything still works against public lrclib.net. LRCLIB keeps only the
+latest dump, so the URL 404s (and the container exits) once a newer one replaces it.
 
 ```sh
-# A specific dump (~5 GB compressed → ~19 GB on disk). Downloaded + decompressed
+# A specific dump (~45 GB compressed, several times that on disk). Downloaded + decompressed
 # ONCE into the mounted volume (LRCLIB_DATA_PATH, default
 # /codebox-workspace/utai/lrclib), cached across `down`/rebuilds.
 echo "LRCLIB_DUMP_URL=https://lrclib.net/db-dumps/lrclib-db-dump-<timestamp>.sqlite3.gz" >> .env
