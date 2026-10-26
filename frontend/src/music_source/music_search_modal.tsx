@@ -1,5 +1,5 @@
 import classNames from 'classnames';
-import { Search, Settings } from 'lucide-react';
+import { Music, Search, Settings } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import type { TrackResult } from 'src/net/music_source_client';
@@ -145,14 +145,30 @@ const ResultRow = observer(function ResultRow({
         onClick={onPick}
         data-testid={`music-search-result-${result.id}`}
       >
-        <span className={styles.resultPrimary}>
-          <strong>{result.title}</strong>
-          {result.artists ? ` by ${result.artists}` : ''}
+        <span className={styles.thumbnail}>
+          <Music size={18} aria-hidden="true" />
+          {result.coverUrl != null && (
+            <img
+              src={result.coverUrl}
+              alt=""
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                e.currentTarget.hidden = true;
+              }}
+            />
+          )}
         </span>
-        <span className={styles.resultSecondary}>
-          {serviceLabel(result.service)}
-          {result.album ? ` · ${result.album}` : ''}
-          {typeof result.durationSec === 'number' ? ` · ${formatDuration(result.durationSec)}` : ''}
+        <span className={styles.resultText}>
+          <span className={styles.resultPrimary}>
+            <strong>{result.title}</strong>
+            {result.artists ? ` by ${result.artists}` : ''}
+          </span>
+          <span className={styles.resultSecondary}>
+            {serviceLabel(result.service)}
+            {result.album ? ` · ${result.album}` : ''}
+            {typeof result.durationSec === 'number' ? ` · ${formatDuration(result.durationSec)}` : ''}
+          </span>
         </span>
       </button>
     </li>
