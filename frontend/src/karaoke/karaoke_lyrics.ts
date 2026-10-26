@@ -51,6 +51,15 @@ export function vocalOrdinal(lines: readonly LyricLine[], idx: number): number {
   return n;
 }
 
+/** The vocal line after `idx`, unless a gap long enough to blank the lyrics
+ *  (see `shownLineIdx`) separates the two. */
+export function followingLineIdx(lines: readonly LyricLine[], idx: number): number | undefined {
+  const next = nextVocalLineIdx(lines, idx);
+  if (next == null) return undefined;
+  const gapSec = lineSpanSec(lines, next).startSec - lineSpanSec(lines, idx).endSec;
+  return gapSec <= LINE_HOLD_SEC + LINE_LEAD_IN_SEC ? next : undefined;
+}
+
 /** First non-blank line after `idx` (or from the start when `idx` is undefined). */
 export function nextVocalLineIdx(lines: readonly LyricLine[], idx: number | undefined): number | undefined {
   for (let i = idx == null ? 0 : idx + 1; i < lines.length; i++) {

@@ -1,6 +1,7 @@
 import classNames from 'classnames';
 import { observer, useLocalObservable } from 'mobx-react-lite';
 import React from 'react';
+import { flushSync } from 'react-dom';
 import { LyricLineChip } from 'src/editing/lyrics/lyric_chips';
 import { PositionedLine, positionLyricLines } from 'src/editing/lyrics/lyric_layout';
 import {
@@ -18,7 +19,7 @@ import { activeLineIndexAt, activeWordIndexAt, lineSpanSec, LyricLine, wordState
 import { LyricsTrack, lyricsStore } from 'src/lyrics/store';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { StatusPill } from 'src/ui/status_pill/status_pill';
-import { lineSegments, nextVocalLineIdx, shownLineIdx, vocalOrdinal } from './karaoke_lyrics';
+import { followingLineIdx, lineSegments, shownLineIdx, vocalOrdinal } from './karaoke_lyrics';
 import styles from './karaoke_lyrics_overlay.module.css';
 
 const PITCH_BAND_EM = 2.5;
@@ -26,8 +27,6 @@ const TWO_LINE_WIDTH_FRAC = 0.75;
 const MIN_LINE_SPAN_SEC = 0.5;
 const ZOOM_FIT_STEPS = 3;
 const FIT_STEPS = 8;
-const KARAOKE_FONT_WEIGHT = 800;
-const KARAOKE_STROKE_EM = 0.16;
 
 /** The first lyrics track's current line (plus the next, top-left / bottom-right
  *  by alternating line, in two-line mode), karaoke style, over the video area. */
@@ -51,7 +50,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     get nextIdx(): number | undefined {
       const t = this.track;
       const shown = this.shownIdx;
-      return t && shown != null ? nextVocalLineIdx(t.lines, shown) : undefined;
+      return t && shown != null ? followingLineIdx(t.lines, shown) : undefined;
     },
     get shownOnTop(): boolean {
       const t = this.track;
@@ -87,22 +86,20 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
   const track = playhead.track;
   const shownIdx = playhead.shownIdx;
   const twoLines = appSettingsStore.karaokeTwoLines;
-  const lineView = (idx: number | undefined, lineWidthPx: number): React.ReactNode => {
+  const lineView: LineView = (idx, lineWidthPx, oneRowFontSizePx) => {
     if (track == null || idx == null) return null;
     const line = track.lines[idx];
     const isActive = playhead.activeLineIdx === idx;
     const activeWordIdx = isActive ? playhead.activeWordIdx : undefined;
     const activeWordEnded = isActive && playhead.activeWordEnded;
-    const oneLineWidthPx = twoLines && lineWidthPx > 0 ? lineWidthPx : undefined;
-    const baseFontSizePx = karaokeFontSizePx(widthPx);
-    return appSettingsStore.karaokeShowPitch && line.words?.length && lineWidthPx > 0 ? (
+    return isPitched(line, lineWidthPx) ? (
       <PitchedKaraokeLine
         key={idx}
         lines={track.lines}
         lineIdx={idx}
         widthPx={lineWidthPx}
-        baseFontSizePx={baseFontSizePx}
-        oneLineWidthPx={oneLineWidthPx}
+        baseFontSizePx={oneRowFontSizePx ?? karaokeFontSizePx(widthPx)}
+        oneRow={oneRowFontSizePx != null}
         activeWordIdx={activeWordIdx}
         activeWordEnded={activeWordEnded}
       />
@@ -110,8 +107,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
       <KaraokeLine
         key={idx}
         line={line}
-        baseFontSizePx={baseFontSizePx}
-        oneLineWidthPx={oneLineWidthPx}
+        oneRowFontSizePx={oneRowFontSizePx}
         activeWordIdx={activeWordIdx}
         activeWordEnded={activeWordEnded}
       />
@@ -135,56 +131,150 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
       </div>
     );
   }
-  const slotWidthPx = widthPx * TWO_LINE_WIDTH_FRAC;
   const [topIdx, bottomIdx] = playhead.shownOnTop ? [shownIdx, playhead.nextIdx] : [playhead.nextIdx, shownIdx];
   return (
-    <div
-      ref={ref}
-      className={classNames(styles.overlay, styles.twoLines)}
-      style={{ '--karaoke-slot-width-frac': TWO_LINE_WIDTH_FRAC } as React.CSSProperties}
-      data-testid="karaoke-lyrics"
-    >
-      <div className={classNames(styles.slotTop, !playhead.shownOnTop && styles.slotNext)} data-testid="karaoke-slot-top">
-        {lineView(topIdx, slotWidthPx)}
-      </div>
-      <div
-        className={classNames(styles.slotBottom, playhead.shownOnTop && styles.slotNext)}
-        data-testid="karaoke-slot-bottom"
-      >
-        {lineView(bottomIdx, slotWidthPx)}
-      </div>
+    <div ref={ref} className={classNames(styles.overlay, styles.twoLines)} data-testid="karaoke-lyrics">
+      <TwoLineSlots
+        lines={track.lines}
+        topIdx={topIdx}
+        bottomIdx={bottomIdx}
+        shownOnTop={playhead.shownOnTop}
+        widthPx={widthPx}
+        lineView={lineView}
+      />
     </div>
   );
 });
 
-/** `oneLineWidthPx` set: shrinks the font until the line fits that width unwrapped. */
-const KaraokeLine = observer(function KaraokeLine({
+type LineView = (idx: number | undefined, lineWidthPx: number, oneRowFontSizePx?: number) => React.ReactNode;
+
+type Slot = 'top' | 'bottom';
+
+/** Both lines at one shared font size: the largest at which each fits its slot
+ *  on one row. */
+const TwoLineSlots = observer(function TwoLineSlots({
+  lines,
+  topIdx,
+  bottomIdx,
+  shownOnTop,
+  widthPx,
+  lineView,
+}: {
+  lines: readonly LyricLine[];
+  topIdx: number | undefined;
+  bottomIdx: number | undefined;
+  shownOnTop: boolean;
+  widthPx: number;
+  lineView: LineView;
+}) {
+  const [rowWidths, setRowWidths] = React.useState<Partial<Record<Slot, { text: string; px: number }>>>({});
+  const onRowWidth = React.useCallback(
+    (slot: Slot, text: string, px: number) =>
+      setRowWidths((prev) => (prev[slot]?.text === text && prev[slot]?.px === px ? prev : { ...prev, [slot]: { text, px } })),
+    [],
+  );
+  const slotWidthPx = widthPx * TWO_LINE_WIDTH_FRAC;
+  const baseFontSizePx = karaokeFontSizePx(widthPx);
+  const fontReady = lyricsMeasurer.fontReady;
+  const furiganaRevision = furiganaAnnotator.revision;
+  const slots: [Slot, number | undefined][] = [
+    ['top', topIdx],
+    ['bottom', bottomIdx],
+  ];
+  const rowTexts = slots.map(([, idx]) => (idx != null ? lineRowText(lines[idx]) : undefined));
+  const pitchedFontSizes = React.useMemo(
+    () =>
+      slots.map(([, idx]) => {
+        if (idx == null || !isPitched(lines[idx], slotWidthPx)) return undefined;
+        const positioned = positionKaraokeLine(lines, idx);
+        return positioned && fitLineToWidth(positioned, slotWidthPx, baseFontSizePx).fontSizePx;
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lines, topIdx, bottomIdx, slotWidthPx, baseFontSizePx, appSettingsStore.karaokeShowPitch, fontReady, furiganaRevision],
+  );
+  const fontSizePx = Math.min(
+    baseFontSizePx,
+    ...slots.map(([slot], i) => {
+      if (pitchedFontSizes[i] != null) return pitchedFontSizes[i];
+      const row = rowWidths[slot];
+      return row != null && row.text === rowTexts[i] ? (baseFontSizePx * slotWidthPx) / row.px : baseFontSizePx;
+    }),
+  );
+  return slots.map(([slot, idx], i) => (
+    <React.Fragment key={slot}>
+      {rowTexts[i] != null && (
+        <RowWidthProbe slot={slot} text={rowTexts[i]} fontSizePx={baseFontSizePx} onWidth={onRowWidth} />
+      )}
+      <div
+        className={classNames(
+          slot === 'top' ? styles.slotTop : styles.slotBottom,
+          (slot === 'top') !== shownOnTop && styles.slotNext,
+        )}
+        style={{ fontSize: fontSizePx }}
+        data-testid={`karaoke-slot-${slot}`}
+      >
+        {slotWidthPx > 0 && lineView(idx, slotWidthPx, fontSizePx)}
+      </div>
+    </React.Fragment>
+  ));
+});
+
+/** Reports `text`'s one-row width at `fontSizePx`, from a hidden DOM copy: a
+ *  canvas measure can disagree with the rendered font. */
+function RowWidthProbe({
+  slot,
+  text,
+  fontSizePx,
+  onWidth,
+}: {
+  slot: Slot;
+  text: string;
+  fontSizePx: number;
+  onWidth: (slot: Slot, text: string, px: number) => void;
+}): React.ReactNode {
+  const ref = React.useRef<HTMLSpanElement>(null);
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // flushSync: apply the fitted size before this frame paints, not one frame late at full size
+    const ro = new ResizeObserver(([entry]) => flushSync(() => onWidth(slot, text, entry.contentRect.width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [slot, text, onWidth]);
+  return (
+    <span ref={ref} className={styles.rowWidthProbe} style={{ fontSize: fontSizePx }} aria-hidden>
+      {text}
+    </span>
+  );
+}
+
+function isPitched(line: LyricLine, lineWidthPx: number): boolean {
+  return appSettingsStore.karaokeShowPitch && !!line.words?.length && lineWidthPx > 0;
+}
+
+function lineRowText(line: LyricLine): string {
+  return lineSegments(line)
+    .map((s) => s.text)
+    .join('');
+}
+
+/** `oneRowFontSizePx` set: the line at that size, never wrapping. */
+const KaraokeLine = React.memo(function KaraokeLine({
   line,
-  baseFontSizePx,
-  oneLineWidthPx,
+  oneRowFontSizePx,
   activeWordIdx,
   activeWordEnded,
 }: {
   line: LyricLine;
-  baseFontSizePx: number;
-  oneLineWidthPx: number | undefined;
+  oneRowFontSizePx: number | undefined;
   activeWordIdx: number | undefined;
   activeWordEnded: boolean;
 }) {
   const segments = React.useMemo(() => lineSegments(line), [line]);
-  const fontReady = lyricsMeasurer.fontReady;
-  const fontSizePx = React.useMemo(
-    () =>
-      oneLineWidthPx != null
-        ? oneLineFontSizePx(segments.map((s) => s.text).join(''), oneLineWidthPx, baseFontSizePx)
-        : undefined,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [segments, oneLineWidthPx, baseFontSizePx, fontReady],
-  );
   return (
     <p
-      className={classNames(styles.line, oneLineWidthPx != null && styles.oneLine)}
-      style={fontSizePx != null ? { fontSize: fontSizePx } : undefined}
+      className={classNames(styles.line, oneRowFontSizePx != null && styles.oneRow)}
+      style={oneRowFontSizePx != null ? { fontSize: oneRowFontSizePx } : undefined}
       data-testid="karaoke-line"
     >
       {segments.map((s, i) => (
@@ -203,7 +293,7 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
   lineIdx,
   widthPx,
   baseFontSizePx,
-  oneLineWidthPx,
+  oneRow,
   activeWordIdx,
   activeWordEnded,
 }: {
@@ -211,24 +301,17 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
   lineIdx: number;
   widthPx: number;
   baseFontSizePx: number;
-  oneLineWidthPx: number | undefined;
+  oneRow: boolean;
   activeWordIdx: number | undefined;
   activeWordEnded: boolean;
 }) {
-  const positioned = React.useMemo(() => {
-    const span = lineSpanSec(lines, lineIdx);
-    const durationSec = span.endSec - span.startSec + 1;
-    const timeline = buildLinearTimeline(durationSec);
-    return positionLyricLines(lines, timeline, 0, [durationSec], -span.startSec, durationSec, { pitch: true }).find(
-      (p) => p.i === lineIdx,
-    );
-  }, [lines, lineIdx]);
+  const positioned = React.useMemo(() => positionKaraokeLine(lines, lineIdx), [lines, lineIdx]);
   const fontReady = lyricsMeasurer.fontReady;
   const furiganaRevision = furiganaAnnotator.revision;
   const fit = React.useMemo(
-    () => (positioned ? fitLineToWidth(positioned, widthPx, karaokeFontSizePx(widthPx)) : undefined),
+    () => (positioned ? fitLineToWidth(positioned, widthPx, baseFontSizePx) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [positioned, widthPx, fontReady, furiganaRevision],
+    [positioned, widthPx, baseFontSizePx, fontReady, furiganaRevision],
   );
   const pitchPaths = React.useMemo(
     () =>
@@ -250,8 +333,7 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
     return (
       <KaraokeLine
         line={lines[lineIdx]}
-        baseFontSizePx={baseFontSizePx}
-        oneLineWidthPx={oneLineWidthPx}
+        oneRowFontSizePx={oneRow ? baseFontSizePx : undefined}
         activeWordIdx={activeWordIdx}
         activeWordEnded={activeWordEnded}
       />
@@ -316,15 +398,14 @@ function fitLineToWidth(
   }
 }
 
-function oneLineFontSizePx(text: string, widthPx: number, baseFontSizePx: number): number {
-  let fontSizePx = baseFontSizePx;
-  for (let step = 0; step < FIT_STEPS; step++) {
-    const textPx =
-      lyricsMeasurer.measureTextPx(text, fontSizePx, KARAOKE_FONT_WEIGHT) + KARAOKE_STROKE_EM * fontSizePx;
-    if (textPx <= widthPx) break;
-    fontSizePx *= widthPx / textPx;
-  }
-  return fontSizePx;
+/** The line laid out on a timeline of its own sung span. */
+function positionKaraokeLine(lines: readonly LyricLine[], lineIdx: number): PositionedLine | undefined {
+  const span = lineSpanSec(lines, lineIdx);
+  const durationSec = span.endSec - span.startSec + 1;
+  const timeline = buildLinearTimeline(durationSec);
+  return positionLyricLines(lines, timeline, 0, [durationSec], -span.startSec, durationSec, { pitch: true }).find(
+    (p) => p.i === lineIdx,
+  );
 }
 
 /** Mirrors `typography.module.css::karaokeLyric`'s `clamp(22px, 4.2cqw, 72px)`. */

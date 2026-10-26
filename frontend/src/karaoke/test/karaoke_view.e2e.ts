@@ -138,7 +138,7 @@ test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating sl
       words: [{ startSec, endSec: startSec + 1.5, text }],
     });
     (window as unknown as { utai: Utai }).utai.lyricsStore.add(
-      [line(2, 'line one'), { startSec: 3.6, text: '' }, line(4, 'line two'), line(6, 'line three')],
+      [line(2, 'line one'), { startSec: 3.6, text: '' }, line(4, 'line two'), line(6, 'line three'), line(15, 'after the gap')],
       { source: 'plaintext', sourceLabel: 'probe' },
     );
   });
@@ -168,9 +168,17 @@ test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating sl
   await expect(bottom.locator('[data-word-state="current"]')).toHaveText('line two');
   await expect(top.locator('[data-word-state]')).toHaveText('line three');
   await expect(top.locator('[data-word-state]')).toHaveAttribute('data-word-state', 'upcoming');
+
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(6.2));
+  await expect(top).toHaveText('line three');
+  await expect(bottom).toHaveText('');
+
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(12.5));
+  await expect(top).toHaveText('');
+  await expect(bottom).toHaveText('after the gap');
 });
 
-test('karaoke "Show 2 lines" shrinks a long line to fit its slot unwrapped', async ({ page }) => {
+test('karaoke "Show 2 lines" sizes both lines alike, small enough for the longer to fit unwrapped', async ({ page }) => {
   await page.goto('/');
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -203,15 +211,21 @@ test('karaoke "Show 2 lines" shrinks a long line to fit its slot unwrapped', asy
       const tops = Array.from(long.querySelectorAll('span')).flatMap((s) =>
         Array.from(s.getClientRects()).map((rect) => Math.round(rect.top)),
       );
-      const slotPx = long.parentElement!.clientWidth * 0.75;
+      const slot = long.parentElement!.getBoundingClientRect();
+      const r = long.getBoundingClientRect();
+      const font = (e: HTMLElement): number => parseFloat(getComputedStyle(e).fontSize);
       return {
         oneRow: new Set(tops).size === 1,
         unclipped: long.scrollWidth <= long.clientWidth + 1,
-        fillsSlot: long.getBoundingClientRect().width >= slotPx * 0.9,
-        shrunk: parseFloat(getComputedStyle(long).fontSize) < parseFloat(getComputedStyle(short).fontSize),
+        insideSlot: r.left >= slot.left - 1 && r.right <= slot.right + 1,
+        fillsSlot: r.width >= slot.width * 0.75 * 0.9,
+        sameSize: font(long) === font(short),
+        shrunk: font(long) < 0.9 * Math.min(72, Math.max(22, slot.width * 0.042)),
       };
     });
-  await expect.poll(fit).toEqual({ oneRow: true, unclipped: true, fillsSlot: true, shrunk: true });
+  await expect
+    .poll(fit)
+    .toEqual({ oneRow: true, unclipped: true, insideSlot: true, fillsSlot: true, sameSize: true, shrunk: true });
 });
 
 test('karaoke view flags a song with no lyrics', async ({ page }) => {

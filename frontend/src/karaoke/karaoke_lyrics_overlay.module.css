@@ -20,7 +20,14 @@
     text-wrap: balance;
 }
 
-.oneLine {
+.oneRow {
+    white-space: nowrap;
+}
+
+.rowWidthProbe {
+    composes: karaokeLyric from '../typography.module.css';
+    position: absolute;
+    visibility: hidden;
     white-space: nowrap;
 }
 
@@ -48,7 +55,6 @@
 
 .slotTop > *,
 .slotBottom > * {
-    max-width: calc(var(--karaoke-slot-width-frac) * 100%);
     transition: opacity 150ms linear;
 }
 

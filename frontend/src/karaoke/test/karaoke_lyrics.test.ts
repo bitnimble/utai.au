@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { lineSegments, nextVocalLineIdx, shownLineIdx, vocalOrdinal } from '../karaoke_lyrics';
+import { followingLineIdx, lineSegments, nextVocalLineIdx, shownLineIdx, vocalOrdinal } from '../karaoke_lyrics';
 
 const word = (text: string) => ({ startSec: 0, endSec: 0, text });
 
@@ -71,6 +71,14 @@ describe('shownLineIdx', () => {
   test('applies the track offset', () => {
     expect(shownLineIdx(lines, 19, 5)).toBe(undefined);
     expect(shownLineIdx(lines, 22, 5)).toBe(0);
+  });
+
+  test('followingLineIdx stops at a gap that blanks the lyrics', () => {
+    expect(followingLineIdx(lines, 0)).toBe(1);
+    expect(followingLineIdx(lines, 1)).toBe(undefined);
+    expect(followingLineIdx(lines, 2)).toBe(undefined);
+    expect(followingLineIdx([timed(20, 22, 'a'), timed(25.5, 26, 'b')], 0)).toBe(1);
+    expect(followingLineIdx([timed(20, 22, 'a'), timed(25.6, 26, 'b')], 0)).toBe(undefined);
   });
 });
 
