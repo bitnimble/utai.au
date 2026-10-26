@@ -40,13 +40,13 @@ test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', as
 
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(3.2));
   const states = () =>
-    lines.locator('[data-state]').evaluateAll((els) =>
-      els.filter((e) => e.textContent!.trim() !== '').map((e) => e.getAttribute('data-state')),
+    lines.locator('[data-word-state]').evaluateAll((els) =>
+      els.filter((e) => e.textContent!.trim() !== '').map((e) => e.getAttribute('data-word-state')),
     );
   await expect.poll(states).toEqual(['sung', 'current', 'upcoming']);
 
   const stroke = await lines
-    .locator('[data-state="current"]', { hasText: 'two' })
+    .locator('[data-word-state="current"]', { hasText: 'two' })
     .evaluate((e) => getComputedStyle(e).webkitTextStrokeWidth);
   expect(parseFloat(stroke)).toBeGreaterThan(0);
 
@@ -58,4 +58,48 @@ test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', as
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('score-area')).toBeVisible();
   await expect(page.getByTestId('lyrics-track')).toBeVisible();
+});
+
+test('karaoke "Show lyric pitch" renders the line through the pitched lyric chips', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await page.evaluate(() => {
+    const word = (startSec: number, endSec: number, text: string, midi: number) => ({
+      startSec,
+      endSec,
+      text,
+      midi,
+      pitchSegments: [{ startSec, endSec, midi }],
+    });
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add(
+      [
+        {
+          startSec: 2,
+          text: 'low mid high',
+          words: [word(2, 2.9, 'low', 55), word(3, 3.9, 'mid', 62), word(4, 4.9, 'high', 70)],
+        },
+      ],
+      { source: 'plaintext', sourceLabel: 'probe' },
+    );
+  });
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.getByTestId('karaoke-show-pitch').click();
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(3.2));
+
+  const words = page.getByTestId('karaoke-lyrics').locator('[data-testid^="lyrics-word-"]');
+  await expect(words).toHaveCount(3);
+  await expect
+    .poll(() => words.evaluateAll((els) => els.map((e) => e.getAttribute('data-word-state'))))
+    .toEqual(['sung', 'current', 'upcoming']);
+  const tops = await words.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top));
+  expect(tops[0]).toBeGreaterThan(tops[1]);
+  expect(tops[1]).toBeGreaterThan(tops[2]);
+  expect(await page.getByTestId('karaoke-lyrics').locator('svg').count()).toBeGreaterThan(0);
 });

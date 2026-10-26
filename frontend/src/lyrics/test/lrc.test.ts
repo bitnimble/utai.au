@@ -1,5 +1,19 @@
 import { describe, expect, test } from 'bun:test';
-import { activeLineIndexAt, parseLrc, stripLyricNoise } from '../lrc';
+import { activeLineIndexAt, parseLrc, stripLyricNoise, wordState } from '../lrc';
+
+describe('wordState', () => {
+  test('before the first word, everything is upcoming', () => {
+    expect(wordState(0, undefined, false)).toBe('upcoming');
+  });
+
+  test('splits around the active word', () => {
+    expect([0, 1, 2].map((i) => wordState(i, 1, false))).toEqual(['sung', 'current', 'upcoming']);
+  });
+
+  test('the active word turns sung once its end passes', () => {
+    expect(wordState(1, 1, true)).toBe('sung');
+  });
+});
 
 describe('parseLrc', () => {
   test('parses single-stamp lines in mm:ss.cc form', () => {

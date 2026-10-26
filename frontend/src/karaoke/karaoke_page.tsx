@@ -773,7 +773,18 @@ const ViewMenu = observer(function ViewMenu() {
               />
             ))}
           </DropdownSection>
-          {appSettingsStore.viewMode === 'tracks' && <TracksViewSections />}
+          {appSettingsStore.viewMode === 'tracks' ? (
+            <TracksViewSections />
+          ) : (
+            <DropdownSection label="Lyrics">
+              <ToggleMenuItem
+                label="Show lyric pitch"
+                active={appSettingsStore.karaokeShowPitch}
+                onToggle={() => appSettingsPresenter.setKaraokeShowPitch(!appSettingsStore.karaokeShowPitch)}
+                testId="karaoke-show-pitch"
+              />
+            </DropdownSection>
+          )}
         </>
       )}
     </DropdownButton>

@@ -183,6 +183,18 @@ export function activeLineIndexAt(
   return active;
 }
 
+export type WordState = 'sung' | 'current' | 'upcoming';
+
+export function wordState(
+  wordIdx: number,
+  activeWordIdx: number | undefined,
+  activeWordEnded: boolean,
+): WordState {
+  if (activeWordIdx == null || wordIdx > activeWordIdx) return 'upcoming';
+  if (wordIdx < activeWordIdx || activeWordEnded) return 'sung';
+  return 'current';
+}
+
 /** Track-local start/end seconds spanned by one lyric line: the first word's
  *  start to the last word's end when the line is word-timed, else the line
  *  stamp to the next line's stamp (a 4 s fallback for the final, word-less

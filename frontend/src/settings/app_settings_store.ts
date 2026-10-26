@@ -60,6 +60,9 @@ export class AppSettingsStore {
 
   viewMode: ViewMode = 'tracks';
 
+  /** Karaoke overlay: lift each word to its sung pitch + draw its pitch line. */
+  karaokeShowPitch: boolean = false;
+
   constructor() {
     makeAutoObservable(this);
   }

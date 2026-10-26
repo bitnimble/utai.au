@@ -9,10 +9,10 @@ import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_setting
 import { playbackEngine } from 'src/editing/playback/player';
 import { LyricsPresenterContext, LyricsAlignStoreContext } from './lyrics_contexts';
 import {
-  LyricLineMeasureInput,
   layoutLyricWords,
   computePitchPaths,
   lyricFontSizeAt,
+  lyricMeasureInputs,
   lyricsMeasurer,
 } from './lyrics_measure';
 import { positionLyricLines } from './lyric_layout';
@@ -107,26 +107,11 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // resolution.
   const fontReady = lyricsMeasurer.fontReady;
   const furiganaRevision = furiganaAnnotator.revision;
-  const placements = React.useMemo(() => {
-    const measureInputs: LyricLineMeasureInput[] = positioned
-      .filter((p) => p.wordPositions !== undefined)
-      .map((p) => {
-        const wp = p.wordPositions!;
-        const lineSegs = furiganaAnnotator.segmentsForWords(wp.map((w) => w.text));
-        return {
-          lineIdx: p.i,
-          lineStartBeat: p.startBeat,
-          words: wp.map((w, j) => ({
-            sourceIdx: w.sourceIdx,
-            text: w.text,
-            beatOffset: w.beatOffset,
-            segments: lineSegs[j],
-          })),
-        };
-      });
-    return layoutLyricWords(measureInputs, pxPerBeat, lyricsFontSizePx);
+  const placements = React.useMemo(
+    () => layoutLyricWords(lyricMeasureInputs(positioned), pxPerBeat, lyricsFontSizePx),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positioned, pxPerBeat, fontReady, furiganaRevision, lyricsFontSizePx]);
+    [positioned, pxPerBeat, fontReady, furiganaRevision, lyricsFontSizePx],
+  );
 
   // Per-word pitch-line SVG paths. Kept with the placement because both need the
   // zoom-dependent glyph measurement (the wave wavelength is derived from each

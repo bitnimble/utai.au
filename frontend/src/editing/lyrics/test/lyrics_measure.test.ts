@@ -1,5 +1,20 @@
 import { describe, expect, test } from 'bun:test';
-import { needsWordSpace, packLine } from '../lyrics_measure';
+import { needsWordSpace, packLine, sustainSpan } from '../lyrics_measure';
+
+describe('sustainSpan', () => {
+  test('shows from just past the text to the end of the time cell', () => {
+    expect(sustainSpan(40, 100, Infinity)).toEqual({ fromPx: 44, toPx: 100, cellPx: 100 });
+  });
+
+  test('stops before whatever follows', () => {
+    expect(sustainSpan(40, 100, 70)).toEqual({ fromPx: 44, toPx: 70, cellPx: 100 });
+  });
+
+  test('none when the text fills the cell or the room', () => {
+    expect(sustainSpan(40, 45, Infinity)).toBe(undefined);
+    expect(sustainSpan(40, 100, 46)).toBe(undefined);
+  });
+});
 
 describe('packLine', () => {
   test('leaves well-separated words at their times', () => {

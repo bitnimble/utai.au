@@ -26,13 +26,14 @@
  * and placement may be off by a glyph or two during the font-load window.
  */
 import { makeAutoObservable, runInAction } from 'mobx';
-import { RubySegment } from 'src/lyrics/furigana';
+import { furiganaAnnotator, RubySegment } from 'src/lyrics/furigana';
 import { PositionedLine, WAVE_WAVELENGTH_PX, buildPitchLine } from './lyric_layout';
 
 const FONT_FAMILY =
   "'Bricolage Grotesque', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 const ACTIVE_FONT_WEIGHT = 800;
 const MIN_GAP_PX = 4;
+const MIN_SUSTAIN_PX = 6;
 export const ELLIPSIS = '…';
 const FULL_SIZE_PX_PER_BEAT = 120;
 const MIN_FONT_SCALE = 0.4;
@@ -186,6 +187,8 @@ export type LyricWordMeasureInput = {
   text: string;
   /** Beats from the line's start. Same units as `--lyric-word-beat-offset`. */
   beatOffset: number;
+  /** The word's time cell width in beats. */
+  beatWidth: number;
   /** Furigana segmentation for this word, when it carries ruby. Present
    *  drives the wider ruby-aware width measure; absent falls back to
    *  plain base-text measurement. */
@@ -201,21 +204,34 @@ export type LyricLineMeasureInput = {
   words: LyricWordMeasureInput[];
 };
 
-/** Where a word's text renders: `shift` px off its time, or not at all when its
- *  line ran out of room (the last shown word then ends in an ellipsis). */
-export type LyricWordPlacement = { shift: number; hidden: boolean; ellipsis: boolean };
+/** Where a word renders: its text `shift` px off its time, or not at all when
+ *  its line ran out of room (the last shown word then ends in an ellipsis).
+ *  `sustain` is the stretch of its pitch line that shows past the text, in px
+ *  from the glyph start; undefined when there's no room for one. `rightPx` is
+ *  where its text (and any ellipsis) ends on the row. */
+export type LyricWordPlacement = {
+  shift: number;
+  hidden: boolean;
+  ellipsis: boolean;
+  sustain: SustainSpan | undefined;
+  rightPx: number;
+};
+
+/** `fromPx`..`toPx` of the word's `cellPx`-wide time cell, px from its glyph start. */
+export type SustainSpan = { fromPx: number; toPx: number; cellPx: number };
 
 /**
- * Per-word text placement for a lyrics row, line by line (see {@link packLine}):
+ * Per-word placement for a lyrics row, line by line (see {@link packLine}):
  * words never overlap, Latin words keep a full space between them, and a line's
  * text stops before the next line starts, cutting to an ellipsis rather than
- * drifting away from when it's sung.
+ * drifting away from when it's sung. Each word's pitch line moves with its
+ * text and only shows in the room after it (see {@link sustainSpan}).
  *
  * Words are measured at the ACTIVE weight (the widest they ever render) so a
  * word going bold under the playhead can't spill onto its neighbour.
  *
- * Only moved or cut words get an entry. `fontReady` is read by callers to
- * invalidate across the web-font swap; this fn doesn't.
+ * `fontReady` is read by callers to invalidate across the web-font swap; this
+ * fn doesn't.
  */
 export function layoutLyricWords(
   lines: readonly LyricLineMeasureInput[],
@@ -227,7 +243,7 @@ export function layoutLyricWords(
   const spacePx = Math.max(MIN_GAP_PX, lyricsMeasurer.measureWordPx(' ', pxPerBeat, false, fontSizePx));
   const ellipsisPx = lyricsMeasurer.measureWordPx(ELLIPSIS, pxPerBeat, true, fontSizePx);
 
-  type MeasuredWord = { key: LyricWordKey; natural: number; width: number; text: string };
+  type MeasuredWord = { key: LyricWordKey; natural: number; width: number; cellPx: number; text: string };
   const measuredLines: MeasuredWord[][] = lines
     .map((line) =>
       line.words
@@ -239,6 +255,7 @@ export function layoutLyricWords(
             width: hasRuby
               ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, true, fontSizePx)
               : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, true, fontSizePx),
+            cellPx: w.beatWidth * pxPerBeat,
             text: w.text,
           };
         })
@@ -264,11 +281,48 @@ export function layoutLyricWords(
       const shift = positions[i] - w.natural;
       const hidden = i >= shown;
       const ellipsis = i === shown - 1 && shown < words.length;
-      if (Math.abs(shift) < 0.5 && !hidden && !ellipsis) return;
-      out.set(w.key, { shift: Math.abs(shift) < 0.5 ? 0 : shift, hidden, ellipsis });
+      const roomPx = (i + 1 < shown ? positions[i + 1] - MIN_GAP_PX : limit) - positions[i];
+      const textPx = w.width + (ellipsis ? ellipsisPx : 0);
+      out.set(w.key, {
+        shift: Math.abs(shift) < 0.5 ? 0 : shift,
+        hidden,
+        ellipsis,
+        sustain: hidden ? undefined : sustainSpan(textPx, w.cellPx, roomPx),
+        rightPx: positions[i] + textPx,
+      });
     });
   });
   return out;
+}
+
+/** The visible stretch of a word's pitch line, in px from its glyph start: past
+ *  its text, to the end of its time cell or the room before whatever follows,
+ *  whichever is first. Undefined when too little would show. */
+export function sustainSpan(textPx: number, cellPx: number, roomPx: number): SustainSpan | undefined {
+  const fromPx = textPx + MIN_GAP_PX;
+  const toPx = Math.min(cellPx, roomPx);
+  return toPx - fromPx >= MIN_SUSTAIN_PX ? { fromPx, toPx, cellPx } : undefined;
+}
+
+/** Measure inputs for every word-aligned line, with furigana segmentation. */
+export function lyricMeasureInputs(positioned: readonly PositionedLine[]): LyricLineMeasureInput[] {
+  return positioned
+    .filter((p) => p.wordPositions !== undefined)
+    .map((p) => {
+      const wp = p.wordPositions!;
+      const lineSegs = furiganaAnnotator.segmentsForWords(wp.map((w) => w.text));
+      return {
+        lineIdx: p.i,
+        lineStartBeat: p.startBeat,
+        words: wp.map((w, j) => ({
+          sourceIdx: w.sourceIdx,
+          text: w.text,
+          beatOffset: w.beatOffset,
+          beatWidth: w.beatWidth,
+          segments: lineSegs[j],
+        })),
+      };
+    });
 }
 
 /**

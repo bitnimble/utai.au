@@ -19,8 +19,6 @@ export function shownLineIdx(
   return undefined;
 }
 
-export type WordState = 'sung' | 'current' | 'upcoming';
-
 /** A run of a line's display text, owned by one word. Text between words
  *  (spaces, punctuation) belongs to the preceding word. */
 export type LineSegment = { text: string; wordIdx: number };
@@ -45,16 +43,6 @@ export function lineSegments(line: LyricLine): LineSegment[] {
   });
   if (cursor < line.text.length) segments.push({ text: line.text.slice(cursor), wordIdx: words.length - 1 });
   return segments;
-}
-
-export function wordState(
-  wordIdx: number,
-  activeWordIdx: number | undefined,
-  activeWordEnded: boolean,
-): WordState {
-  if (activeWordIdx == null || wordIdx > activeWordIdx) return 'upcoming';
-  if (wordIdx < activeWordIdx || activeWordEnded) return 'sung';
-  return 'current';
 }
 
 /** First non-blank line after `idx` (or from the start when `idx` is undefined). */

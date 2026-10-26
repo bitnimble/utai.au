@@ -32,6 +32,7 @@ export class AppSettingsPresenter {
         autoscrollMode: this.settings.autoscrollMode,
         lyricsFontSizePx: this.settings.lyricsFontSizePx,
         viewMode: this.settings.viewMode,
+        karaokeShowPitch: this.settings.karaokeShowPitch,
       });
       try {
         localStorage.setItem(STORAGE_KEY, snapshot);
@@ -59,6 +60,10 @@ export class AppSettingsPresenter {
 
   setViewMode(mode: ViewMode): void {
     this.settings.viewMode = mode;
+  }
+
+  setKaraokeShowPitch(on: boolean): void {
+    this.settings.karaokeShowPitch = on;
   }
 
   setLyricsFontSize(px: number): void {
@@ -102,6 +107,9 @@ export class AppSettingsPresenter {
       }
       if (obj.viewMode === 'tracks' || obj.viewMode === 'karaoke') {
         this.settings.viewMode = obj.viewMode;
+      }
+      if (typeof obj.karaokeShowPitch === 'boolean') {
+        this.settings.karaokeShowPitch = obj.karaokeShowPitch;
       }
     } catch {
       // corrupt JSON; keep defaults

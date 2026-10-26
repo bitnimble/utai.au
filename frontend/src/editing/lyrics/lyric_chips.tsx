@@ -2,11 +2,11 @@ import classNames from 'classnames';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { RubySegment, furiganaAnnotator } from 'src/lyrics/furigana';
-import { LyricWord } from 'src/lyrics/lrc';
+import { LyricWord, wordState, WordState } from 'src/lyrics/lrc';
 import { ViewportStoreContext } from '../viewport/viewport_contexts';
 import { intersectsBeatRange } from '../utils/windowing';
 import { PositionedLine, PositionedWord } from './lyric_layout';
-import { ELLIPSIS, LyricWordPlacement, lyricWordKey } from './lyrics_measure';
+import { ELLIPSIS, LyricWordPlacement, lyricWordKey, SustainSpan } from './lyrics_measure';
 import styles from './lyrics_track_view.module.css';
 
 /** Treat sub-millisecond gaps between rendered and raw model times as
@@ -73,7 +73,7 @@ function buildWordDebugTitle(w: LyricWord): string {
  *  but identical props mean the body never runs unless `isActive` or
  *  `activeWordIdx` (this line's word-level highlight target) actually
  *  flipped. */
-const LyricLineChip = observer(
+export const LyricLineChip = observer(
   ({
     lineIdx,
     startBeat,
@@ -84,6 +84,7 @@ const LyricLineChip = observer(
     pitchPaths,
     isActive,
     activeWordIdx,
+    activeWordEnded,
   }: {
     lineIdx: number;
     startBeat: number;
@@ -97,6 +98,8 @@ const LyricLineChip = observer(
     /** Defined only when this line is the active line; otherwise undefined
      *  so non-active lines stay memo-stable across word transitions. */
     activeWordIdx: number | undefined;
+    /** The active word's end has passed, so it reads as sung. */
+    activeWordEnded?: boolean;
   }) => {
     const wordAligned = wordPositions !== undefined;
     // Surfaces of this line's words, joined for context-aware furigana.
@@ -136,8 +139,9 @@ const LyricLineChip = observer(
                   word={w}
                   shift={placement?.shift ?? 0}
                   ellipsis={placement?.ellipsis ?? false}
-                  lined={pitchPaths.has(key)}
-                  isActive={activeWordIdx === w.sourceIdx}
+                  pitchPath={pitchPaths.get(key)}
+                  sustain={placement?.sustain}
+                  state={wordState(w.sourceIdx, activeWordIdx, activeWordEnded ?? false)}
                   lineWordTexts={lineWordTexts}
                   wordPosIndex={i}
                 />
@@ -156,8 +160,9 @@ const LyricWordChip = observer(
     word,
     shift,
     ellipsis,
-    lined,
-    isActive,
+    pitchPath,
+    sustain,
+    state,
     lineWordTexts,
     wordPosIndex,
   }: {
@@ -167,9 +172,11 @@ const LyricWordChip = observer(
     shift: number;
     /** The rest of the line didn't fit after this word. */
     ellipsis: boolean;
-    /** A pitch line runs under this word (drawn by {@link LyricPitchLines}). */
-    lined: boolean;
-    isActive: boolean;
+    /** The word's sung-pitch SVG path, or undefined when it carries no pitch. */
+    pitchPath: string | undefined;
+    /** Where the pitch line shows past the text; undefined when there's no room. */
+    sustain: SustainSpan | undefined;
+    state: WordState;
     /** Surfaces of every (in-range) word on this line, in render order;
      *  the furigana annotator tokenizes them together for context. Stable
      *  identity (memoised by the parent) so this `observer`+memo chip
@@ -189,14 +196,26 @@ const LyricWordChip = observer(
       <span
         className={classNames(
           styles.lyricWord,
-          isActive && styles.lyricWordActive,
+          state === 'current' && styles.lyricWordActive,
           pitched && styles.lyricWordPitched,
-          lined && styles.lyricWordLined,
+          pitchPath != null && styles.lyricWordLined,
         )}
         style={wordStyle as React.CSSProperties}
         title={buildWordDebugTitle(word.source)}
         data-testid={`lyrics-word-${lineIdx}-${wordIdx}`}
+        data-word-state={state}
       >
+        {pitchPath != null && sustain && (
+          <svg
+            className={styles.lyricPitchLine}
+            style={{ '--lyric-sustain-from': `${sustain.fromPx}px`, width: sustain.toPx - sustain.fromPx } as React.CSSProperties}
+            viewBox={`${(sustain.fromPx / sustain.cellPx) * 100} 0 ${((sustain.toPx - sustain.fromPx) / sustain.cellPx) * 100} 100`}
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <path d={pitchPath} />
+          </svg>
+        )}
         <span className={styles.lyricWordText}>
           <WordText words={lineWordTexts} index={wordPosIndex} />
           {ellipsis && ELLIPSIS}
@@ -242,44 +261,6 @@ const WordText = observer(
   },
 );
 
-/** One line's per-word sung-pitch lines, each spanning exactly its word's time
- *  cell (the path's viewBox x is time, see `lyric_layout.buildPitchLine`),
- *  wherever placement moved (or hid) the word's text. */
-const LyricPitchLines = React.memo(function LyricPitchLines({
-  line,
-  pitchPaths,
-}: {
-  line: PositionedLine;
-  pitchPaths: Map<string, string>;
-}) {
-  if (!line.wordPositions) return null;
-  return (
-    <>
-      {line.wordPositions.map((w) => {
-        const path = pitchPaths.get(lyricWordKey(line.i, w.sourceIdx));
-        if (path == null) return null;
-        return (
-          <svg
-            key={w.sourceIdx}
-            className={styles.lyricPitchLine}
-            style={
-              {
-                '--lyric-word-beat': line.startBeat + w.beatOffset,
-                '--lyric-word-beat-width': w.beatWidth,
-              } as React.CSSProperties
-            }
-            viewBox="0 0 100 100"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            <path d={path} />
-          </svg>
-        );
-      })}
-    </>
-  );
-});
-
 /** The active-line/word state {@link WindowedLines} reads to mark its
  *  chips. Subset of the row's local playhead observable. */
 type LyricsPlayhead = {
@@ -309,14 +290,12 @@ export const WindowedLines = observer(function WindowedLines({
 }) {
   const viewport = React.useContext(ViewportStoreContext);
   const range = viewport?.visibleBeatRange ?? null;
-  const visible = positioned.filter((p) => intersectsBeatRange(range, p.startBeat, p.endBeat - p.startBeat));
   return (
     <>
-      {/* every pitch line before any chip: the chips are stacking contexts, so DOM order is what keeps all text above all lines */}
-      {visible.map((p) => (
-        <LyricPitchLines key={`pitch-${p.i}`} line={p} pitchPaths={pitchPaths} />
-      ))}
-      {visible.map((p) => {
+      {positioned.map((p) => {
+        if (!intersectsBeatRange(range, p.startBeat, p.endBeat - p.startBeat)) {
+          return null;
+        }
         const isActive = playhead.activeLineIdx === p.i;
         return (
           <LyricLineChip

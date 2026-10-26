@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { lineSegments, nextVocalLineIdx, shownLineIdx, wordState } from '../karaoke_lyrics';
+import { lineSegments, nextVocalLineIdx, shownLineIdx } from '../karaoke_lyrics';
 
 const word = (text: string) => ({ startSec: 0, endSec: 0, text });
 
@@ -33,20 +33,6 @@ describe('lineSegments', () => {
 
   test('a word-less line is one run', () => {
     expect(lineSegments({ startSec: 0, text: 'plain line' })).toEqual([{ text: 'plain line', wordIdx: 0 }]);
-  });
-});
-
-describe('wordState', () => {
-  test('before the first word, everything is upcoming', () => {
-    expect(wordState(0, undefined, false)).toBe('upcoming');
-  });
-
-  test('splits around the active word', () => {
-    expect([0, 1, 2].map((i) => wordState(i, 1, false))).toEqual(['sung', 'current', 'upcoming']);
-  });
-
-  test('the active word turns sung once its end passes', () => {
-    expect(wordState(1, 1, true)).toBe('sung');
   });
 });
 
