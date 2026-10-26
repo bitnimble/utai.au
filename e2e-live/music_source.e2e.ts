@@ -22,8 +22,8 @@ test('music-source: enable YouTube Music, search, queue', async ({ page }) => {
   await expect(page.getByTestId('settings-modal')).toBeHidden();
 
   // search
-  await page.getByTestId('music-search-open').click();
-  await expect(page.getByTestId('music-search-modal')).toBeVisible();
+  await page.getByTestId('queue-open').click();
+  await page.getByTestId('queue-tab-search').click();
   await page.getByTestId('music-search-input').fill('daft punk get lucky');
   await page.getByTestId('music-search-submit').click();
 
@@ -39,8 +39,7 @@ test('music-source: enable YouTube Music, search, queue', async ({ page }) => {
   // decode is skipped.
   await firstResult.click();
   await page.getByTestId('music-add-to-queue').click();
-  await page.getByTestId('music-search-modal').getByRole('button', { name: 'Close music search' }).click();
-  await page.getByTestId('queue-open').click();
+  await page.getByTestId('queue-tab-current').click();
   await expect(page.getByTestId('queue-item-status').first()).toHaveText(/Downloading|Separating|Aligning|Ready/, {
     timeout: 180_000,
   });

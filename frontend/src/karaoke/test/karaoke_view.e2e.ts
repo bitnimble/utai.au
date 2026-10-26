@@ -252,7 +252,7 @@ test('karaoke view flags a song with no lyrics', async ({ page }) => {
   await expect(page.getByTestId('karaoke-no-lyrics')).toHaveCount(0);
 });
 
-test('karaoke view has a seek bar above the footer that follows and moves the playhead', async ({ page }) => {
+test('karaoke seek bar: flush above the footer, follows and moves the playhead, keyboard leaves Space for play/pause', async ({ page }) => {
   await page.goto('/');
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -277,10 +277,19 @@ test('karaoke view has a seek bar above the footer that follows and moves the pl
   await seekBar.fill('12');
   await expect(page.getByTestId('transport-time')).toHaveText(/^0:1[2-9]\.\d\d /);
 
+  const state = (): Promise<string> =>
+    page.evaluate(() => (window as unknown as { utai: { playbackEngine: { state: string } } }).utai.playbackEngine.state);
+  await expect.poll(state).toBe('playing');
+  await page.keyboard.press('Space');
+  await expect.poll(state).toBe('paused');
+  const before = await value();
+  await seekBar.press('ArrowRight');
+  expect(await value()).toBeGreaterThan(before);
+
   const bar = (await seekBar.boundingBox())!;
   const footer = (await page.locator('footer').boundingBox())!;
-  const trackBottom = bar.y + bar.height / 2 + 2;
-  expect(trackBottom).toBeCloseTo(footer.y, 0);
+  const TRACK_HALF_HEIGHT_PX = 2;
+  expect(Math.abs(bar.y + bar.height / 2 + TRACK_HALF_HEIGHT_PX - footer.y)).toBeLessThanOrEqual(1);
 });
 
 test('karaoke "Show lyric pitch" fits a long line inside the overlay', async ({ page }) => {

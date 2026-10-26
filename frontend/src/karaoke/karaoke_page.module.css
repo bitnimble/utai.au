@@ -56,8 +56,9 @@
     max-width: 100%;
 }
 
-/* Between the header and the transport; hosts the queue sidebar overlay. */
+/* Between the header and the transport: the stage beside the queue sidebar. */
 .body {
+    position: relative;
     flex: 1 1 auto;
     min-height: 0;
     display: flex;

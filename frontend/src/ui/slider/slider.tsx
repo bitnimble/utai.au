@@ -31,7 +31,7 @@ export const Slider = ({
   onChange: (value: number) => void;
   min?: number;
   max?: number;
-  step?: number;
+  step?: number | 'any';
   thin?: boolean;
   className?: string;
   ariaLabel?: string;

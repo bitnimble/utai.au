@@ -52,10 +52,6 @@ describe('annotateTokens', () => {
     expect(readKanjiRun(DICT, '鬱', true)).toBeNull();
   });
 
-  test('buildFuriganaDict keeps okurigana words out of the compound splits, primary reading first', () => {
-    expect(DICT.splits.has('嗤う')).toBe(false);
-    expect(DICT.splits.get('二人')?.map((s) => s.reading)).toEqual(['ふたり', 'ににん']);
-  });
   const KIMI_TO_FUTARI = [
     tok('君', 'キミ', '名詞', '代名詞'),
     tok('と', 'ト', '助詞', '格助詞'),

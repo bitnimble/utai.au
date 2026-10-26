@@ -18,6 +18,18 @@
     background: var(--color-bg-base);
 }
 
+/* Too narrow to dock beside a usable stage: cover it instead. */
+@media (max-width: 880px) {
+    .sidebar {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 10;
+        box-shadow: var(--shadow-lg);
+    }
+}
+
 .loadingScreen {
     position: absolute;
     inset: 0;

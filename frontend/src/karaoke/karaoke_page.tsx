@@ -245,7 +245,8 @@ export const KaraokePage = observer(function KaraokePage() {
       if (e.code !== 'Space' || e.repeat) return;
       const t = e.target as HTMLElement | null;
       const tag = t?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t?.isContentEditable) return;
+      const typesText = tag === 'INPUT' && !(t instanceof HTMLInputElement && t.type === 'range');
+      if (typesText || tag === 'TEXTAREA' || tag === 'SELECT' || t?.isContentEditable) return;
       e.preventDefault();
       presenter.togglePlay();
     };
@@ -703,7 +704,7 @@ const SeekBar = observer(function SeekBar() {
       className={styles.seekBar}
       value={playbackEngine.currentTime}
       max={song.durationSec}
-      step={0.01}
+      step="any"
       disabled={song.durationSec <= 0}
       onChange={(sec) => presenter.seek(sec)}
       ariaLabel="Seek"

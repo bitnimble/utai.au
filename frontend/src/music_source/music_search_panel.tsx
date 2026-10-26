@@ -48,7 +48,6 @@ export const MusicSearchPanel = observer(function MusicSearchPanel() {
           onChange={(e) => presenter.setQuery(e.target.value)}
           placeholder="Search songs (e.g. Daft Punk Get Lucky)"
           aria-label="Search query"
-          autoFocus
           data-testid="music-search-input"
         />
         <button

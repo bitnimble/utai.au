@@ -53,9 +53,6 @@ test('queue: first song plays at once, the rest queue up, and play next / remove
 
   await page.getByTestId('queue-open').click();
   await expect(page.getByTestId('queue-sidebar')).toBeVisible();
-  const sidebar = (await page.getByTestId('queue-sidebar').boundingBox())!;
-  const stage = (await page.getByTestId('score-area').boundingBox())!;
-  expect(stage.x + stage.width).toBeLessThanOrEqual(sidebar.x);
   await expect(queueTitles(page)).toHaveText(['Bravo', 'Charlie']);
   await expect(page.getByTestId('queue-count')).toHaveText('2');
   await expect(page.getByTestId('queue-item-status').first()).toHaveText('Ready');
@@ -80,6 +77,21 @@ test('queue: first song plays at once, the rest queue up, and play next / remove
 
   await page.getByTestId('queue-close').click();
   await expect(page.getByTestId('queue-sidebar')).toBeHidden();
+});
+
+test('queue: the sidebar docks beside the stage, and covers it when too narrow to share', async ({ page }) => {
+  await page.goto('/');
+  const stage = page.getByTestId('score-area');
+  const openWidth = (await stage.boundingBox())!.width;
+  await page.getByTestId('queue-open').click();
+  const sidebar = (await page.getByTestId('queue-sidebar').boundingBox())!;
+  const docked = (await stage.boundingBox())!;
+  expect(docked.x + docked.width).toBeLessThanOrEqual(sidebar.x);
+  expect(docked.width).toBeLessThan(openWidth);
+
+  await page.setViewportSize({ width: 600, height: 720 });
+  await expect.poll(async () => (await stage.boundingBox())!.width).toBeGreaterThan(590);
+  await expect(page.getByTestId('queue-sidebar')).toBeVisible();
 });
 
 test('queue: the next song plays when the current one ends', async ({ page }) => {
