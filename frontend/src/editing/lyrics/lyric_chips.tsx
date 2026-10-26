@@ -147,7 +147,7 @@ export const LyricLineChip = observer(
                 />
               );
             })
-          : text}
+          : <LineText text={text} />}
       </span>
     );
   },
@@ -236,30 +236,31 @@ const LyricWordChip = observer(
  *  plain text node when there's no ruby, so non-Japanese words render
  *  exactly as before. */
 const WordText = observer(
-  ({ words, index }: { words: readonly string[]; index: number }) => {
-    const segments =
-      furiganaAnnotator.segmentsForWords(words)[index] ??
-      ([{ base: words[index] ?? '' }] as RubySegment[]);
-    const hasRuby = segments.some((s) => s.reading !== undefined);
-    if (!hasRuby) return <>{words[index] ?? ''}</>;
-    return (
-      <ruby className={styles.ruby}>
-        {segments.map((seg: RubySegment, i) =>
-          seg.reading !== undefined ? (
-            <React.Fragment key={i}>
-              {seg.base}
-              <rt>{seg.reading}</rt>
-            </React.Fragment>
-          ) : (
-            // Bare run (okurigana / kana / punctuation): base on the
-            // baseline, no annotation column.
-            <React.Fragment key={i}>{seg.base}</React.Fragment>
-          ),
-        )}
-      </ruby>
-    );
-  },
+  ({ words, index }: { words: readonly string[]; index: number }) => (
+    <RubyText segments={furiganaAnnotator.segmentsForWords(words)[index] ?? [{ base: words[index] ?? '' }]} />
+  ),
 );
+
+/** A line-level (word-less) chip's text, with furigana over its kanji. */
+const LineText = observer(({ text }: { text: string }) => (
+  <RubyText segments={furiganaAnnotator.segmentsFor(text)} />
+));
+
+/** `segments` as `<ruby>` (reading over each kanji run), or plain text when
+ *  none carries a reading. */
+export const RubyText = ({ segments }: { segments: readonly RubySegment[] }): React.ReactNode => {
+  if (!segments.some((s) => s.reading !== undefined)) return segments.map((s) => s.base).join('');
+  return (
+    <ruby className={styles.ruby}>
+      {segments.map((seg, i) => (
+        <React.Fragment key={i}>
+          {seg.base}
+          {seg.reading !== undefined && <rt>{seg.reading}</rt>}
+        </React.Fragment>
+      ))}
+    </ruby>
+  );
+};
 
 /** The active-line/word state {@link WindowedLines} reads to mark its
  *  chips. Subset of the row's local playhead observable. */

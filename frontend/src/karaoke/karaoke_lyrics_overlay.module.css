@@ -31,6 +31,13 @@
     white-space: nowrap;
 }
 
+.line rt,
+.rowWidthProbe rt {
+    /* stylelint-disable-next-line property-disallowed-list -- furigana is an annotation sized off the lyric it sits on. */
+    font-size: 0.45em;
+    line-height: 1;
+}
+
 .twoLines {
     align-items: stretch;
 }

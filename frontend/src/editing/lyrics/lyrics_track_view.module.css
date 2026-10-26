@@ -296,7 +296,7 @@
     ruby-align: center;
 }
 
-.lyricWordText rt {
+.lyricLine rt {
     /* 0.65em of the lyric font size (shared var). Keep in lockstep with
        lyrics_measure.ts::RT_FONT_RATIO. */
     /* stylelint-disable-next-line property-disallowed-list -- furigana ruby is a one-off annotation sized relative to the chip's one-off base. */

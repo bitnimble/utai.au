@@ -2,7 +2,7 @@ import classNames from 'classnames';
 import { observer, useLocalObservable } from 'mobx-react-lite';
 import React from 'react';
 import { flushSync } from 'react-dom';
-import { LyricLineChip } from 'src/editing/lyrics/lyric_chips';
+import { LyricLineChip, RubyText } from 'src/editing/lyrics/lyric_chips';
 import { PositionedLine, positionLyricLines } from 'src/editing/lyrics/lyric_layout';
 import {
   computePitchPaths,
@@ -202,8 +202,8 @@ const TwoLineSlots = observer(function TwoLineSlots({
   );
   return slots.map(([slot, idx], i) => (
     <React.Fragment key={slot}>
-      {rowTexts[i] != null && (
-        <RowWidthProbe slot={slot} text={rowTexts[i]} fontSizePx={baseFontSizePx} onWidth={onRowWidth} />
+      {idx != null && rowTexts[i] != null && (
+        <RowWidthProbe slot={slot} line={lines[idx]} text={rowTexts[i]} fontSizePx={baseFontSizePx} onWidth={onRowWidth} />
       )}
       <div
         className={classNames(
@@ -219,15 +219,17 @@ const TwoLineSlots = observer(function TwoLineSlots({
   ));
 });
 
-/** Reports `text`'s one-row width at `fontSizePx`, from a hidden DOM copy: a
- *  canvas measure can disagree with the rendered font. */
+/** Reports the line's one-row width at `fontSizePx`, from a hidden DOM copy: a
+ *  canvas measure can disagree with the rendered font. `text` keys the report. */
 function RowWidthProbe({
   slot,
+  line,
   text,
   fontSizePx,
   onWidth,
 }: {
   slot: Slot;
+  line: LyricLine;
   text: string;
   fontSizePx: number;
   onWidth: (slot: Slot, text: string, px: number) => void;
@@ -243,7 +245,7 @@ function RowWidthProbe({
   }, [slot, text, onWidth]);
   return (
     <span ref={ref} className={styles.rowWidthProbe} style={{ fontSize: fontSizePx }} aria-hidden>
-      {text}
+      <LineGlyphs line={line} activeWordIdx={undefined} activeWordEnded={false} />
     </span>
   );
 }
@@ -259,7 +261,7 @@ function lineRowText(line: LyricLine): string {
 }
 
 /** `oneRowFontSizePx` set: the line at that size, never wrapping. */
-const KaraokeLine = React.memo(function KaraokeLine({
+const KaraokeLine = observer(function KaraokeLine({
   line,
   oneRowFontSizePx,
   activeWordIdx,
@@ -270,20 +272,34 @@ const KaraokeLine = React.memo(function KaraokeLine({
   activeWordIdx: number | undefined;
   activeWordEnded: boolean;
 }) {
-  const segments = React.useMemo(() => lineSegments(line), [line]);
   return (
     <p
       className={classNames(styles.line, oneRowFontSizePx != null && styles.oneRow)}
       style={oneRowFontSizePx != null ? { fontSize: oneRowFontSizePx } : undefined}
       data-testid="karaoke-line"
     >
-      {segments.map((s, i) => (
-        <span key={i} data-word-state={wordState(s.wordIdx, activeWordIdx, activeWordEnded)}>
-          {s.text}
-        </span>
-      ))}
+      <LineGlyphs line={line} activeWordIdx={activeWordIdx} activeWordEnded={activeWordEnded} />
     </p>
   );
+});
+
+/** The line's per-word runs, with furigana read in the context of the whole line. */
+const LineGlyphs = observer(function LineGlyphs({
+  line,
+  activeWordIdx,
+  activeWordEnded,
+}: {
+  line: LyricLine;
+  activeWordIdx: number | undefined;
+  activeWordEnded: boolean;
+}) {
+  const segments = React.useMemo(() => lineSegments(line), [line]);
+  const ruby = furiganaAnnotator.segmentsForWords(segments.map((s) => s.text));
+  return segments.map((s, i) => (
+    <span key={i} data-word-state={wordState(s.wordIdx, activeWordIdx, activeWordEnded)}>
+      <RubyText segments={ruby[i]} />
+    </span>
+  ));
 });
 
 /** The line through the track view's pitched renderer, its sung time scaled to

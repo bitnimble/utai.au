@@ -120,12 +120,13 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
     [positioned, pxPerBeat, pitchEnabled, vibratoEnabled],
   );
 
-  // True once any word has a resolved furigana reading; drives the ruby
+  // True once any word or line has a resolved furigana reading; drives the ruby
   // reserve strip. Re-derives on `furiganaRevision`.
   const trackHasFurigana = React.useMemo(() => {
     for (const p of positioned) {
-      if (!p.wordPositions) continue;
-      const lineSegs = furiganaAnnotator.segmentsForWords(p.wordPositions.map((w) => w.text));
+      const lineSegs = p.wordPositions
+        ? furiganaAnnotator.segmentsForWords(p.wordPositions.map((w) => w.text))
+        : [furiganaAnnotator.segmentsFor(p.text)];
       if (lineSegs.some((wordSegs) => wordSegs.some((s) => s.reading !== undefined))) return true;
     }
     return false;
