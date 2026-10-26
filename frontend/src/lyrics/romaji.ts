@@ -1,4 +1,4 @@
-import { toHiragana } from './kana';
+import { isKanjiCp, toHiragana } from './kana';
 
 const DIGRAPHS: Record<string, string> = {
   きゃ: 'kya', きゅ: 'kyu', きょ: 'kyo', ぎゃ: 'gya', ぎゅ: 'gyu', ぎょ: 'gyo',
@@ -27,13 +27,19 @@ const MONOGRAPHS: Record<string, string> = {
 };
 
 /** Hepburn romaji for kana (hiragana or katakana), without macrons: a long
- *  vowel is written doubled. Anything that isn't kana passes through. */
+ *  vowel is written doubled. Kanji, which only reach here when nothing could
+ *  read them, are dropped; anything else that isn't kana passes through. */
 export function kanaToRomaji(kana: string): string {
   const s = toHiragana(kana);
   let out = '';
   let doubleNext = false;
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
+    const cp = s.codePointAt(i)!;
+    if (isKanjiCp(cp)) {
+      if (cp > 0xffff) i++;
+      continue;
+    }
     if (ch === 'っ') {
       doubleNext = true;
       continue;

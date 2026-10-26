@@ -34,4 +34,9 @@ describe('kanaToRomaji', () => {
   test('passes through non-kana', () => {
     expect(kanaToRomaji('ABC、!')).toBe('ABC、!');
   });
+
+  test('drops kanji it has no reading for', () => {
+    expect(kanaToRomaji('嗤')).toBe('');
+    expect(kanaToRomaji('嗤って')).toBe('tte');
+  });
 });

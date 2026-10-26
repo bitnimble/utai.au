@@ -1,3 +1,17 @@
+/** Kanji (Han) code-point ranges we treat as needing furigana: CJK
+ *  Unified Ideographs, Extension A, the compatibility block, and
+ *  Extension B (lyrics occasionally reach for rarer glyphs). Callers
+ *  iterate code-point-wise (`for…of`) so Extension B's astral chars are
+ *  handled without surrogate bookkeeping. */
+export function isKanjiCp(cp: number): boolean {
+  return (
+    (cp >= 0x4e00 && cp <= 0x9fff) ||
+    (cp >= 0x3400 && cp <= 0x4dbf) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0x20000 && cp <= 0x2a6df)
+  );
+}
+
 export function hasKana(text: string): boolean {
   return /[ぁ-ヿ]/.test(text);
 }

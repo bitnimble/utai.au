@@ -40,7 +40,7 @@ import {
   loadFuriganaSplitMap,
   type FuriganaSplitMap,
 } from './jmdict_furigana_loader';
-import { hasKana, toHiragana } from './kana';
+import { hasKana, isKanjiCp, toHiragana } from './kana';
 import { kanaToRomaji } from './romaji';
 
 /** One run of base text with an optional reading. A reading is present
@@ -53,20 +53,6 @@ export type RubySegment = {
   /** Hiragana reading for a kanji run. Absent on bare (kana/other) runs. */
   reading?: string;
 };
-
-/** Kanji (Han) code-point ranges we treat as needing furigana: CJK
- *  Unified Ideographs, Extension A, the compatibility block, and
- *  Extension B (lyrics occasionally reach for rarer glyphs). The
- *  iteration is code-point-wise (`for…of`) so Extension B's astral chars
- *  are handled without surrogate bookkeeping. */
-function isKanjiCp(cp: number): boolean {
-  return (
-    (cp >= 0x4e00 && cp <= 0x9fff) ||
-    (cp >= 0x3400 && cp <= 0x4dbf) ||
-    (cp >= 0xf900 && cp <= 0xfaff) ||
-    (cp >= 0x20000 && cp <= 0x2a6df)
-  );
-}
 
 /** True when `text` contains at least one kanji, the trigger for lazily
  *  loading the kuromoji dictionary and annotating. Pure; cheap enough to
