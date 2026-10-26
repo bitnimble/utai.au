@@ -86,6 +86,27 @@ export type LyricLine = {
   words?: LyricWord[];
 };
 
+export function shiftLines(lines: LyricLine[], deltaSec: number): LyricLine[] {
+  if (deltaSec === 0) return lines;
+  const shift = (t: number): number => t + deltaSec;
+  return lines.map((line) => ({
+    ...line,
+    startSec: shift(line.startSec),
+    ...(line.words != null && {
+      words: line.words.map((w) => ({
+        ...w,
+        startSec: shift(w.startSec),
+        endSec: shift(w.endSec),
+        ...(w.rawStartSec != null && { rawStartSec: shift(w.rawStartSec) }),
+        ...(w.rawEndSec != null && { rawEndSec: shift(w.rawEndSec) }),
+        ...(w.pitchSegments != null && {
+          pitchSegments: w.pitchSegments.map((p) => ({ ...p, startSec: shift(p.startSec), endSec: shift(p.endSec) })),
+        }),
+      })),
+    }),
+  }));
+}
+
 /**
  * Strip noise from a lyric line: parenthetical asides (echo / harmony
  * voices like `(I'm screaming, I love you so)`) and standalone music

@@ -18,13 +18,18 @@ import {
 import type { SongMeta } from 'src/karaoke/song_schema';
 import { cleanStreamingTitle, parseSongFilename, pickConfidentMatch } from 'src/lyrics/auto_lyrics';
 import { alignLyricsForced } from 'src/lyrics/forced_align';
-import { LyricLine, parseLrc } from 'src/lyrics/lrc';
+import { LyricLine, parseLrc, shiftLines } from 'src/lyrics/lrc';
 import { LrclibMatch, searchLrclib } from 'src/lyrics/lrclib';
 import { attachPitchToLines } from 'src/lyrics/pitch_contour';
 import { separateStems, type SeparatedStems } from 'src/lyrics/separate_stems';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import { fetchTrack, type TrackResult } from 'src/net/music_source_client';
-import { fetchSkipSegments, musicDurationSec, type SkipSegment } from 'src/skip_segments/sponsorblock';
+import {
+  fetchSkipSegments,
+  musicDurationSec,
+  musicStartSec,
+  type SkipSegment,
+} from 'src/skip_segments/sponsorblock';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { prefetchBackingVideo } from 'src/video/video_client';
 import { songVideoId } from 'src/video/youtube';
@@ -91,7 +96,11 @@ async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promi
     albumArtUrl: track.coverUrl ?? undefined,
     sourceUrl: track.sourceUrl,
   };
-  return prepareMix(mix, meta, musicDurationSec(segments, durationSec), opts);
+  const music = {
+    durationSec: musicDurationSec(segments, durationSec),
+    startSec: musicStartSec(segments, durationSec),
+  };
+  return prepareMix(mix, meta, music, opts);
 };
 
 /** Best-effort: without segments, lyrics match against the full length. */
@@ -110,10 +119,10 @@ async function lookUpSkipSegments(sourceUrl: string | undefined, signal: AbortSi
 async function prepareMix(
   mix: File,
   meta: SongMeta,
-  knownMusicDurationSec: number | undefined,
+  knownMusic: { durationSec: number; startSec: number } | undefined,
   { signal, onStage }: PrepareOptions,
 ): Promise<PreparedSong> {
-  const musicSec = knownMusicDurationSec ?? (await decodeDurationSec(mix));
+  const music = knownMusic ?? { durationSec: await decodeDurationSec(mix), startSec: 0 };
   const parsed = parseSongFilename(mix.name);
   const title = meta.title || parsed.title;
   const songLabel = title || mix.name;
@@ -130,7 +139,7 @@ async function prepareMix(
       if (!signal.aborted && !isBackendUnreachable(err)) console.warn('[beats] analysis failed:', message(err));
       return undefined;
     }),
-    findSyncedLyrics(title, meta.artist || parsed.artist, musicSec, signal),
+    findSyncedLyrics(title, meta.artist || parsed.artist, music.durationSec, signal),
   ]);
   signal.throwIfAborted();
 
@@ -138,10 +147,10 @@ async function prepareMix(
   if (match) {
     onStage({ kind: 'aligning' });
     lyrics.push({
-      lines: await alignWords(match.lines, mix, stems, songLabel, signal),
+      lines: await alignWords(match.lines, music.startSec, mix, stems, songLabel, signal),
       source: 'lrclib',
       sourceLabel: `LRCLIB · ${match.trackName} - ${match.artistName}`,
-      offsetSec: 0,
+      offsetSec: music.startSec,
     });
   }
 
@@ -163,9 +172,11 @@ async function prepareMix(
 }
 
 /** Upgrade line-timed lyrics to word timings (plus the vocal pitch, when
- *  separation extracted it). Falls back to the line-timed input on failure. */
+ *  separation extracted it). Falls back to the line-timed input on failure.
+ *  `lines` and the result are relative to `offsetSec` into the audio. */
 async function alignWords(
   lines: LyricLine[],
+  offsetSec: number,
   mix: File,
   stems: SeparatedStems | undefined,
   songLabel: string,
@@ -176,13 +187,13 @@ async function alignWords(
       {
         kind: stems ? 'vocals' : 'mix',
         file: stems?.vocals ?? mix,
-        realign: { lines: lines.map((l) => ({ startSec: l.startSec, text: l.text })) },
+        realign: { lines: lines.map((l) => ({ startSec: l.startSec + offsetSec, text: l.text })) },
       },
       { signal },
     );
     if (aligned.length === 0) return lines;
     if (stems?.pitchContour) attachPitchToLines(stems.pitchContour, aligned);
-    return aligned;
+    return shiftLines(aligned, -offsetSec);
   } catch (err) {
     signal.throwIfAborted();
     if (!isBackendUnreachable(err)) toastStore.showError(`${songLabel}: lyrics align failed: ${message(err)}`);

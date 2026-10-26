@@ -1,5 +1,35 @@
 import { describe, expect, test } from 'bun:test';
-import { activeLineIndexAt, parseLrc, stripLyricNoise, wordState } from '../lrc';
+import { activeLineIndexAt, parseLrc, shiftLines, stripLyricNoise, wordState } from '../lrc';
+
+describe('shiftLines', () => {
+  test('moves every timestamp, leaving absent optional fields absent', () => {
+    const shifted = shiftLines(
+      [
+        { startSec: 1, text: 'plain' },
+        {
+          startSec: 30,
+          text: 'hi there',
+          words: [
+            { startSec: 30, endSec: 31, text: 'hi', rawStartSec: 29.5, midi: 60, pitchSegments: [{ startSec: 30, endSec: 31, midi: 60 }] },
+            { startSec: 31, endSec: 32, text: 'there' },
+          ],
+        },
+      ],
+      -20,
+    );
+    expect(shifted).toStrictEqual([
+      { startSec: -19, text: 'plain' },
+      {
+        startSec: 10,
+        text: 'hi there',
+        words: [
+          { startSec: 10, endSec: 11, text: 'hi', rawStartSec: 9.5, midi: 60, pitchSegments: [{ startSec: 10, endSec: 11, midi: 60 }] },
+          { startSec: 11, endSec: 12, text: 'there' },
+        ],
+      },
+    ]);
+  });
+});
 
 describe('wordState', () => {
   test('before the first word, everything is upcoming', () => {

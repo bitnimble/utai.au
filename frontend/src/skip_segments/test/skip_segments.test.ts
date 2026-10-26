@@ -4,7 +4,13 @@ import type { SongStore } from 'src/karaoke/song_store';
 import type { VideoStore } from 'src/video/video_store';
 import { SkipSegmentsPresenter } from '../skip_segments_presenter';
 import { SkipSegmentsStore } from '../skip_segments_store';
-import { fetchSkipSegments, musicDurationSec, parseSkipSegments, type SkipSegment } from '../sponsorblock';
+import {
+  fetchSkipSegments,
+  musicDurationSec,
+  musicStartSec,
+  parseSkipSegments,
+  type SkipSegment,
+} from '../sponsorblock';
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -83,6 +89,25 @@ describe('musicDurationSec', () => {
   test('ignores segments submitted against a different cut', () => {
     expect(musicDurationSec([seg('music_offtopic', 0, 20, 300)], 280)).toBe(280);
     expect(musicDurationSec([seg('music_offtopic', 0, 20, 281)], 280)).toBe(260);
+  });
+});
+
+describe('musicStartSec', () => {
+  const offtopic = (startSec: number, endSec: number): SkipSegment => ({
+    category: 'music_offtopic',
+    startSec,
+    endSec,
+    videoDurationSec: 0,
+  });
+
+  test('is the end of a non-music intro, merged across overlapping submissions', () => {
+    expect(musicStartSec([offtopic(15, 22), offtopic(0.2, 18), offtopic(250, 280)], 280)).toBe(22);
+  });
+
+  test('is 0 without a non-music intro', () => {
+    expect(musicStartSec([offtopic(250, 280)], 280)).toBe(0);
+    expect(musicStartSec([offtopic(5, 20)], 280)).toBe(0);
+    expect(musicStartSec([], 280)).toBe(0);
   });
 });
 

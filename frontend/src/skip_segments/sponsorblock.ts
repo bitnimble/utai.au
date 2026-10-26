@@ -39,16 +39,29 @@ export function applicableSegments(segments: readonly SkipSegment[], durationSec
 
 /** Length of the audio left once its `music_offtopic` segments are cut out. */
 export function musicDurationSec(segments: readonly SkipSegment[], durationSec: number): number {
-  let nonMusicSec = 0;
-  let coveredUntil = 0;
+  const nonMusicSec = nonMusicSpans(segments, durationSec).reduce((sum, s) => sum + s.endSec - s.startSec, 0);
+  return durationSec - nonMusicSec;
+}
+
+/** Where the music begins: the end of a `music_offtopic` intro, else 0. */
+export function musicStartSec(segments: readonly SkipSegment[], durationSec: number): number {
+  const first = nonMusicSpans(segments, durationSec)[0];
+  return first != null && first.startSec <= INTRO_START_SLACK_SEC ? first.endSec : 0;
+}
+
+const INTRO_START_SLACK_SEC = 0.5;
+
+/** The `music_offtopic` segments merged into disjoint spans, in time order. */
+function nonMusicSpans(segments: readonly SkipSegment[], durationSec: number): { startSec: number; endSec: number }[] {
+  const spans: { startSec: number; endSec: number }[] = [];
   for (const s of applicableSegments(segments, durationSec).sort((a, b) => a.startSec - b.startSec)) {
     if (s.category !== 'music_offtopic') continue;
-    const start = Math.max(s.startSec, coveredUntil);
-    const end = Math.min(s.endSec, durationSec);
-    if (end > start) nonMusicSec += end - start;
-    coveredUntil = Math.max(coveredUntil, end);
+    const endSec = Math.min(s.endSec, durationSec);
+    const last = spans.at(-1);
+    if (last != null && s.startSec <= last.endSec) last.endSec = Math.max(last.endSec, endSec);
+    else if (endSec > s.startSec) spans.push({ startSec: s.startSec, endSec });
   }
-  return durationSec - nonMusicSec;
+  return spans;
 }
 
 export async function fetchSkipSegments(videoId: string, signal?: AbortSignal): Promise<SkipSegment[]> {
