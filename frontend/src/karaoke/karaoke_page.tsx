@@ -76,6 +76,13 @@ import { VideoStore } from 'src/video/video_store';
 import { VideoPresenter } from 'src/video/video_presenter';
 import { VideoPresenterContext, VideoStoreContext } from 'src/video/video_contexts';
 import { VideoArea } from 'src/video/video_area';
+import { SkipSegmentsStore } from 'src/skip_segments/skip_segments_store';
+import { SkipSegmentsPresenter } from 'src/skip_segments/skip_segments_presenter';
+import {
+  SkipSegmentsPresenterContext,
+  SkipSegmentsStoreContext,
+} from 'src/skip_segments/skip_segments_contexts';
+import { SkipSegmentButton } from 'src/skip_segments/skip_segment_button';
 import { KaraokePresenter } from './karaoke_presenter';
 import {
   KaraokePresenterContext,
@@ -107,6 +114,8 @@ type Session = {
   scoringPresenter: ScoringPresenter;
   videoStore: VideoStore;
   videoPresenter: VideoPresenter;
+  skipSegments: SkipSegmentsStore;
+  skipSegmentsPresenter: SkipSegmentsPresenter;
 };
 
 function buildSession(): Session {
@@ -147,6 +156,8 @@ function buildSession(): Session {
   );
   const videoStore = new VideoStore(song);
   const videoPresenter = new VideoPresenter(videoStore);
+  const skipSegments = new SkipSegmentsStore(song, playbackEngine);
+  const skipSegmentsPresenter = new SkipSegmentsPresenter(skipSegments, videoStore, playbackEngine);
   return {
     song,
     viewport,
@@ -164,6 +175,8 @@ function buildSession(): Session {
     scoringPresenter,
     videoStore,
     videoPresenter,
+    skipSegments,
+    skipSegmentsPresenter,
   };
 }
 
@@ -186,6 +199,8 @@ export const KaraokePage = observer(function KaraokePage() {
     scoringPresenter,
     videoStore,
     videoPresenter,
+    skipSegments,
+    skipSegmentsPresenter,
   } = session;
 
   // Open the native engine's telemetry stream on desktop (no-op on web).
@@ -200,6 +215,11 @@ export const KaraokePage = observer(function KaraokePage() {
     void audioDevicePresenter.init();
     return () => audioDevicePresenter.dispose();
   }, [audioDevicePresenter]);
+
+  React.useEffect(() => {
+    skipSegmentsPresenter.start();
+    return () => skipSegmentsPresenter.dispose();
+  }, [skipSegmentsPresenter]);
 
   // Global spacebar transport toggle. Ignored while typing into a form field
   // or contenteditable so the space still types a character there.
@@ -235,6 +255,8 @@ export const KaraokePage = observer(function KaraokePage() {
       scoringPresenter,
       videoStore,
       videoPresenter,
+      skipSegments,
+      skipSegmentsPresenter,
       lyricsStore,
       playbackEngine,
     };
@@ -255,6 +277,8 @@ export const KaraokePage = observer(function KaraokePage() {
     scoringPresenter,
     videoStore,
     videoPresenter,
+    skipSegments,
+    skipSegmentsPresenter,
   ]);
 
   const karaokeView = appSettingsStore.viewMode === 'karaoke';
@@ -275,14 +299,21 @@ export const KaraokePage = observer(function KaraokePage() {
               <LyricsAlignStoreContext.Provider value={lyricsAlign}>
                 <VideoStoreContext.Provider value={videoStore}>
                 <VideoPresenterContext.Provider value={videoPresenter}>
+                <SkipSegmentsStoreContext.Provider value={skipSegments}>
+                <SkipSegmentsPresenterContext.Provider value={skipSegmentsPresenter}>
                 <div className={styles.page}>
                   <Toolbar />
-                  <VideoArea>{karaokeView && <KaraokeLyricsOverlay />}</VideoArea>
+                  <VideoArea>
+                    {karaokeView && <KaraokeLyricsOverlay />}
+                    <SkipSegmentButton />
+                  </VideoArea>
                   {!karaokeView && <ScoreArea />}
                   <TransportBar />
                   <Modals />
                   <ToastContainer />
                 </div>
+                </SkipSegmentsPresenterContext.Provider>
+                </SkipSegmentsStoreContext.Provider>
                 </VideoPresenterContext.Provider>
                 </VideoStoreContext.Provider>
               </LyricsAlignStoreContext.Provider>

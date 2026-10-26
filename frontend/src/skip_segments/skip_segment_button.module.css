@@ -1,0 +1,7 @@
+.skipButton {
+    composes: secondary sizeLg from '../ui/button/button.module.css';
+    position: absolute;
+    right: 24px;
+    bottom: 24px;
+    z-index: 2;
+}
