@@ -34,7 +34,7 @@ export const MusicSearchModal = observer(function MusicSearchModal() {
       open
       onClose={() => presenter.closeSearch()}
       ariaLabel="Add a song from a streaming service"
-      width={560}
+      width={960}
       maxHeight
       testId="music-search-modal"
     >
@@ -145,7 +145,7 @@ const ResultRow = observer(function ResultRow({
         data-testid={`music-search-result-${result.id}`}
       >
         <span className={styles.thumbnail}>
-          <Music size={18} aria-hidden="true" />
+          <Music size={32} aria-hidden="true" />
           {result.coverUrl != null && (
             <img
               src={result.coverUrl}
@@ -159,10 +159,8 @@ const ResultRow = observer(function ResultRow({
           )}
         </span>
         <span className={styles.resultText}>
-          <span className={styles.resultPrimary}>
-            <strong>{result.title}</strong>
-            {result.artists ? ` by ${result.artists}` : ''}
-          </span>
+          <span className={styles.resultTitle}>{result.title}</span>
+          {result.artists && <span className={styles.resultArtist}>{result.artists}</span>}
           <span className={styles.resultSecondary}>
             {serviceLabel(result.service)}
             {result.album ? ` · ${result.album}` : ''}
