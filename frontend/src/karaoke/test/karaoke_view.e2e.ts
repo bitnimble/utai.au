@@ -276,6 +276,11 @@ test('karaoke view has a seek bar above the footer that follows and moves the pl
 
   await seekBar.fill('12');
   await expect(page.getByTestId('transport-time')).toHaveText(/^0:1[2-9]\.\d\d /);
+
+  const bar = (await seekBar.boundingBox())!;
+  const footer = (await page.locator('footer').boundingBox())!;
+  const trackBottom = bar.y + bar.height / 2 + 2;
+  expect(trackBottom).toBeCloseTo(footer.y, 0);
 });
 
 test('karaoke "Show lyric pitch" fits a long line inside the overlay', async ({ page }) => {
