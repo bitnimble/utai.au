@@ -130,6 +130,15 @@
     font-size: 10px;
 }
 
+/* ─── Karaoke ───────────────────────────────────────────────────────── */
+
+/* Lyrics over the video; scales with the nearest size container. */
+.karaokeLyric {
+    font-size: clamp(22px, 4.2cqw, 72px);
+    font-weight: 800;
+    line-height: 1.25;
+}
+
 /* ─── Monospace (debug logs / stages) ───────────────────────────────── */
 
 .mono {

@@ -15,6 +15,10 @@ export const DEFAULT_ALIGNER_URL =
  *  lyric line and pages on the original line boundaries (classic karaoke). */
 export type AutoscrollMode = 'off' | 'center' | 'page' | 'line';
 
+/** `tracks` shows the editing score under the video; `karaoke` drops the score
+ *  and overlays the current lyric lines on a full-size video. */
+export type ViewMode = 'tracks' | 'karaoke';
+
 /** Default lyrics-chip font size (px): ~20% larger than the prior fixed 22px so
  *  the karaoke text reads comfortably. The View-menu stepper adjusts it within
  *  {@link MIN_LYRIC_FONT_SIZE_PX}..{@link MAX_LYRIC_FONT_SIZE_PX}. */
@@ -53,6 +57,8 @@ export class AppSettingsStore {
   /** Lyrics-chip font size (px), applied to every lyrics row and stepped from
    *  the View menu. */
   lyricsFontSizePx: number = DEFAULT_LYRIC_FONT_SIZE_PX;
+
+  viewMode: ViewMode = 'tracks';
 
   constructor() {
     makeAutoObservable(this);

@@ -4,6 +4,7 @@ import {
   AutoscrollMode,
   MAX_LYRIC_FONT_SIZE_PX,
   MIN_LYRIC_FONT_SIZE_PX,
+  ViewMode,
 } from './app_settings_store';
 
 const STORAGE_KEY = 'utai.settings';
@@ -30,6 +31,7 @@ export class AppSettingsPresenter {
         showLyricsVibrato: this.settings.showLyricsVibrato,
         autoscrollMode: this.settings.autoscrollMode,
         lyricsFontSizePx: this.settings.lyricsFontSizePx,
+        viewMode: this.settings.viewMode,
       });
       try {
         localStorage.setItem(STORAGE_KEY, snapshot);
@@ -53,6 +55,10 @@ export class AppSettingsPresenter {
 
   setAutoscrollMode(mode: AutoscrollMode): void {
     this.settings.autoscrollMode = mode;
+  }
+
+  setViewMode(mode: ViewMode): void {
+    this.settings.viewMode = mode;
   }
 
   setLyricsFontSize(px: number): void {
@@ -93,6 +99,9 @@ export class AppSettingsPresenter {
       }
       if (typeof obj.lyricsFontSizePx === 'number' && Number.isFinite(obj.lyricsFontSizePx)) {
         this.setLyricsFontSize(obj.lyricsFontSizePx);
+      }
+      if (obj.viewMode === 'tracks' || obj.viewMode === 'karaoke') {
+        this.settings.viewMode = obj.viewMode;
       }
     } catch {
       // corrupt JSON; keep defaults

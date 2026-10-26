@@ -1,0 +1,41 @@
+.overlay {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 6%;
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2em;
+    padding: 0 4%;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.line {
+    composes: karaokeLyric from '../typography.module.css';
+    margin: 0;
+    text-align: center;
+    text-wrap: balance;
+    color: var(--color-karaoke-text);
+}
+
+.word {
+    /* stroke under fill: only its outer half shows, glyph keeps its weight */
+    paint-order: stroke fill;
+    -webkit-text-stroke-width: 0.16em;
+    transition: -webkit-text-stroke-color 80ms linear;
+}
+
+.upcoming {
+    -webkit-text-stroke-color: var(--color-karaoke-outline);
+}
+
+.sung {
+    -webkit-text-stroke-color: var(--color-karaoke-outline-sung);
+}
+
+.current {
+    -webkit-text-stroke-color: var(--color-karaoke-outline-current);
+}

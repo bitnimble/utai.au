@@ -142,6 +142,14 @@
     flex: 0 0 auto;
 }
 
+.mixControls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    margin-left: auto;
+}
+
 .transportButton {
     display: inline-flex;
     align-items: center;

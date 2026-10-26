@@ -10,23 +10,23 @@ import styles from './video_area.module.css';
  * otherwise. Always rendered so the score stays pinned to the bottom. The
  * primary backing is a native `<video>` over a yt-dlp-fetched stream; it swaps
  * to the YouTube IFrame embed once that video's native fetch has failed
- * (`store.useEmbed`).
+ * (`store.useEmbed`). `children` render laid over the area.
  */
-export const VideoArea = observer(function VideoArea() {
+export const VideoArea = observer(function VideoArea({ children }: { children?: React.ReactNode }) {
   const store = React.useContext(VideoStoreContext)!;
   const presenter = React.useContext(VideoPresenterContext)!;
-  if (store.videoId == null) {
-    return <div className={styles.videoArea} data-testid="video-area" />;
-  }
   return (
     <div className={styles.videoArea} data-testid="video-area">
-      <div className={styles.videoFrame}>
-        {store.useEmbed ? (
-          <EmbedPlayer presenter={presenter} />
-        ) : (
-          <NativePlayer presenter={presenter} />
-        )}
-      </div>
+      {store.videoId != null && (
+        <div className={styles.videoFrame}>
+          {store.useEmbed ? (
+            <EmbedPlayer presenter={presenter} />
+          ) : (
+            <NativePlayer presenter={presenter} />
+          )}
+        </div>
+      )}
+      {children}
     </div>
   );
 });

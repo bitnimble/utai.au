@@ -57,7 +57,7 @@ function attachWaveformChunk(
 }
 
 /** Display name: filename with its extension stripped. */
-function audioTrackLabel(filename: string): string {
+export function audioTrackLabel(filename: string): string {
   return filename.replace(/\.[^./\\]+$/, '') || filename;
 }
 

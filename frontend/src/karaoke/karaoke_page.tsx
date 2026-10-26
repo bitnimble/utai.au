@@ -7,6 +7,7 @@ import { lyricsStore } from 'src/lyrics/store';
 import { activeLineIndexAt, LyricLine } from 'src/lyrics/lrc';
 import { formatPlayheadTime } from 'src/editing/playback/playhead_label';
 import { AudioTrackView } from 'src/editing/mixer/audio_track_view';
+import { StemMixControls } from 'src/editing/mixer/stem_mix_controls';
 import { LyricsTrackView } from 'src/editing/lyrics/lyrics_track_view';
 import { LyricsSearchModal } from 'src/editing/lyrics/lyrics_search_modal';
 import { LyricsTextLoadModal } from 'src/editing/lyrics/lyrics_text_modal';
@@ -68,6 +69,7 @@ import {
   AutoscrollMode,
   MAX_LYRIC_FONT_SIZE_PX,
   MIN_LYRIC_FONT_SIZE_PX,
+  ViewMode,
 } from 'src/settings/app_settings_store';
 import { autoscrollTargetLeft, GUTTER_PX } from 'src/editing/score/autoscroll';
 import { VideoStore } from 'src/video/video_store';
@@ -83,6 +85,7 @@ import {
 import { SongStore } from './song_store';
 import { SongIoPresenter } from './song_io_presenter';
 import { SongDetailsModal } from './song_details_modal';
+import { KaraokeLyricsOverlay } from './karaoke_lyrics_overlay';
 import styles from './karaoke_page.module.css';
 
 /** Peer stores + presenters, constructed once at the view root and passed
@@ -254,6 +257,7 @@ export const KaraokePage = observer(function KaraokePage() {
     videoPresenter,
   ]);
 
+  const karaokeView = appSettingsStore.viewMode === 'karaoke';
   return (
     <KaraokePresenterContext.Provider value={presenter}>
       <MusicSourceStoreContext.Provider value={musicSource}>
@@ -273,8 +277,8 @@ export const KaraokePage = observer(function KaraokePage() {
                 <VideoPresenterContext.Provider value={videoPresenter}>
                 <div className={styles.page}>
                   <Toolbar />
-                  <VideoArea />
-                  <ScoreArea />
+                  <VideoArea>{karaokeView && <KaraokeLyricsOverlay />}</VideoArea>
+                  {!karaokeView && <ScoreArea />}
                   <TransportBar />
                   <Modals />
                   <ToastContainer />
@@ -523,8 +527,10 @@ const ScoreArea = observer(function ScoreArea() {
     const ro = new ResizeObserver(() => presenter.setViewportWidth(el.clientWidth));
     ro.observe(el);
     presenter.setViewportWidth(el.clientWidth);
+    // remount (back from karaoke view) starts at scrollLeft 0; the windowing still holds the old scrollX
+    el.scrollLeft = viewport.scrollXPx;
     return () => ro.disconnect();
-  }, [presenter]);
+  }, [presenter, viewport]);
 
   // Playhead position writer: mirror the transport's currentTime × zoom
   // onto the `--playhead-x` var each frame it changes. Runs off the MobX
@@ -714,10 +720,18 @@ const TransportBar = observer(function TransportBar() {
         {song.durationSec > 0 ? ` / ${formatPlayheadTime(song.durationSec)}` : ''}
       </span>
       <ScoringControls />
-      <HomeAudioControls />
+      <div className={styles.mixControls}>
+        {appSettingsStore.viewMode === 'karaoke' && <StemMixControls />}
+        <HomeAudioControls />
+      </div>
     </footer>
   );
 });
+
+const VIEW_MODE_LABELS: Record<ViewMode, string> = {
+  tracks: 'Tracks',
+  karaoke: 'Karaoke',
+};
 
 const AUTOSCROLL_LABELS: Record<AutoscrollMode, string> = {
   off: "Don't follow",
@@ -726,71 +740,90 @@ const AUTOSCROLL_LABELS: Record<AutoscrollMode, string> = {
   line: 'Line',
 };
 
-/** Header "View" menu: follow-playhead mode, audio-track visibility, horizontal
- *  zoom, and lyrics font size. Groups every view control that used to sit in the
- *  transport bar / toolbar into one dropdown. */
+/** Header "View" menu: view mode, plus (in the tracks view) follow-playhead mode,
+ *  audio-track visibility, horizontal zoom, and lyrics font size. */
 const ViewMenu = observer(function ViewMenu() {
-  const presenter = React.useContext(KaraokePresenterContext)!;
-  const viewport = React.useContext(ViewportStoreContext)!;
   return (
     <DropdownButton
       label={<MenuLabel text="View" />}
       className={styles.toolButton}
-      title="Follow mode, track visibility, zoom, and lyrics size"
+      title="View mode, follow mode, track visibility, zoom, and lyrics size"
       testId="view-menu"
     >
       {() => (
         <>
-          <DropdownSection label="Follow playhead">
-            {(Object.keys(AUTOSCROLL_LABELS) as AutoscrollMode[]).map((mode) => (
+          <DropdownSection label="View mode">
+            {(Object.keys(VIEW_MODE_LABELS) as ViewMode[]).map((mode) => (
               <ToggleMenuItem
                 key={mode}
-                label={AUTOSCROLL_LABELS[mode]}
-                active={appSettingsStore.autoscrollMode === mode}
-                onToggle={() => appSettingsPresenter.setAutoscrollMode(mode)}
+                label={VIEW_MODE_LABELS[mode]}
+                active={appSettingsStore.viewMode === mode}
+                onToggle={() => appSettingsPresenter.setViewMode(mode)}
                 role="menuitemradio"
-                testId={`autoscroll-mode-${mode}`}
+                testId={`view-mode-${mode}`}
               />
             ))}
           </DropdownSection>
-          <DropdownSection label="Tracks">
-            <ToggleMenuItem
-              label="Audio tracks"
-              active={!viewport.audioTracksHidden}
-              onToggle={() => presenter.toggleAudioTracks()}
-              testId="toggle-audio-tracks"
-            />
-          </DropdownSection>
-          <DropdownSection label="Zoom">
-            <div className={styles.menuControlRow}>
-              <Slider
-                min={8}
-                max={600}
-                step={1}
-                value={viewport.pxPerBeat}
-                onChange={(v) => presenter.setZoom(v)}
-                ariaLabel="Horizontal zoom (pixels per second)"
-                className={styles.menuSlider}
-              />
-            </div>
-          </DropdownSection>
-          <DropdownSection label="Lyrics size">
-            <div className={styles.menuControlRow}>
-              <NumberStepper
-                value={appSettingsStore.lyricsFontSizePx}
-                onChange={(v) => appSettingsPresenter.setLyricsFontSize(v)}
-                step={2}
-                min={MIN_LYRIC_FONT_SIZE_PX}
-                max={MAX_LYRIC_FONT_SIZE_PX}
-                precision={0}
-                ariaLabel="Lyrics font size"
-                testId="lyrics-font-size"
-              />
-            </div>
-          </DropdownSection>
+          {appSettingsStore.viewMode === 'tracks' && <TracksViewSections />}
         </>
       )}
     </DropdownButton>
+  );
+});
+
+const TracksViewSections = observer(function TracksViewSections() {
+  const presenter = React.useContext(KaraokePresenterContext)!;
+  const viewport = React.useContext(ViewportStoreContext)!;
+  return (
+    <>
+      <DropdownSection label="Follow playhead">
+        {(Object.keys(AUTOSCROLL_LABELS) as AutoscrollMode[]).map((mode) => (
+          <ToggleMenuItem
+            key={mode}
+            label={AUTOSCROLL_LABELS[mode]}
+            active={appSettingsStore.autoscrollMode === mode}
+            onToggle={() => appSettingsPresenter.setAutoscrollMode(mode)}
+            role="menuitemradio"
+            testId={`autoscroll-mode-${mode}`}
+          />
+        ))}
+      </DropdownSection>
+      <DropdownSection label="Tracks">
+        <ToggleMenuItem
+          label="Audio tracks"
+          active={!viewport.audioTracksHidden}
+          onToggle={() => presenter.toggleAudioTracks()}
+          testId="toggle-audio-tracks"
+        />
+      </DropdownSection>
+      <DropdownSection label="Zoom">
+        <div className={styles.menuControlRow}>
+          <Slider
+            min={8}
+            max={600}
+            step={1}
+            value={viewport.pxPerBeat}
+            onChange={(v) => presenter.setZoom(v)}
+            ariaLabel="Horizontal zoom (pixels per second)"
+            className={styles.menuSlider}
+          />
+        </div>
+      </DropdownSection>
+      <DropdownSection label="Lyrics size">
+        <div className={styles.menuControlRow}>
+          <NumberStepper
+            value={appSettingsStore.lyricsFontSizePx}
+            onChange={(v) => appSettingsPresenter.setLyricsFontSize(v)}
+            step={2}
+            min={MIN_LYRIC_FONT_SIZE_PX}
+            max={MAX_LYRIC_FONT_SIZE_PX}
+            precision={0}
+            ariaLabel="Lyrics font size"
+            testId="lyrics-font-size"
+          />
+        </div>
+      </DropdownSection>
+    </>
   );
 });
 
