@@ -4,7 +4,7 @@ import {
   AlignLyricsRequest,
   nameLooksLikeVocals,
 } from 'src/lyrics/forced_align';
-import { LyricLine, stripLyricNoise } from 'src/lyrics/lrc';
+import { LyricLine, shiftLines, stripLyricNoise } from 'src/lyrics/lrc';
 import { attachPitchToLines } from 'src/lyrics/pitch_contour';
 import { LyricsSource, LyricsTrackId, lyricsStore } from 'src/lyrics/store';
 import { AudioTrackId } from 'src/editing/playback/audio_tracks';
@@ -219,10 +219,11 @@ export class LyricsPresenter {
     const track = playbackEngine.audioTracks.get(pick.id);
     if (!track) return;
     const file = new File([track.sourceBlob], track.filename, { type: track.sourceBlob.type });
+    const offsetSec = lyricsStore.get(targetTrackId)?.offsetSec ?? 0;
     const req: AlignLyricsRequest = {
       kind: pick.kind,
       file,
-      realign: { lines: lines.map((l) => ({ startSec: l.startSec, text: l.text })) },
+      realign: { lines: lines.map((l) => ({ startSec: l.startSec + offsetSec, text: l.text })) },
     };
 
     // Per-target concurrency: a second align on the SAME track aborts the
@@ -281,7 +282,10 @@ export class LyricsPresenter {
     // contour onto the freshly-aligned words here rather than re-running f0.
     if (track.pitchContour) attachPitchToLines(track.pitchContour, result);
     runInAction(() => {
-      lyricsStore.replace(targetTrackId, result, { source: meta.source, sourceLabel: meta.sourceLabel });
+      lyricsStore.replace(targetTrackId, shiftLines(result, -offsetSec), {
+        source: meta.source,
+        sourceLabel: meta.sourceLabel,
+      });
       this.lyricsAlign.lyricsAlignStatuses.delete(targetTrackId);
     });
   }

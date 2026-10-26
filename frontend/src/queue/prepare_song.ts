@@ -101,14 +101,16 @@ async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promi
     startSec: musicStartSec(segments, durationSec),
   };
   return prepareMix(mix, meta, music, opts);
-};
+}
+
+const SKIP_SEGMENTS_TIMEOUT_MS = 10_000;
 
 /** Best-effort: without segments, lyrics match against the full length. */
 async function lookUpSkipSegments(sourceUrl: string | undefined, signal: AbortSignal): Promise<SkipSegment[]> {
   const videoId = songVideoId({ sourceUrl });
   if (videoId == null) return [];
   try {
-    return await fetchSkipSegments(videoId, signal);
+    return await fetchSkipSegments(videoId, AbortSignal.any([signal, AbortSignal.timeout(SKIP_SEGMENTS_TIMEOUT_MS)]));
   } catch (err) {
     if (!signal.aborted) console.warn('[skip-segments] SponsorBlock lookup failed:', message(err));
     return [];

@@ -40,12 +40,11 @@ export type LyricsTrack = {
   readonly color: string;
 };
 
-/** Slider bounds for the user-facing time-offset nudger, in audio seconds.
- *  ±60s covers the realistic range of nudges (a file-loaded LRC from a
- *  different cut, an LRCLIB match against a remaster/edit) while still
- *  acting as a sanity tripwire for the "wrong song entirely" case. */
-export const LYRICS_OFFSET_MIN_SEC = -60;
-export const LYRICS_OFFSET_MAX_SEC = 60;
+/** Bounds for a lyrics track's time offset, in audio seconds. Wide enough
+ *  for a music video's non-music intro, which auto-loaded lyrics are
+ *  offset past. */
+export const LYRICS_OFFSET_MIN_SEC = -300;
+export const LYRICS_OFFSET_MAX_SEC = 300;
 export const LYRICS_OFFSET_STEP_SEC = 0.01;
 
 /** Module-level monotonic id allocator. Session-scoped; a page reload
