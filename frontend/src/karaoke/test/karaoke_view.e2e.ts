@@ -123,6 +123,47 @@ test('karaoke "Show lyric pitch" renders the line through the pitched lyric chip
   await expect(page.getByTestId('karaoke-line')).toHaveText('low mid high');
 });
 
+test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating slots', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await page.evaluate(() => {
+    const line = (startSec: number, text: string) => ({
+      startSec,
+      text,
+      words: [{ startSec, endSec: startSec + 1.5, text }],
+    });
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add(
+      [line(2, 'line one'), { startSec: 3.6, text: '' }, line(4, 'line two'), line(6, 'line three')],
+      { source: 'plaintext', sourceLabel: 'probe' },
+    );
+  });
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.getByTestId('karaoke-two-lines').click();
+  await page.keyboard.press('Escape');
+
+  const top = page.getByTestId('karaoke-slot-top');
+  const bottom = page.getByTestId('karaoke-slot-bottom');
+  await expect(top).toHaveText('line one');
+  await expect(bottom).toHaveText('line two');
+  const lineBox = (slot: typeof top) => slot.getByTestId('karaoke-line').evaluate((e) => e.getBoundingClientRect());
+  const [topBox, bottomBox] = [await lineBox(top), await lineBox(bottom)];
+  expect(topBox.left).toBeLessThan(bottomBox.left);
+  expect(topBox.bottom).toBeLessThanOrEqual(bottomBox.top);
+
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(4.2));
+  await expect(top).toHaveText('line three');
+  await expect(bottom).toHaveText('line two');
+  await expect(bottom.locator('[data-word-state="current"]')).toHaveText('line two');
+  await expect(top.locator('[data-word-state]')).toHaveText('line three');
+  await expect(top.locator('[data-word-state]')).toHaveAttribute('data-word-state', 'upcoming');
+});
+
 test('karaoke "Show lyric pitch" fits a long line inside the overlay', async ({ page }) => {
   await page.goto('/');
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({

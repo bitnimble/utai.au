@@ -44,6 +44,13 @@ export function lineSegments(line: LyricLine): LineSegment[] {
   return segments;
 }
 
+/** How many non-blank lines come before `lines[idx]`. */
+export function vocalOrdinal(lines: readonly LyricLine[], idx: number): number {
+  let n = 0;
+  for (let i = 0; i < idx; i++) if (!isBlankLyricLine(lines[i])) n++;
+  return n;
+}
+
 /** First non-blank line after `idx` (or from the start when `idx` is undefined). */
 export function nextVocalLineIdx(lines: readonly LyricLine[], idx: number | undefined): number | undefined {
   for (let i = idx == null ? 0 : idx + 1; i < lines.length; i++) {

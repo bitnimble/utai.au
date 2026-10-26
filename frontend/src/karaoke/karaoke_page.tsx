@@ -798,6 +798,12 @@ const ViewMenu = observer(function ViewMenu() {
                 onToggle={() => appSettingsPresenter.setKaraokeShowPitch(!appSettingsStore.karaokeShowPitch)}
                 testId="karaoke-show-pitch"
               />
+              <ToggleMenuItem
+                label="Show 2 lines"
+                active={appSettingsStore.karaokeTwoLines}
+                onToggle={() => appSettingsPresenter.setKaraokeTwoLines(!appSettingsStore.karaokeTwoLines)}
+                testId="karaoke-two-lines"
+              />
             </DropdownSection>
           )}
         </>

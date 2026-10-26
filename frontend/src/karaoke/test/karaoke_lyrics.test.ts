@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { lineSegments, nextVocalLineIdx, shownLineIdx } from '../karaoke_lyrics';
+import { lineSegments, nextVocalLineIdx, shownLineIdx, vocalOrdinal } from '../karaoke_lyrics';
 
 const word = (text: string) => ({ startSec: 0, endSec: 0, text });
 
@@ -86,5 +86,9 @@ describe('nextVocalLineIdx', () => {
     expect(nextVocalLineIdx(lines, undefined)).toBe(1);
     expect(nextVocalLineIdx(lines, 1)).toBe(3);
     expect(nextVocalLineIdx(lines, 3)).toBe(undefined);
+  });
+
+  test('vocalOrdinal counts only the sung lines before', () => {
+    expect([1, 3].map((i) => vocalOrdinal(lines, i))).toEqual([0, 1]);
   });
 });

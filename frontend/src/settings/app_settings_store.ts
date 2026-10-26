@@ -63,6 +63,9 @@ export class AppSettingsStore {
   /** Karaoke overlay: lift each word to its sung pitch + draw its pitch line. */
   karaokeShowPitch: boolean = false;
 
+  /** Karaoke overlay: show the next line too, alternating top-left / bottom-right. */
+  karaokeTwoLines: boolean = false;
+
   constructor() {
     makeAutoObservable(this);
   }

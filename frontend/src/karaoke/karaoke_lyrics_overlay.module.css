@@ -20,6 +20,40 @@
     text-wrap: balance;
 }
 
+.twoLines {
+    align-items: stretch;
+}
+
+/* Sized like a line so an empty slot keeps the other in place. */
+.slotTop,
+.slotBottom {
+    display: flex;
+    min-height: 1.25em;
+}
+
+.slotTop {
+    composes: karaokeLyric from '../typography.module.css';
+    justify-content: flex-start;
+}
+
+.slotBottom {
+    composes: karaokeLyric from '../typography.module.css';
+    justify-content: flex-end;
+}
+
+.slotTop > *,
+.slotBottom > * {
+    max-width: calc(var(--karaoke-slot-width-frac) * 100%);
+}
+
+.slotTop .line {
+    text-align: left;
+}
+
+.slotBottom .line {
+    text-align: right;
+}
+
 /* Words in both the plain line and the track view's pitched chips. */
 .overlay [data-word-state] {
     color: var(--color-karaoke-text);

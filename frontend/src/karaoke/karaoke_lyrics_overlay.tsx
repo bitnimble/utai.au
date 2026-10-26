@@ -17,15 +17,17 @@ import { furiganaAnnotator } from 'src/lyrics/furigana';
 import { activeLineIndexAt, activeWordIndexAt, lineSpanSec, LyricLine, wordState } from 'src/lyrics/lrc';
 import { LyricsTrack, lyricsStore } from 'src/lyrics/store';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
-import { lineSegments, shownLineIdx } from './karaoke_lyrics';
+import { lineSegments, nextVocalLineIdx, shownLineIdx, vocalOrdinal } from './karaoke_lyrics';
 import styles from './karaoke_lyrics_overlay.module.css';
 
 const PITCH_BAND_EM = 2.5;
+const TWO_LINE_WIDTH_FRAC = 0.75;
 const MIN_LINE_SPAN_SEC = 0.5;
 const ZOOM_FIT_STEPS = 3;
 const FIT_STEPS = 8;
 
-/** The first lyrics track's current line, karaoke style, laid over the video area. */
+/** The first lyrics track's current line (plus the next, top-left / bottom-right
+ *  by alternating line, in two-line mode), karaoke style, over the video area. */
 export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
   const playhead = useLocalObservable(() => ({
     get track(): LyricsTrack | undefined {
@@ -42,6 +44,16 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     get shownIdx(): number | undefined {
       const t = this.track;
       return t ? shownLineIdx(t.lines, this.audioTimeNow, t.offsetSec) : undefined;
+    },
+    get nextIdx(): number | undefined {
+      const t = this.track;
+      const shown = this.shownIdx;
+      return t && shown != null ? nextVocalLineIdx(t.lines, shown) : undefined;
+    },
+    get shownOnTop(): boolean {
+      const t = this.track;
+      const shown = this.shownIdx;
+      return t != null && shown != null && vocalOrdinal(t.lines, shown) % 2 === 0;
     },
     get activeWordIdx(): number | undefined {
       const t = this.track;
@@ -71,26 +83,48 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
 
   const track = playhead.track;
   const shownIdx = playhead.shownIdx;
-  const shown = track != null && shownIdx != null ? track.lines[shownIdx] : undefined;
-  const shownIsActive = shownIdx != null && playhead.activeLineIdx === shownIdx;
-  const activeWordIdx = shownIsActive ? playhead.activeWordIdx : undefined;
-  const activeWordEnded = shownIsActive && playhead.activeWordEnded;
-  const pitched = appSettingsStore.karaokeShowPitch && shown?.words?.length && widthPx > 0;
+  const twoLines = appSettingsStore.karaokeTwoLines;
+  const lineView = (idx: number | undefined, lineWidthPx: number): React.ReactNode => {
+    if (track == null || idx == null) return null;
+    const line = track.lines[idx];
+    const isActive = playhead.activeLineIdx === idx;
+    const activeWordIdx = isActive ? playhead.activeWordIdx : undefined;
+    const activeWordEnded = isActive && playhead.activeWordEnded;
+    return appSettingsStore.karaokeShowPitch && line.words?.length && lineWidthPx > 0 ? (
+      <PitchedKaraokeLine
+        key={idx}
+        lines={track.lines}
+        lineIdx={idx}
+        widthPx={lineWidthPx}
+        activeWordIdx={activeWordIdx}
+        activeWordEnded={activeWordEnded}
+      />
+    ) : (
+      <KaraokeLine key={idx} line={line} activeWordIdx={activeWordIdx} activeWordEnded={activeWordEnded} />
+    );
+  };
+  if (!twoLines || shownIdx == null) {
+    return (
+      <div ref={ref} className={styles.overlay} data-testid="karaoke-lyrics">
+        {lineView(shownIdx, widthPx)}
+      </div>
+    );
+  }
+  const slotWidthPx = widthPx * TWO_LINE_WIDTH_FRAC;
+  const [topIdx, bottomIdx] = playhead.shownOnTop ? [shownIdx, playhead.nextIdx] : [playhead.nextIdx, shownIdx];
   return (
-    <div ref={ref} className={styles.overlay} data-testid="karaoke-lyrics">
-      {shown &&
-        (pitched ? (
-          <PitchedKaraokeLine
-            key={shownIdx}
-            lines={track!.lines}
-            lineIdx={shownIdx!}
-            widthPx={widthPx}
-            activeWordIdx={activeWordIdx}
-            activeWordEnded={activeWordEnded}
-          />
-        ) : (
-          <KaraokeLine key={shownIdx} line={shown} activeWordIdx={activeWordIdx} activeWordEnded={activeWordEnded} />
-        ))}
+    <div
+      ref={ref}
+      className={classNames(styles.overlay, styles.twoLines)}
+      style={{ '--karaoke-slot-width-frac': TWO_LINE_WIDTH_FRAC } as React.CSSProperties}
+      data-testid="karaoke-lyrics"
+    >
+      <div className={styles.slotTop} data-testid="karaoke-slot-top">
+        {lineView(topIdx, slotWidthPx)}
+      </div>
+      <div className={styles.slotBottom} data-testid="karaoke-slot-bottom">
+        {lineView(bottomIdx, slotWidthPx)}
+      </div>
     </div>
   );
 });
