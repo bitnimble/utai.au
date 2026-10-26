@@ -3,9 +3,9 @@ import classNames from 'classnames';
 import React from 'react';
 import { LyricLine, PitchSegment } from 'src/lyrics/lrc';
 import { buildLinearTimeline } from 'src/editing/playback/timeline';
-import { LyricLineChip } from '../lyric_chips';
+import { WindowedLines } from '../lyric_chips';
 import { positionLyricLines } from '../lyric_layout';
-import { computePitchPaths } from '../lyrics_measure';
+import { computePitchPaths, LyricWordPlacement } from '../lyrics_measure';
 import styles from '../lyrics_track_view.module.css';
 
 /**
@@ -101,6 +101,8 @@ const LINES: LyricLine[] = [
   },
 ];
 
+const IDLE_PLAYHEAD = { activeLineIdx: undefined, activeWordIdx: undefined };
+
 function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { lines: LyricLine[] }) {
   const hasPitchData = lines.some((l) => l.words?.some((w) => w.midi != null));
   const trackHasPitch = pitch && hasPitchData; // vertical placement -> tall row
@@ -109,7 +111,7 @@ function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { line
   const durationSec = Math.max(...lines.flatMap((l) => l.words?.map((w) => w.endSec) ?? [0])) + 1;
   const timeline = buildLinearTimeline(durationSec);
   const positioned = positionLyricLines(lines, timeline, 0, [durationSec], 0, durationSec, { pitch });
-  const emptyShifts = React.useMemo(() => new Map<string, number>(), []);
+  const noPlacements = React.useMemo(() => new Map<string, LyricWordPlacement>(), []);
   const pitchPaths = React.useMemo(
     () => computePitchPaths(positioned, pxPerBeat, { pitch, vibrato }),
     [positioned, pxPerBeat, pitch, vibrato],
@@ -137,20 +139,12 @@ function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { line
             } as React.CSSProperties
           }
         >
-          {positioned.map((p) => (
-            <LyricLineChip
-              key={p.i}
-              lineIdx={p.i}
-              startBeat={p.startBeat}
-              endBeat={p.endBeat}
-              text={p.text}
-              wordPositions={p.wordPositions}
-              shifts={emptyShifts}
-              pitchPaths={pitchPaths}
-              isActive={false}
-              activeWordIdx={undefined}
-            />
-          ))}
+          <WindowedLines
+            positioned={positioned}
+            placements={noPlacements}
+            pitchPaths={pitchPaths}
+            playhead={IDLE_PLAYHEAD}
+          />
         </div>
       </div>
     </div>

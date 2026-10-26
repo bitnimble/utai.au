@@ -10,8 +10,9 @@ import { playbackEngine } from 'src/editing/playback/player';
 import { LyricsPresenterContext, LyricsAlignStoreContext } from './lyrics_contexts';
 import {
   LyricLineMeasureInput,
-  computeLyricShifts,
+  layoutLyricWords,
   computePitchPaths,
+  lyricFontSizeAt,
   lyricsMeasurer,
 } from './lyrics_measure';
 import { positionLyricLines } from './lyric_layout';
@@ -60,7 +61,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // lyrics track can still show vibrato.
   const pitchEnabled = appSettingsStore.showLyricsPitch;
   const vibratoEnabled = appSettingsStore.showLyricsVibrato;
-  const lyricsFontSizePx = appSettingsStore.lyricsFontSizePx;
+  const lyricsFontSizePx = lyricFontSizeAt(appSettingsStore.lyricsFontSizePx, structural.pxPerBeat);
   const hasPitchData = React.useMemo(
     () => lines.some((l) => l.words?.some((w) => w.midi != null)),
     [lines],
@@ -99,14 +100,14 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
     [lines, timeline, songLeadInSec, structuralBeats, offsetSec, layerBeats, pitchEnabled],
   );
 
-  // Word-collision avoidance: absolutely-positioned word spans can overlap
-  // when two words land on nearly identical beats. `computeLyricShifts`
-  // measures each glyph's true width via an off-screen canvas mirroring the
-  // variable-font axes the CSS clamps against `--px-per-beat`. Re-derived
-  // on font load + furigana resolution.
+  // Word text placement: absolutely-positioned word spans would overlap when
+  // words land close together. `layoutLyricWords` measures each glyph's true
+  // width via an off-screen canvas mirroring the variable-font axes the CSS
+  // clamps against `--px-per-beat`. Re-derived on font load + furigana
+  // resolution.
   const fontReady = lyricsMeasurer.fontReady;
   const furiganaRevision = furiganaAnnotator.revision;
-  const shifts = React.useMemo(() => {
+  const placements = React.useMemo(() => {
     const measureInputs: LyricLineMeasureInput[] = positioned
       .filter((p) => p.wordPositions !== undefined)
       .map((p) => {
@@ -123,11 +124,11 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
           })),
         };
       });
-    return computeLyricShifts(measureInputs, pxPerBeat, lyricsFontSizePx);
+    return layoutLyricWords(measureInputs, pxPerBeat, lyricsFontSizePx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positioned, pxPerBeat, fontReady, furiganaRevision, lyricsFontSizePx]);
 
-  // Per-word pitch-line SVG paths. Kept with the shifts because both need the
+  // Per-word pitch-line SVG paths. Kept with the placement because both need the
   // zoom-dependent glyph measurement (the wave wavelength is derived from each
   // word's sustain pixel width), so this re-derives on zoom / font-load too.
   const pitchPaths = React.useMemo(
@@ -207,7 +208,7 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
         <BeatLinesOverlay />
         <WindowedLines
           positioned={positioned}
-          shifts={shifts}
+          placements={placements}
           pitchPaths={pitchPaths}
           playhead={playhead}
         />

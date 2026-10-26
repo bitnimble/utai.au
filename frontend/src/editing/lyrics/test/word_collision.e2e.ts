@@ -55,3 +55,59 @@ test('word chips never overlap even when their time cells are tiny', async ({ pa
     expect(boxes[i].right).toBeLessThanOrEqual(boxes[i + 1].left + 0.5);
   }
 });
+
+// Zoomed out, a line's text is wider than the time it covers. It must cut to an
+// ellipsis before the next line rather than drift, and each pitch line must stay
+// on its word's time cell instead of stretching back to the drifted text.
+test('zoomed out, a crowded line ellipsises before the next and pitch lines stay on their time', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      utai: { lyricsStore: { add: (l: unknown[], o: unknown) => string }; presenter: { setZoom: (n: number) => void } };
+    };
+    const line = (startSec: number, text: string) => ({
+      startSec,
+      text,
+      words: text.split(' ').map((t, i) => {
+        const s = startSec + i * 0.25;
+        return { startSec: s, endSec: s + 0.2, text: t, midi: 60 + i, pitchSegments: [{ startSec: s, endSec: s + 0.2, midi: 60 + i }] };
+      }),
+    });
+    w.utai.lyricsStore.add(
+      [line(1, 'I could be the twist the one to make you stop'), line(4, 'The icing on your cake')],
+      { source: 'plaintext', sourceLabel: 'probe' },
+    );
+    w.utai.presenter.setZoom(40);
+  });
+  await page.getByTestId('lyrics-word-1-0').waitFor();
+
+  const state = await page.evaluate(() => {
+    const row = document.querySelector('[data-lyrics-bars-row="1"]') as HTMLElement;
+    const rowLeft = row.getBoundingClientRect().left;
+    const glyphs = (line: number) =>
+      Array.from(document.querySelectorAll(`[data-testid^="lyrics-word-${line}-"] > span`)).map((el) => {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const r = range.getBoundingClientRect();
+        return { text: el.textContent ?? '', left: r.left - rowLeft, right: r.right - rowLeft };
+      });
+    return {
+      first: glyphs(0),
+      second: glyphs(1),
+      widestPitchLine: Math.max(...Array.from(row.querySelectorAll('svg')).map((s) => s.getBoundingClientRect().width)),
+    };
+  });
+
+  expect(state.first.length).toBeLessThan(11);
+  expect(state.first.at(-1)!.text.endsWith('…')).toBe(true);
+  expect(state.first.at(-1)!.right).toBeLessThanOrEqual(state.second[0].left);
+  expect(Math.abs(state.second[0].left - 4 * 40)).toBeLessThan(2);
+  expect(state.widestPitchLine).toBeLessThanOrEqual(0.2 * 40 + 1);
+});

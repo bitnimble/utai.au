@@ -1,20 +1,17 @@
 /**
- * Text-measurement primitive for the lyrics row's word-collision pass.
- *
- * Replaces the previous DOM round-trip (`Range.getBoundingClientRect()`
- * after writing the rendered text, then reading `dataset.beatOffset` back
- * out) with a canvas `measureText` call whose font string mirrors the
- * variable-font axes the CSS clamps against `--px-per-beat`. The output
- * (`shifts: Map<key, px>`) is the source of truth; the renderer writes
- * each value into `--lyric-word-shift` as a render sink.
+ * Text measurement + word placement for the lyrics row. Glyph widths come from
+ * a canvas `measureText` whose font string mirrors the variable-font axes the
+ * CSS clamps against `--px-per-beat`. The output (`LyricWordPlacement` per
+ * word) is the source of truth; the renderer writes each shift into
+ * `--lyric-word-shift` and skips hidden words.
  *
  * CSS axis formulas (must stay in lockstep with `lyrics_track_view.module.css`):
- *   letter-spacing: clamp(-0.6, (pxPerBeat - 224) * 0.6/179, 0)   px
- *   --lyric-wdth  : clamp(75,   75 + (pxPerBeat - 45) * 25/179, 100)
- *   --lyric-wght  : clamp(300, 300 + (pxPerBeat - 45) * 100/179, 400)
+ *   letter-spacing: clamp(-1.2, (pxPerBeat - 224) * 1.2/179, 0)   px
+ *   --lyric-wdth  : clamp(75,   75 + (pxPerBeat - 80) * 25/179, 120)
+ *   --lyric-wght  : clamp(300, 300 + (pxPerBeat - 80) * 100/179, 600)
  *   active word overrides wght to 800 (.lyricWordActive .lyricWordText).
- *   Floor reached at pxPerBeat ≈ 45 (≈40% zoom on a density-1 song);
- *   max spread reached at pxPerBeat ≈ 224 (≈200% zoom on a density-1 song).
+ *   Font size comes from {@link lyricFontSizeAt}, written inline as
+ *   `--lyric-font-size`, so there's no CSS formula to mirror for it.
  *
  * Canvas font shorthand carries `wdth` via `font-stretch <percent>` and
  * `wght` via the numeric `font-weight`. Variable axes other than these
@@ -26,8 +23,7 @@
  * Bricolage Grotesque has loaded; consumers read it (it's a MobX
  * observable) so the row re-renders with the real widths after the
  * web-font swap. Before that, canvas falls back to the system stack
- * and shifts may be off by a glyph or two; same behaviour as the old
- * DOM walk during the font-load window.
+ * and placement may be off by a glyph or two during the font-load window.
  */
 import { makeAutoObservable, runInAction } from 'mobx';
 import { RubySegment } from 'src/lyrics/furigana';
@@ -37,6 +33,9 @@ const FONT_FAMILY =
   "'Bricolage Grotesque', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 const ACTIVE_FONT_WEIGHT = 800;
 const MIN_GAP_PX = 4;
+export const ELLIPSIS = '…';
+const FULL_SIZE_PX_PER_BEAT = 120;
+const MIN_FONT_SCALE = 0.4;
 /** Furigana annotation size as a fraction of the lyric font size. Keep in
  *  lockstep with `lyrics_track_view.module.css::--lyric-rt-size: 0.65em`. The
  *  `rt` runs at weight 400, default (100%) width. */
@@ -49,7 +48,13 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 function computeLetterSpacingPx(pxPerBeat: number): number {
-  return clamp(((pxPerBeat - 224) * 0.7) / 179, -0.7, 0);
+  return clamp(((pxPerBeat - 224) * 1.2) / 179, -1.2, 0);
+}
+
+/** The lyric font size at this zoom: the user's size, shrinking as zoom drops
+ *  so the text still roughly fits the time it covers. */
+export function lyricFontSizeAt(basePx: number, pxPerBeat: number): number {
+  return basePx * clamp(pxPerBeat / FULL_SIZE_PX_PER_BEAT, MIN_FONT_SCALE, 1);
 }
 
 function computeWdth(pxPerBeat: number): number {
@@ -61,7 +66,7 @@ function computeWght(pxPerBeat: number): number {
 }
 
 /** Canvas + font-load state, exposed as a MobX-observable singleton so a
- *  font-load completion triggers consumers to re-derive their shifts. */
+ *  font-load completion triggers consumers to re-derive their placement. */
 class LyricsMeasurer {
   /** True once the Bricolage Grotesque web font has finished loading.
    *  Until then, canvas measurement falls back to the system stack. */
@@ -167,11 +172,11 @@ class LyricsMeasurer {
 
 export const lyricsMeasurer = new LyricsMeasurer();
 
-/** A word's identity inside the per-row shift map. `lineIdx` is the
- *  positioned-line index (NOT `line.i`; keep stable across the walk),
+/** A word's identity inside the per-row placement + pitch-path maps. `lineIdx`
+ *  is the positioned-line index (NOT `line.i`; keep stable across the walk),
  *  `sourceIdx` matches `PositionedWord.sourceIdx`. */
-export type LyricShiftKey = string;
-export function lyricShiftKey(lineIdx: number, sourceIdx: number): LyricShiftKey {
+export type LyricWordKey = string;
+export function lyricWordKey(lineIdx: number, sourceIdx: number): LyricWordKey {
   return `${lineIdx}:${sourceIdx}`;
 }
 
@@ -191,125 +196,106 @@ export type LyricLineMeasureInput = {
   /** Index into the positioned-line array. */
   lineIdx: number;
   /** The line's own start beat, so a word's ABSOLUTE beat (`lineStartBeat +
-   *  beatOffset`) can order it against words in other lines for global
-   *  collision resolution. */
+   *  beatOffset`) can be placed against the next line's start. */
   lineStartBeat: number;
   words: LyricWordMeasureInput[];
 };
 
+/** Where a word's text renders: `shift` px off its time, or not at all when its
+ *  line ran out of room (the last shown word then ends in an ellipsis). */
+export type LyricWordPlacement = { shift: number; hidden: boolean; ellipsis: boolean };
+
 /**
- * Per-word `--lyric-word-shift` (px) that guarantees no two words in the whole
- * track overlap and Latin word boundaries keep a full space, while shifting the
- * words the least in total.
+ * Per-word text placement for a lyrics row, line by line (see {@link packLine}):
+ * words never overlap, Latin words keep a full space between them, and a line's
+ * text stops before the next line starts, cutting to an ellipsis rather than
+ * drifting away from when it's sung.
  *
- * Global, not per-line: every word across every line is flattened into one
- * time-ordered sequence, so a cluster that straddles a line boundary (a line's
- * last word close to the next line's first) is separated too, not just
- * within-line collisions.
+ * Words are measured at the ACTIVE weight (the widest they ever render) so a
+ * word going bold under the playhead can't spill onto its neighbour.
  *
- * Strict, not optimistic: every word is measured at the ACTIVE weight (the
- * widest it ever renders), so a word going bold under the playhead can't spill
- * onto its neighbour, and the reserved slot includes a space between adjacent
- * Latin words so "hello" + "world" never read as one word. Given those minimum
- * separations, {@link resolvePositions} picks the shifts minimising the total
- * displacement (words push both ways around a cluster, not one-directional
- * cascade), so each collision cluster settles centred on its own time and words
- * with room stay put.
- *
- * Empty result = no collisions. Pure: same inputs → same output. `fontReady`
- * is read by callers to invalidate across the web-font swap; this fn doesn't.
+ * Only moved or cut words get an entry. `fontReady` is read by callers to
+ * invalidate across the web-font swap; this fn doesn't.
  */
-export function computeLyricShifts(
+export function layoutLyricWords(
   lines: readonly LyricLineMeasureInput[],
   pxPerBeat: number,
   fontSizePx: number,
-): Map<LyricShiftKey, number> {
-  const out = new Map<LyricShiftKey, number>();
+): Map<LyricWordKey, LyricWordPlacement> {
+  const out = new Map<LyricWordKey, LyricWordPlacement>();
   if (!Number.isFinite(pxPerBeat) || pxPerBeat <= 0) return out;
   const spacePx = Math.max(MIN_GAP_PX, lyricsMeasurer.measureWordPx(' ', pxPerBeat, false, fontSizePx));
+  const ellipsisPx = lyricsMeasurer.measureWordPx(ELLIPSIS, pxPerBeat, true, fontSizePx);
 
-  type FlatWord = { key: LyricShiftKey; natural: number; width: number; text: string };
-  const words: FlatWord[] = [];
-  for (const line of lines) {
-    for (const w of line.words) {
-      const hasRuby = w.segments?.some((s) => s.reading !== undefined) ?? false;
-      const width = hasRuby
-        ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, true, fontSizePx)
-        : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, true, fontSizePx);
-      words.push({
-        key: lyricShiftKey(line.lineIdx, w.sourceIdx),
-        natural: (line.lineStartBeat + w.beatOffset) * pxPerBeat,
-        width,
-        text: w.text,
-      });
-    }
-  }
-  if (words.length === 0) return out;
-  words.sort((a, b) => a.natural - b.natural);
+  type MeasuredWord = { key: LyricWordKey; natural: number; width: number; text: string };
+  const measuredLines: MeasuredWord[][] = lines
+    .map((line) =>
+      line.words
+        .map((w) => {
+          const hasRuby = w.segments?.some((s) => s.reading !== undefined) ?? false;
+          return {
+            key: lyricWordKey(line.lineIdx, w.sourceIdx),
+            natural: (line.lineStartBeat + w.beatOffset) * pxPerBeat,
+            width: hasRuby
+              ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, true, fontSizePx)
+              : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, true, fontSizePx),
+            text: w.text,
+          };
+        })
+        .sort((a, b) => a.natural - b.natural),
+    )
+    .filter((words) => words.length > 0)
+    .sort((a, b) => a[0].natural - b[0].natural);
 
-  // Minimum left-edge distance to the next word: its text width plus a gap
-  // (a full space between Latin words, else just the anti-overlap minimum).
-  const sep = new Array<number>(Math.max(0, words.length - 1));
-  for (let i = 0; i < words.length - 1; i++) {
-    const gap = needsWordSpace(words[i].text, words[i + 1].text) ? spacePx : MIN_GAP_PX;
-    sep[i] = words[i].width + gap;
-  }
-  const positions = resolvePositions(
-    words.map((w) => w.natural),
-    sep,
-  );
-  for (let i = 0; i < words.length; i++) {
-    const shift = positions[i] - words[i].natural;
-    if (Math.abs(shift) >= 0.5) out.set(words[i].key, shift);
-  }
+  measuredLines.forEach((words, k) => {
+    const next = measuredLines[k + 1];
+    const limit = next ? next[0].natural - MIN_GAP_PX : Infinity;
+    const gaps = words
+      .slice(1)
+      .map((w, i) => (needsWordSpace(words[i].text, w.text) ? spacePx : MIN_GAP_PX));
+    const { positions, shown } = packLine(
+      words.map((w) => w.natural),
+      words.map((w) => w.width),
+      gaps,
+      ellipsisPx,
+      limit,
+    );
+    words.forEach((w, i) => {
+      const shift = positions[i] - w.natural;
+      const hidden = i >= shown;
+      const ellipsis = i === shown - 1 && shown < words.length;
+      if (Math.abs(shift) < 0.5 && !hidden && !ellipsis) return;
+      out.set(w.key, { shift: Math.abs(shift) < 0.5 ? 0 : shift, hidden, ellipsis });
+    });
+  });
   return out;
 }
 
 /**
- * Strict minimal-shift 1-D separation: positions `p` (same order) minimising
- * the total displacement `sum|p_i - target_i|` subject to
- * `p_{i+1} >= p_i + sep_i` (words never cross a neighbour). Solved as L1
- * isotonic regression via pool-adjacent-violators with median pooling on
- * `q_i = p_i - S_i` (`S_i` = prefix sum of `sep`), which turns the spacing
- * constraint into a plain monotone-non-decreasing one.
- *
- * No lower bound on `p`: forcing `p_0 >= 0` would (via the separations)
- * cascade every word to `>= S_i`, stacking the whole track from the origin
- * when it's over-packed. Leaving it free instead keeps each collision cluster
- * centred on its own median time; only the very first word could drift a few
- * px negative, at the track's start, which is harmless.
+ * Lays out one line's words, given their time positions (sorted), text widths,
+ * and the gap each needs before the next: the first word sits at its time and
+ * each later word at its time or just clear of the previous one, whichever is
+ * later. Text must end by `limit`; when it can't, `shown` counts the words that
+ * fit with an ellipsis after the last of them (never fewer than one).
  */
-export function resolvePositions(targets: readonly number[], sep: readonly number[]): number[] {
-  const n = targets.length;
-  if (n === 0) return [];
-  const prefix = new Array<number>(n);
-  prefix[0] = 0;
-  for (let i = 1; i < n; i++) prefix[i] = prefix[i - 1] + sep[i - 1];
-  // PAVA over the targets `a_i = target_i - S_i`; each block keeps its members
-  // so its L1 optimum (the median) is recomputed on merge.
-  type Block = { values: number[]; val: number };
-  const blocks: Block[] = [];
+export function packLine(
+  naturals: readonly number[],
+  widths: readonly number[],
+  gaps: readonly number[],
+  ellipsisPx: number,
+  limit: number,
+): { positions: number[]; shown: number } {
+  const n = naturals.length;
+  const positions = new Array<number>(n);
   for (let i = 0; i < n; i++) {
-    const a = targets[i] - prefix[i];
-    let block: Block = { values: [a], val: a };
-    while (blocks.length > 0 && blocks[blocks.length - 1].val > block.val) {
-      const merged = blocks.pop()!.values.concat(block.values);
-      block = { values: merged, val: median(merged) };
-    }
-    blocks.push(block);
+    positions[i] = i === 0 ? naturals[0] : Math.max(naturals[i], positions[i - 1] + widths[i - 1] + gaps[i - 1]);
   }
-  const p = new Array<number>(n);
-  let idx = 0;
-  for (const b of blocks) {
-    for (let k = 0; k < b.values.length; k++, idx++) p[idx] = b.val + prefix[idx];
+  if (n === 0 || positions[n - 1] + widths[n - 1] <= limit) return { positions, shown: n };
+  let shown = 1;
+  for (let i = 1; i < n; i++) {
+    if (positions[i] + widths[i] + ellipsisPx <= limit) shown = i + 1;
   }
-  return p;
-}
-
-function median(vals: readonly number[]): number {
-  const s = [...vals].sort((x, y) => x - y);
-  const m = s.length >> 1;
-  return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+  return { positions, shown };
 }
 
 /** Latin letters/digits (incl. common accents); two words with one on each
@@ -326,15 +312,15 @@ export function needsWordSpace(a: string, b: string): boolean {
 }
 
 /** Per-word SVG pitch-line path (see `lyric_layout.buildPitchLine`), keyed like
- *  the shift map. The line spans the word's whole beat cell (time-accurate x),
- *  so the on-screen width that keeps the vibrato wavelength constant is just the
- *  cell width, independent of the text. Recomputed on zoom like the shifts. */
+ *  the placement map. The line spans the word's whole beat cell (time-accurate
+ *  x), so the on-screen width that keeps the vibrato wavelength constant is just
+ *  the cell width, independent of the text. Recomputed on zoom like placement. */
 export function computePitchPaths(
   lines: readonly PositionedLine[],
   pxPerBeat: number,
   opts: { pitch: boolean; vibrato: boolean },
-): Map<LyricShiftKey, string> {
-  const out = new Map<LyricShiftKey, string>();
+): Map<LyricWordKey, string> {
+  const out = new Map<LyricWordKey, string>();
   // No line at all when both are off; the plain trailing-rule sustain shows.
   if (!Number.isFinite(pxPerBeat) || pxPerBeat <= 0 || (!opts.pitch && !opts.vibrato)) return out;
   for (const line of lines) {
@@ -343,7 +329,7 @@ export function computePitchPaths(
       if (!w.segments) continue;
       const spanPx = w.beatWidth * pxPerBeat;
       const path = buildPitchLine(w, spanPx, WAVE_WAVELENGTH_PX, opts);
-      if (path) out.set(lyricShiftKey(line.i, w.sourceIdx), path);
+      if (path) out.set(lyricWordKey(line.i, w.sourceIdx), path);
     }
   }
   return out;

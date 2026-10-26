@@ -96,12 +96,12 @@
     --lyric-rt-size: 0.65em;
     /* Tighten glyph tracking as zoom drops so lyric text packs into the
        narrower per-beat budget. Ramps from 0 at px-per-beat ≥ 224 to
-       -0.7px around px-per-beat ≈ 45 (≈40% zoom at density 1). Max
+       -1.2px around px-per-beat ≈ 45 (≈40% zoom at density 1). Max
        spread is reached around 200% zoom (pxPerBeat = 224 at density 1).
        Inherits down to both `.lyricLine` (LRC mode) and `.lyricWordText`
        (word-aligned mode). */
     /* stylelint-disable-next-line property-disallowed-list -- zoom-driven dynamic tracking, not a static use case. */
-    letter-spacing: clamp(-0.7px, calc((var(--px-per-beat) - 224) * 0.7 / 179 * 1px), 0px);
+    letter-spacing: clamp(-1.2px, calc((var(--px-per-beat) - 224) * 1.2 / 179 * 1px), 0px);
     /* Pair the tracking ramp with Bricolage Grotesque's variable axes:
        at px-per-beat ≥ 224 (≈200% zoom at density 1) use the
        120-width / 600-weight, ramping linearly down to 75-width /
@@ -209,8 +209,8 @@
 
    `--lyric-word-beat-offset` and `--lyric-word-beat-width` come from
    React; the row's --px-per-beat root var scales them with zoom.
-   `--lyric-word-shift` is a JS-applied per-word px offset (see the
-   layout effect in lyrics_track_view.tsx) that handles glyph-level collisions
+   `--lyric-word-shift` is a JS-applied per-word px offset (see
+   `lyrics_measure.ts::layoutLyricWords`) that handles glyph-level collisions
    when two start times are close enough that the previous word's text
    would overlap. The shift is added to `left` AND subtracted from
    `width`, so the right edge stays anchored to the word's end time -
@@ -270,14 +270,10 @@
         font-variation-settings 100ms ease-in-out;
 }
 
-/* The pitch line paints behind the whole word cell, so the glyphs occlude the
-   stretch under them (only the post-text sustain shows). An opaque background
-   matching whatever's behind the word does that; z-index lifts it above the
-   line (`.lyricPitchLine` is z-index 0). The active word's own bg-base takes
-   over so the occlusion still matches its highlight. */
+/* Opaque so the glyphs occlude any pitch line under them (the lines paint
+   first, see `.lyricPitchLine`); the active word's own bg-base takes over so
+   the occlusion still matches its highlight. */
 .lyricWordLined .lyricWordText {
-    position: relative;
-    z-index: 1;
     background: var(--color-bg-cream);
 }
 
@@ -392,30 +388,18 @@
     display: none;
 }
 
-/* SVG canvas for the pitch contour. Spans the word's whole beat cell from the
-   glyph start (`--lyric-word-pad-left`) to the cell end, so viewBox x is time
-   (see `lyric_layout.buildPitchLine`), and it paints BEHIND the glyphs (z-index
-   below `.lyricWordText`) so the under-text stretch is occluded and only the
-   post-text sustain shows. Vertically it is `--lyric-pitch-band` tall and
-   re-centred on the TRACK's pitch band: the `+ (pitch-frac - 0.5) * band` term
-   cancels the word's own `.lyricWordPitched` lift, so the viewBox maps to
-   absolute pitch and a note's line can travel the full band to sit level with
-   any other word. */
+/* SVG canvas for one word's pitch contour, positioned on the row's own time
+   axis: x spans exactly the word's time cell (viewBox x is time, see
+   `lyric_layout.buildPitchLine`), never the collision-shifted text. Vertically
+   it's the row's `--lyric-pitch-band`, centred, so viewBox y is absolute pitch
+   and a note's line sits level with any word sung at that pitch. */
 .lyricPitchLine {
     position: absolute;
-    left: var(--lyric-word-pad-left);
-    /* An <svg> is a replaced element, so `left` + `right` don't stretch it (it
-       falls back to its viewBox-intrinsic square). Size the width explicitly:
-       the glyph start to the cell end == the word's beat span minus any
-       collision shift, i.e. the same span the cell's `width` covers past the
-       pad. */
-    width: max(0px, calc(var(--lyric-word-beat-width) * var(--px-per-beat) * 1px - var(--lyric-word-shift, 0px)));
+    left: calc(var(--lyric-word-beat) * var(--px-per-beat) * 1px + var(--note-pad-px));
+    width: calc(var(--lyric-word-beat-width) * var(--px-per-beat) * 1px);
     top: 50%;
     height: calc(var(--lyric-pitch-band) * 1px);
-    transform: translateY(
-        calc(-50% + (var(--lyric-word-pitch-frac, 0.5) - 0.5) * var(--lyric-pitch-band) * 1px)
-    );
-    z-index: 0;
+    transform: translateY(-50%);
     overflow: visible;
     pointer-events: none;
 }

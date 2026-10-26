@@ -1,38 +1,31 @@
 import { describe, expect, test } from 'bun:test';
-import { needsWordSpace, resolvePositions } from '../lyrics_measure';
+import { needsWordSpace, packLine } from '../lyrics_measure';
 
-describe('resolvePositions', () => {
-  test('leaves well-separated words untouched', () => {
-    expect(resolvePositions([0, 100, 200], [20, 20])).toEqual([0, 100, 200]);
+describe('packLine', () => {
+  test('leaves well-separated words at their times', () => {
+    expect(packLine([0, 100, 200], [50, 50, 50], [5, 5], 10, Infinity)).toEqual({
+      positions: [0, 100, 200],
+      shown: 3,
+    });
   });
 
-  test('centres a colliding pair (bidirectional, minimal total shift)', () => {
-    // Both want x=100 but must be 10 apart -> 95 / 105, total shift 10 split evenly.
-    expect(resolvePositions([100, 100], [10])).toEqual([95, 105]);
+  test('pushes a crowded word just clear of the previous one, never left of its time', () => {
+    expect(packLine([0, 10, 200], [50, 30, 50], [5, 5], 10, Infinity)).toEqual({
+      positions: [0, 55, 200],
+      shown: 3,
+    });
   });
 
-  test('centres a colliding triple around the median target', () => {
-    expect(resolvePositions([100, 100, 100], [10, 10])).toEqual([90, 100, 110]);
+  test('cuts to an ellipsis before the next line starts', () => {
+    // Ends: 50, 105, 160. Limit 120: "...word 2 + ellipsis" ends 115, fits; word 3 doesn't.
+    expect(packLine([0, 10, 20], [50, 50, 50], [5, 5], 10, 120)).toEqual({
+      positions: [0, 55, 110],
+      shown: 2,
+    });
   });
 
-  test('centres a start cluster on its target (no origin clamp)', () => {
-    // Both target 0, 10 apart -> centred at 0: the first word drifts slightly
-    // negative rather than the pair anchoring to the origin.
-    expect(resolvePositions([0, 0], [10])).toEqual([-5, 5]);
-  });
-
-  test('does not cascade a far word when only the near pair collides', () => {
-    // The near pair (targets 0 and 5) centres around ~2.5; the far word (100)
-    // has room and stays put.
-    expect(resolvePositions([0, 5, 100], [20, 20])).toEqual([-7.5, 12.5, 100]);
-  });
-
-  test('always meets the minimum separation between adjacent words', () => {
-    const sep = [30, 15, 40];
-    const p = resolvePositions([0, 10, 20, 30], sep);
-    for (let i = 0; i < sep.length; i++) {
-      expect(p[i + 1] - p[i]).toBeGreaterThanOrEqual(sep[i] - 1e-9);
-    }
+  test('always shows the first word', () => {
+    expect(packLine([0, 10], [50, 50], [5], 10, 20).shown).toBe(1);
   });
 });
 
