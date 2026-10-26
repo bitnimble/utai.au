@@ -9,15 +9,18 @@
  */
 
 import { analyzeBeats } from 'src/editing/beats/analyze_beats_client';
-import type { BeatAnalysis } from 'src/editing/beats/beat_analysis';
-import type { AudioTrackRole } from 'src/editing/playback/audio_tracks';
-import { LoadedLyrics, LoadedSong, unpackSongBundle } from 'src/karaoke/song_bundle';
+import {
+  LoadedLyrics,
+  LoadedSong,
+  PreparedSong,
+  unpackSongBundle,
+} from 'src/karaoke/song_bundle';
 import type { SongMeta } from 'src/karaoke/song_schema';
 import { cleanStreamingTitle, parseSongFilename, pickConfidentMatch } from 'src/lyrics/auto_lyrics';
 import { alignLyricsForced } from 'src/lyrics/forced_align';
 import { LyricLine, parseLrc } from 'src/lyrics/lrc';
 import { LrclibMatch, searchLrclib } from 'src/lyrics/lrclib';
-import { attachPitchToLines, type PitchContour } from 'src/lyrics/pitch_contour';
+import { attachPitchToLines } from 'src/lyrics/pitch_contour';
 import { separateStems, type SeparatedStems } from 'src/lyrics/separate_stems';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import { fetchTrack, type TrackResult } from 'src/net/music_source_client';
@@ -27,15 +30,6 @@ export type QueueSource =
   | { kind: 'file'; file: File }
   | { kind: 'streaming'; track: TrackResult }
   | { kind: 'bundle'; file: File };
-
-export type PreparedStem = { role: AudioTrackRole; file: File; pitchContour?: PitchContour };
-
-export type PreparedSong = {
-  meta: SongMeta;
-  stems: PreparedStem[];
-  lyrics: LoadedLyrics[];
-  beats?: BeatAnalysis;
-};
 
 export type PrepareStage =
   | { kind: 'downloading'; frac: number }
@@ -124,7 +118,7 @@ async function prepareMix(
         ]
       : [{ role: 'full-mix', file: mix }],
     lyrics,
-    beats: beats ?? undefined,
+    beats,
   };
 }
 
@@ -163,13 +157,13 @@ async function alignWords(
  * "artist" may be a mislabelling YouTube uploader. Silent on a miss.
  */
 async function findSyncedLyrics(
-  title: string,
-  artist: string,
+  rawTitle: string,
+  rawArtist: string,
   durationSec: number,
   signal: AbortSignal,
 ): Promise<{ lines: LyricLine[]; trackName: string; artistName: string } | undefined> {
-  title = title.trim();
-  artist = artist.trim();
+  const title = rawTitle.trim();
+  const artist = rawArtist.trim();
   if (title.length === 0 && artist.length === 0) return undefined;
   let best = await searchAndPick(title, artist, durationSec, signal, { title, artist });
   if (best == null && title.length > 0 && artist.length > 0) {

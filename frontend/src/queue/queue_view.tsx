@@ -2,26 +2,25 @@ import classNames from 'classnames';
 import { EllipsisVertical, GripVertical, ListMusic, ListStart, SkipForward, Trash2, X } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
-import { SongIoPresenterContext } from 'src/karaoke/karaoke_contexts';
 import { ActionMenuItem, DropdownButton } from 'src/ui/dropdown/dropdown';
 import { Spinner } from 'src/ui/spinner/spinner';
 import { QueuePresenterContext, QueueStoreContext } from './queue_contexts';
 import type { QueueItem, QueueItemId, QueueItemStatus } from './queue_store';
 import styles from './queue_view.module.css';
 
+const QUEUE_ITEM_DRAG_TYPE = 'application/x-utai-queue-item';
+
 /** Header Skip + Queue buttons. */
 export const QueueButtons = observer(function QueueButtons({ className }: { className: string }) {
   const store = React.useContext(QueueStoreContext)!;
   const presenter = React.useContext(QueuePresenterContext)!;
-  const songIo = React.useContext(SongIoPresenterContext)!;
-  const canSkip = !store.awaitingNext && store.nextPlayable != null && !songIo.busy;
   const count = store.items.length;
   return (
     <>
       <button
         type="button"
         className={className}
-        disabled={!canSkip}
+        disabled={!store.canSkip}
         onClick={() => presenter.skip()}
         aria-label="Skip to the next song"
         title="Skip to the next song"
@@ -54,15 +53,6 @@ export const QueueSidebar = observer(function QueueSidebar() {
   const presenter = React.useContext(QueuePresenterContext)!;
   const [draggingId, setDraggingId] = React.useState<QueueItemId>();
 
-  React.useEffect(() => {
-    if (!store.sidebarOpen) return;
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') presenter.closeSidebar();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [store.sidebarOpen, presenter]);
-
   if (!store.sidebarOpen) return null;
 
   return (
@@ -92,10 +82,14 @@ export const QueueSidebar = observer(function QueueSidebar() {
               draggable
               onDragStart={(e) => {
                 e.dataTransfer.effectAllowed = 'move';
+                // Firefox won't start a drag without data.
+                e.dataTransfer.setData(QUEUE_ITEM_DRAG_TYPE, item.id);
                 setDraggingId(item.id);
               }}
               onDragOver={(e) => {
-                if (draggingId == null) return;
+                // The type check, not just `draggingId`: a row consumed mid-drag
+                // never gets `dragend`, leaving `draggingId` stale for later drags.
+                if (draggingId == null || !e.dataTransfer.types.includes(QUEUE_ITEM_DRAG_TYPE)) return;
                 e.preventDefault();
                 presenter.move(draggingId, index);
               }}

@@ -4,22 +4,18 @@ import type { SongIoPresenter } from 'src/karaoke/song_io_presenter';
 import { cleanStreamingTitle, parseSongFilename } from 'src/lyrics/auto_lyrics';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import { toastStore } from 'src/ui/toasts/toasts';
-import type { PrepareSong, QueueSource } from './prepare_song';
+import type { PrepareSong, PrepareStage, QueueSource } from './prepare_song';
 import { QueueItem, QueueItemId, QueueStore } from './queue_store';
 
-type SongLoader = Pick<SongIoPresenter, 'loadPreparedSong' | 'clearSong'>;
+type SongLoader = Pick<SongIoPresenter, 'loadPreparedSong'>;
 type Transport = Pick<PlaybackEngine, 'state' | 'play' | 'onEnded'>;
 
-/**
- * Sole writer for {@link QueueStore}. Prepares queued songs one at a time,
- * always picking the first unprepared song in the current queue order once the
- * in-flight one finishes (reordering never interrupts it), and starts the next
- * song whenever the player is free and that song is ready.
- */
+/** Sole writer for {@link QueueStore}. */
 export class QueuePresenter {
   private itemIdCounter = 0;
   private preparing: { id: QueueItemId; controller: AbortController } | undefined;
   private disposers: Array<() => void> = [];
+  private disposed = false;
 
   constructor(
     private readonly store: QueueStore,
@@ -29,7 +25,7 @@ export class QueuePresenter {
   ) {
     makeAutoObservable<
       this,
-      'store' | 'songIo' | 'transport' | 'prepare' | 'itemIdCounter' | 'preparing' | 'disposers'
+      'store' | 'songIo' | 'transport' | 'prepare' | 'itemIdCounter' | 'preparing' | 'disposers' | 'disposed'
     >(this, {
       store: false,
       songIo: false,
@@ -38,10 +34,13 @@ export class QueuePresenter {
       itemIdCounter: false,
       preparing: false,
       disposers: false,
+      disposed: false,
     });
   }
 
   init(): void {
+    this.disposed = false;
+    this.prepareNext();
     this.disposers.push(
       this.transport.onEnded(() => this.setAwaitingNext()),
       // A manual replay of the current song means it's no longer finished.
@@ -62,6 +61,7 @@ export class QueuePresenter {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const dispose of this.disposers) dispose();
     this.disposers = [];
     this.preparing?.controller.abort();
@@ -105,12 +105,12 @@ export class QueuePresenter {
     if (this.preparing?.id === id) this.preparing.controller.abort();
   }
 
-  /** Drop the current song; the next one starts as soon as it's ready. */
   skip(): void {
-    this.songIo.clearSong();
+    if (!this.store.canSkip) return;
     this.store.awaitingNext = true;
   }
 
+  /** An action: `onEnded` fires from a timer / IPC callback, outside any action. */
   private setAwaitingNext(): void {
     this.store.awaitingNext = true;
   }
@@ -118,13 +118,28 @@ export class QueuePresenter {
   private async start(item: QueueItem): Promise<void> {
     if (item.status.kind !== 'ready') return;
     this.store.awaitingNext = false;
+    this.store.starting = true;
     this.store.items = this.store.items.filter((i) => i.id !== item.id);
-    await this.songIo.loadPreparedSong(item.status.song);
-    await this.transport.play();
+    try {
+      await this.songIo.loadPreparedSong(item.status.song);
+      await this.transport.play();
+    } catch (err) {
+      toastStore.showError(`Could not play ${item.title}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this.finishStart();
+    }
+  }
+
+  private finishStart(): void {
+    this.store.starting = false;
+    // A song that didn't start (no decodable audio, play failed) never ends,
+    // so move on rather than stall the queue behind it.
+    if (this.transport.state !== 'playing') this.store.awaitingNext = true;
   }
 
   private prepareNext(): void {
-    if (this.preparing) return;
+    // One at a time: a reorder waits for the in-flight song rather than preempting it.
+    if (this.preparing || this.disposed) return;
     const item = this.store.nextToPrepare;
     if (!item) return;
     const controller = new AbortController();
@@ -136,7 +151,7 @@ export class QueuePresenter {
     try {
       const song = await this.prepare(item.source, {
         signal: controller.signal,
-        onStage: (stage) => this.update(item.id, { status: stage }),
+        onStage: (stage) => this.setStage(item.id, stage),
       });
       this.update(item.id, {
         status: { kind: 'ready', song },
@@ -144,19 +159,27 @@ export class QueuePresenter {
         artist: song.meta.artist ?? item.artist,
       });
     } catch (err) {
-      if (!controller.signal.aborted) {
+      if (controller.signal.aborted) {
+        // Removed items are already gone; a dispose-aborted one is redone on init.
+        this.update(item.id, { status: { kind: 'waiting' } });
+      } else {
         const message = err instanceof Error ? err.message : String(err);
         this.update(item.id, { status: { kind: 'failed', message } });
         if (!isBackendUnreachable(err)) toastStore.showError(`Could not prepare ${item.title}: ${message}`);
       }
     } finally {
-      this.finishPreparing();
+      this.preparing = undefined;
+      this.prepareNext();
     }
   }
 
-  private finishPreparing(): void {
-    this.preparing = undefined;
-    this.prepareNext();
+  private setStage(id: QueueItemId, stage: PrepareStage): void {
+    const current = this.store.items.find((i) => i.id === id)?.status;
+    // Download progress ticks per chunk; only re-render on a visible change.
+    if (current?.kind === 'downloading' && stage.kind === 'downloading') {
+      if (Math.round(current.frac * 100) === Math.round(stage.frac * 100)) return;
+    }
+    this.update(id, { status: stage });
   }
 
   private update(id: QueueItemId, patch: Partial<Pick<QueueItem, 'title' | 'artist' | 'status'>>): void {

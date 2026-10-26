@@ -687,7 +687,7 @@ const ScoreArea = observer(function ScoreArea() {
     >
       {!hasContent && (
         <div className={styles.emptyState} data-testid="empty-state">
-          Load an audio file, then import or paste lyrics.
+          Add a song to the queue from the Audio or File menu.
         </div>
       )}
       {!viewport.audioTracksHidden &&

@@ -17,8 +17,10 @@ import {
   type AsyncZippable,
   type Unzipped,
 } from 'fflate';
+import type { BeatAnalysis } from 'src/editing/beats/beat_analysis';
 import { parseEnhancedLrc, serializeEnhancedLrc } from 'src/lyrics/enhanced_lrc';
 import { LyricLine } from 'src/lyrics/lrc';
+import type { PitchContour } from 'src/lyrics/pitch_contour';
 import { LyricsSource } from 'src/lyrics/store';
 import {
   AudioStemDoc,
@@ -73,6 +75,16 @@ export type LoadedSong = {
   durationSec?: number;
   stems: LoadedStem[];
   lyrics: LoadedLyrics[];
+};
+
+export type PreparedStem = { role: AudioStemRole; file: File; pitchContour?: PitchContour };
+
+/** Everything the session needs to play a song, ready to load. */
+export type PreparedSong = {
+  meta: SongMeta;
+  stems: PreparedStem[];
+  lyrics: LoadedLyrics[];
+  beats?: BeatAnalysis;
 };
 
 /** Assemble a song bundle into a `application/zip` {@link Blob}. Audio

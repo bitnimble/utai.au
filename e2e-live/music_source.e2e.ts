@@ -1,10 +1,10 @@
 import { expect, test } from '@playwright/test';
 
 // Happy-path smoke for the music-source feature against a live stack (see
-// playwright.live.config.ts): enable YouTube Music, search, fetch a real track --
+// playwright.live.config.ts): enable YouTube Music, search, queue a real track --
 // the OnTheSpot integration path the mocked unit tests can't exercise.
 
-test('music-source: enable YouTube Music, search, fetch', async ({ page }) => {
+test('music-source: enable YouTube Music, search, queue', async ({ page }) => {
   page.on('console', (m) => console.log(`[page:${m.type()}] ${m.text()}`));
   page.on('requestfailed', (r) => console.log(`[reqfail] ${r.method()} ${r.url()} ${r.failure()?.errorText}`));
 
@@ -33,11 +33,15 @@ test('music-source: enable YouTube Music, search, fetch', async ({ page }) => {
     .first();
   await expect(firstResult).toBeVisible({ timeout: 60_000 });
 
-  // fetch: on success the presenter loads the track + closes the search modal.
-  // Assert the modal close, NOT that audio finished decoding -- AudioWorklet
-  // needs a secure context, so over a plain-HTTP LAN origin (host.docker.internal)
-  // the decode is skipped even though the fetch + handoff to loadAudioFile ran.
+  // Queue it; the queue downloads it as the first song to prepare. Assert the
+  // download starts, NOT that audio finished decoding -- AudioWorklet needs a
+  // secure context, so over a plain-HTTP LAN origin (host.docker.internal) the
+  // decode is skipped.
   await firstResult.click();
-  await page.getByTestId('music-fetch-button').click();
-  await expect(page.getByTestId('music-search-modal')).toBeHidden({ timeout: 180_000 });
+  await page.getByTestId('music-add-to-queue').click();
+  await page.getByTestId('music-search-modal').getByRole('button', { name: 'Close music search' }).click();
+  await page.getByTestId('queue-open').click();
+  await expect(page.getByTestId('queue-item-status').first()).toHaveText(/Downloading|Separating|Aligning|Ready/, {
+    timeout: 180_000,
+  });
 });

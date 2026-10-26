@@ -1,5 +1,6 @@
 import { makeAutoObservable, observable } from 'mobx';
-import type { PreparedSong, PrepareStage, QueueSource } from './prepare_song';
+import type { PreparedSong } from 'src/karaoke/song_bundle';
+import type { PrepareStage, QueueSource } from './prepare_song';
 
 export type QueueItemId = string;
 
@@ -26,10 +27,10 @@ export type QueueItem = {
 export class QueueStore {
   items: QueueItem[] = [];
   sidebarOpen = false;
-  /** True while nothing is playing on the queue's behalf (nothing loaded yet,
-   *  or the current song ended / was skipped): the next song starts the moment
-   *  it's ready. */
+  /** The next song starts the moment it's ready. */
   awaitingNext = true;
+  /** A song is being loaded into the session and started. */
+  starting = false;
 
   constructor() {
     // Shallow: items hold large prepared songs (stems, word-timed lyrics) that
@@ -40,6 +41,10 @@ export class QueueStore {
   /** The song that plays next; failed items are passed over. */
   get nextPlayable(): QueueItem | undefined {
     return this.items.find((i) => i.status.kind !== 'failed');
+  }
+
+  get canSkip(): boolean {
+    return !this.awaitingNext && !this.starting && this.nextPlayable?.status.kind === 'ready';
   }
 
   get nextToPrepare(): QueueItem | undefined {

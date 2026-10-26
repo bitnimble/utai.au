@@ -320,16 +320,18 @@ export class NativeAudioEngine implements PlaybackEngine {
   }
 
   private onTelemetry(msg: Telemetry): void {
-    this.anchor = { playSec: msg.playSec, atMs: performance.now(), playing: msg.playing };
-    // A stop that only the engine knows about.
-    const stopped = !msg.playing && this.state === 'playing';
-    // Position check: a stale pre-play frame also reads as stopped.
-    const ended = stopped && msg.playSec >= this.durationSec - END_OF_TRACK_TOLERANCE_SEC;
+    const stoppedWhilePlaying = !msg.playing && this.state === 'playing';
+    // End of track is the only stop the engine makes on its own; any other
+    // not-playing frame while playing was sampled before `audio_play` landed.
+    const ended = stoppedWhilePlaying && msg.playSec >= this.durationSec - END_OF_TRACK_TOLERANCE_SEC;
+    const stale = stoppedWhilePlaying && !ended;
     runInAction(() => {
       if (Math.abs(msg.level - this.micLevel) >= 0.01) this.micLevel = msg.level;
       if (Math.abs(msg.latencyMs - this.latencyMs) >= 0.1) this.latencyMs = msg.latencyMs;
-      if (stopped) this.state = 'idle';
+      if (ended) this.state = 'idle';
     });
+    if (stale) return;
+    this.anchor = { playSec: msg.playSec, atMs: performance.now(), playing: msg.playing };
     if (ended) for (const cb of this.endedListeners) cb();
     if (!msg.playing) {
       this.stopRaf();

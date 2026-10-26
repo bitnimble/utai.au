@@ -76,6 +76,11 @@ test('queue: first song plays at once, the rest queue up, and play next / remove
   await expect(page.getByTestId('queue-count')).toHaveText('2');
   await expect(page.getByTestId('queue-item-status').first()).toHaveText('Ready');
 
+  // Clicking an item does nothing.
+  await queueTitles(page).first().click();
+  await expect(queueTitles(page)).toHaveText(['Bravo', 'Charlie']);
+  expect(await currentTitle(page)).toBe('Alpha');
+
   await page.getByTestId('queue-item-menu').nth(1).click();
   await page.getByTestId('queue-play-next').click();
   await expect(queueTitles(page)).toHaveText(['Charlie', 'Bravo']);
@@ -88,12 +93,18 @@ test('queue: first song plays at once, the rest queue up, and play next / remove
   await expectPlaying(page, 'Charlie');
   await expect(page.getByTestId('queue-empty')).toBeVisible();
   await expect(page.getByTestId('queue-skip')).toBeDisabled();
+
+  await page.getByTestId('queue-close').click();
+  await expect(page.getByTestId('queue-sidebar')).toBeHidden();
 });
 
 test('queue: the next song plays when the current one ends', async ({ page }) => {
   await page.goto('/');
-  await queueBundles(page, bundle('Short', 1), bundle('Next'));
+  await queueBundles(page, bundle('Short', 3), bundle('Next'));
   await expectPlaying(page, 'Short');
+  // Still on Short a beat later: Next waits for the end rather than taking over.
+  await page.waitForTimeout(1000);
+  expect(await currentTitle(page)).toBe('Short');
   await expectPlaying(page, 'Next');
 });
 

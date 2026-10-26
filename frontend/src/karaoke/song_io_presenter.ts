@@ -3,10 +3,10 @@
  * to the session, and packs the session's up-front work (separated stems,
  * word-aligned lyrics, song metadata) into a `.zip` bundle.
  *
- * Owns only its transient UI state (busy / phase / details-modal flags);
- * every store mutation goes through the sibling presenters (the karaoke
- * presenter writes {@link SongStore} + audio tracks, the lyrics presenter
- * writes the lyrics store), keeping the single-writer rule intact.
+ * Owns its transient UI state (busy / phase / details-modal flags) and is
+ * the {@link BeatStore} writer; every other store mutation goes through the
+ * sibling presenters (the karaoke presenter writes {@link SongStore} + audio
+ * tracks, the lyrics presenter writes the lyrics store).
  */
 
 import { makeAutoObservable, runInAction } from 'mobx';
@@ -16,15 +16,14 @@ import { AudioTrack } from 'src/editing/playback/audio_tracks';
 import { playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
-import type { PreparedSong } from 'src/queue/prepare_song';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { downloadBlob } from 'src/utils/download';
 import { KaraokePresenter } from './karaoke_presenter';
-import { BundleLyricsInput, BundleStemInput, packSongBundle } from './song_bundle';
+import { BundleLyricsInput, BundleStemInput, packSongBundle, PreparedSong } from './song_bundle';
 import { SongStore } from './song_store';
 
 /** Coarse stage for the busy indicator; `undefined` when idle. */
-export type SongIoPhase = 'packing' | 'loading' | undefined;
+export type SongIoPhase = 'packing' | undefined;
 
 export class SongIoPresenter {
   busy = false;
@@ -66,7 +65,6 @@ export class SongIoPresenter {
     this.clearSong();
     runInAction(() => {
       this.busy = true;
-      this.phase = 'loading';
     });
     try {
       for (const stem of prepared.stems) {
@@ -83,13 +81,11 @@ export class SongIoPresenter {
     } finally {
       runInAction(() => {
         this.busy = false;
-        this.phase = undefined;
       });
     }
   }
 
-  /** Drop the current song's tracks, lyrics, and beat grid. */
-  clearSong(): void {
+  private clearSong(): void {
     this.karaoke.resetSong();
     this.lyrics.clearLyrics();
     runInAction(() => {
@@ -100,8 +96,7 @@ export class SongIoPresenter {
   // --- save ---
 
   /** Bundle the current song (stems + lyrics + metadata) to a `.zip` and
-   *  download it. The stems were already produced at load time, so this is
-   *  just packing, no separation. */
+   *  download it. */
   async saveSong(): Promise<void> {
     if (this.busy) return;
     if (!this.canSave) {
@@ -131,11 +126,7 @@ export class SongIoPresenter {
     }
   }
 
-  /** Collect the loaded audio as bundle stems. Separation happens at load
-   *  time, so by now the session already holds vocals + backing (or just a
-   *  mix, if separation was unavailable on load).
-   *
-   *  When both stems are present the mix is redundant (`vocals + backing ==
+  /** When both stems are present the mix is redundant (`vocals + backing ==
    *  mix`) and dropped, so a reload doesn't double the audio. */
   private gatherStems(): BundleStemInput[] {
     const tracks = Array.from(playbackEngine.audioTracks.values());

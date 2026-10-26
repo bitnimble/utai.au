@@ -122,7 +122,6 @@ export class MusicSourcePresenter {
     runInAction(() => {
       this.store.results = results;
       this.store.searchPhase = results.length === 0 ? { kind: 'no-results' } : { kind: 'results' };
-      // Pre-select a lone result so the user can fetch with one click.
       this.store.selectedId = results.length === 1 ? results[0].id : undefined;
     });
   }
