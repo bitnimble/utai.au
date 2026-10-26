@@ -34,29 +34,8 @@ async function isGzip(p: string): Promise<boolean> {
   return head[0] === 0x1f && head[1] === 0x8b;
 }
 
-async function ensureDb(): Promise<void> {
-  if (await Bun.file(DB).exists()) {
-    console.log(`[lrclib] using cached db ${DB}`);
-    return;
-  }
-  if (!DUMP_URL) {
-    throw new Error(
-      'LRCLIB_DUMP_URL is unset. Pick a dump from https://lrclib.net/db-dumps and set it.',
-    );
-  }
-  await mkdir(dirname(DB), { recursive: true });
-  const isGz = DUMP_URL.endsWith('.gz');
-  const download = isGz ? `${DB}.download` : `${DB}.partial`;
-
-  // Resume a partial download (HTTP Range) so a restart doesn't re-fetch the
-  // whole multi-GB dump from scratch. `accept-encoding: identity` keeps the
-  // transport from gzip-decoding the .gz body: that would make bytes-offsets
-  // (Range resume) and the gzip-magic check meaningless.
-  let offset = await fileSize(download);
-  const headers: Record<string, string> = { 'accept-encoding': 'identity' };
-  if (offset > 0) headers.range = `bytes=${offset}-`;
-  const res = await fetch(DUMP_URL, { headers });
-  if (offset > 0 && res.status !== 206) offset = 0; // server ignored the range
+async function downloadTo(download: string, res: Response, requestedOffset: number): Promise<void> {
+  const offset = requestedOffset > 0 && res.status !== 206 ? 0 : requestedOffset; // server ignored the range
   if (!res.ok || !res.body) throw new Error(`download failed: ${res.status} ${res.statusText}`);
   console.log(
     offset > 0
@@ -83,6 +62,37 @@ async function ensureDb(): Promise<void> {
   }
   out.end();
   await once(out, 'finish');
+}
+
+async function ensureDb(): Promise<void> {
+  if (await Bun.file(DB).exists()) {
+    console.log(`[lrclib] using cached db ${DB}`);
+    return;
+  }
+  if (!DUMP_URL) {
+    throw new Error(
+      'LRCLIB_DUMP_URL is unset. Pick a dump from https://lrclib.net/db-dumps and set it.',
+    );
+  }
+  await mkdir(dirname(DB), { recursive: true });
+  const isGz = DUMP_URL.endsWith('.gz');
+  const download = isGz ? `${DB}.download` : `${DB}.partial`;
+
+  // Resume a partial download (HTTP Range) so a restart doesn't re-fetch the
+  // whole multi-GB dump from scratch. `accept-encoding: identity` keeps the
+  // transport from gzip-decoding the .gz body: that would make bytes-offsets
+  // (Range resume) and the gzip-magic check meaningless.
+  const offset = await fileSize(download);
+  const headers: Record<string, string> = { 'accept-encoding': 'identity' };
+  if (offset > 0) headers.range = `bytes=${offset}-`;
+  const res = await fetch(DUMP_URL, { headers });
+  // 416 on a resume = the download already finished and a later step (gunzip) died.
+  if (offset > 0 && res.status === 416) {
+    await res.body?.cancel();
+    console.log(`[lrclib] download already complete (${(offset / 1e9).toFixed(2)} GB)`);
+  } else {
+    await downloadTo(download, res, offset);
+  }
 
   if (isGz && (await isGzip(download))) {
     // Decompress with the SYSTEM gunzip via a shell redirect (`gunzip -c > db`),
