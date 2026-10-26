@@ -34,4 +34,5 @@ test('music search: result rows show the cover thumbnail, or a placeholder witho
   await expect(thumb('cover')).toBeVisible();
   await expect(thumb('cover')).toHaveAttribute('src', 'https://covers.test/ok.png');
   await expect(thumb('broken')).toHaveJSProperty('hidden', true);
-  await expect(thumb('none')).toHaveCount(0);});
+  await expect(thumb('none')).toHaveCount(0);
+});
