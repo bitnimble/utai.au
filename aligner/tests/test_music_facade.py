@@ -32,6 +32,7 @@ class FakeClient:
         self.added: list[dict[str, Any]] = []
         self.removed: list[str] = []
         self.restarted = 0
+        self.calls: list[str] = []
         self._queue_i = 0
 
     async def search(self, query: str) -> list[dict[str, Any]]:
@@ -50,8 +51,11 @@ class FakeClient:
     async def update_settings(self, patch: dict[str, Any]) -> None:
         if "active_account_number" in patch:
             self.active_index = patch["active_account_number"]
+        if "raw_media_download" in patch:
+            self.calls.append(f"raw_media_download={patch['raw_media_download']}")
 
     async def parse_url(self, url: str) -> None:
+        self.calls.append("parse_url")
         self.parsed_urls.append(url)
 
     async def download_queue(self) -> dict[str, dict[str, Any]]:
@@ -222,19 +226,14 @@ def test_config_roundtrip_and_persist(tmp_path):
     # Every catalog service present once in priority.
     assert "youtube_music" in cfg.priority
 
-    facade.set_config(
-        priority=["youtube_music"],
-        quality={"format": "flac", "bitrate": "lossless"},
-    )
+    facade.set_config(priority=["youtube_music"])
     cfg = facade.get_config()
     assert cfg.priority[0] == "youtube_music"
-    assert cfg.quality.format == "flac"
 
     # A fresh facade over the same file sees the persisted config.
     reloaded = MusicFacade(FakeClient(), FakePool(), tmp_path / "music_config.json")
     cfg2 = reloaded.get_config()
     assert cfg2.priority[0] == "youtube_music"
-    assert cfg2.quality.format == "flac"
 
 
 def test_config_drops_unknown_services(tmp_path):
@@ -328,20 +327,21 @@ def test_fetch_success(tmp_path, monkeypatch):
                 "progress": 100,
                 "item_name": "Song y",
                 "item_service": "youtube_music",
-                "file_path": "/downloads/Song y.mp3",
+                "file_path": "/downloads/Song y.webm",
             }
         },
     ]
     facade = _facade(tmp_path, client, FakePool([{"service": "youtube_music", "uuid": "y"}]))
     events = _collect(facade.fetch(url, "youtube_music"))
 
+    assert client.calls == ["raw_media_download=True", "parse_url"]
     assert client.parsed_urls == [url]
     assert events[0] == {"type": "running", "stage": "queued", "frac": 0.0}
     assert any(e["type"] == "running" and e.get("frac") == 0.4 for e in events)
     result = events[-1]
     assert result["type"] == "result"
     assert result["audio"]["path"] == "music/audio/7"
-    assert result["audio"]["contentType"] == "audio/mpeg"
+    assert result["audio"]["contentType"] == "audio/webm"
     assert result["audio"]["filename"] == "Song y"
 
 

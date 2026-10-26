@@ -14,6 +14,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # branch) keeps the dev harness on the latest.
 RUN pip install --no-cache-dir "git+https://github.com/justin025/onthespot@master"
 
+# OnTheSpot hardcodes YouTube Music to the AAC m4a stream (~128k); YouTube's best
+# audio is the Opus webm stream. The facade enables raw_media_download, so the
+# file keeps `default_format` as its extension. The trailing grep fails the build
+# if an upstream change stops the patch from applying.
+RUN f="$(python -c 'import onthespot, os; print(os.path.dirname(onthespot.__file__))')/downloader.py" \
+    && sed -i -e "/item_service == \"youtube_music\":/,/ydl_opts\['format'\]/{ \
+           s/default_format = '\.m4a'/default_format = '.webm'/; \
+           s/ydl_opts\['format'\] = 'bestaudio\[ext=m4a\]'/ydl_opts['format'] = 'bestaudio'/ }" "$f" \
+    && grep -q "default_format = '.webm'" "$f" \
+    && grep -q "ydl_opts\['format'\] = 'bestaudio'$" "$f"
+
 # OnTheSpot reads/writes its config (account pool + credentials) here; the compose
 # shares this dir with the backend so the facade can read the account pool.
 ENV ONTHESPOTDIR=/config

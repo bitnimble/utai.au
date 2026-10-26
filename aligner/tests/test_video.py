@@ -79,8 +79,16 @@ def test_fetch_video_runner_returns_video_artifact(tmp_path, monkeypatch):
     art = result.artifacts[0]
     assert art.role == "video"
     assert art.ref.kind == "path"
-    assert Path(art.ref.path) == tmp_path / "dQw4w9WgXcQ.mp4"
+    assert Path(art.ref.path) == tmp_path / video_fetch.video_cache_key("dQw4w9WgXcQ")
     assert Path(art.ref.path).read_bytes() == b"fake-mp4"
+
+
+def test_video_cache_key_tracks_format_selection(monkeypatch):
+    before = video_fetch.video_cache_key("dQw4w9WgXcQ")
+    monkeypatch.setattr(video_fetch.settings, "video_format_sort", ["res:720"])
+    after = video_fetch.video_cache_key("dQw4w9WgXcQ")
+    assert before != after
+    assert after.startswith("dQw4w9WgXcQ-") and after.endswith(".mp4")
 
 
 def test_fetch_video_runner_rejects_bad_id():
