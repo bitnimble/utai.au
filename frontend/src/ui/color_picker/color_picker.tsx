@@ -2,6 +2,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { HslColorPicker, HslColor } from 'react-colorful';
 import { ColorPot } from 'src/ui/color_pot/color_pot';
+import { placeAxis, usePanelSize } from 'src/ui/dropdown/popover_placement';
 import styles from './color_picker.module.css';
 
 /**
@@ -86,14 +87,23 @@ export const ColorPicker = ({
     };
   }, [open, onClose]);
 
+  const panelSize = usePanelSize(panelRef, open && anchor != null);
+
   if (!open || !anchor) return null;
+  const position =
+    panelSize == null
+      ? anchor
+      : {
+          top: placeAxis(anchor.top, anchor.top, panelSize.height, window.innerHeight),
+          left: placeAxis(anchor.left, anchor.left, panelSize.width, window.innerWidth),
+        };
   return createPortal(
     <div
       ref={panelRef}
       className={styles.panel}
       role="dialog"
       aria-label="Colour picker"
-      style={{ position: 'fixed', top: anchor.top, left: anchor.left }}
+      style={{ position: 'fixed', top: position.top, left: position.left }}
       // Keep clicks inside the popover from kicking off marquee
       // selection / row drag in the mixer below.
       onMouseDown={(e) => e.stopPropagation()}
