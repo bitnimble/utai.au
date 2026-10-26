@@ -36,21 +36,22 @@ test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', as
   await expect(page.getByTestId('stem-mix-controls')).toBeVisible();
   await expect(page.getByTestId('stem-mix-controls').getByRole('slider')).toHaveCount(1);
   const lines = page.getByTestId('karaoke-line');
-  await expect(lines).toHaveText(['one two three', 'next line']);
+  await expect(lines).toHaveText(['one two three']);
 
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(3.2));
-  const states = (line: number) =>
-    lines.nth(line).locator('[data-state]').evaluateAll((els) =>
+  const states = () =>
+    lines.locator('[data-state]').evaluateAll((els) =>
       els.filter((e) => e.textContent!.trim() !== '').map((e) => e.getAttribute('data-state')),
     );
-  await expect.poll(() => states(0)).toEqual(['sung', 'current', 'upcoming']);
-  expect(await states(1)).toEqual(['upcoming', 'upcoming']);
+  await expect.poll(states).toEqual(['sung', 'current', 'upcoming']);
 
   const stroke = await lines
-    .first()
     .locator('[data-state="current"]', { hasText: 'two' })
     .evaluate((e) => getComputedStyle(e).webkitTextStrokeWidth);
   expect(parseFloat(stroke)).toBeGreaterThan(0);
+
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(6.2));
+  await expect(lines).toHaveText(['next line']);
 
   await page.getByTestId('view-menu').click();
   await page.getByTestId('view-mode-tracks').click();

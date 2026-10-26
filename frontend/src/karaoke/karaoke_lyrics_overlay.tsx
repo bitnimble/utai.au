@@ -13,8 +13,7 @@ const WORD_STATE_CLASS: Record<WordState, string> = {
   upcoming: styles.upcoming,
 };
 
-/** The first lyrics track's current line + the line after it, karaoke style,
- *  laid over the video area. */
+/** The first lyrics track's current line, karaoke style, laid over the video area. */
 export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
   const playhead = useLocalObservable(() => ({
     get track(): LyricsTrack | undefined {
@@ -53,20 +52,15 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
   const track = playhead.track;
   const shownIdx = playhead.shownLineIdx;
   if (!track || shownIdx == null) return null;
-  const lines = track.lines;
-  const nextIdx = nextVocalLineIdx(lines, shownIdx);
   const shownIsActive = playhead.activeLineIdx === shownIdx;
   return (
     <div className={styles.overlay} data-testid="karaoke-lyrics">
       <KaraokeLine
         key={shownIdx}
-        line={lines[shownIdx]}
+        line={track.lines[shownIdx]}
         activeWordIdx={shownIsActive ? playhead.activeWordIdx : undefined}
         activeWordEnded={shownIsActive && playhead.activeWordEnded}
       />
-      {nextIdx != null && (
-        <KaraokeLine key={nextIdx} line={lines[nextIdx]} activeWordIdx={undefined} activeWordEnded={false} />
-      )}
     </div>
   );
 });
