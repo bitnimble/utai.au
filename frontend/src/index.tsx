@@ -1,4 +1,5 @@
-import { isTauri } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
+import { when } from 'mobx';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import 'src/design_tokens.css';
@@ -10,8 +11,11 @@ import { parseRoute } from 'src/session/app_route';
 import { HostPage, type HostTarget } from 'src/session/host_page';
 import { LandingPage } from 'src/session/landing_page';
 import { RemotePage } from 'src/session/remote/remote_page';
+import { isSidecarAvailable } from 'src/net/sidecar_transport';
+import { appSettingsPresenter } from 'src/settings/app_settings_presenter';
 import { SettingsModalProvider } from 'src/settings/settings_modal_context';
 import { ErrorBoundary } from 'src/ui/error_boundary/error_boundary';
+import { toastStore } from 'src/ui/toasts/toasts';
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Missing #root mount element');
@@ -38,6 +42,8 @@ function renderHost(target: HostTarget): React.ReactElement {
   // Start once at boot (not in a component effect) so a StrictMode re-mount can't
   // trigger a second provisioning run; the presenter stops itself on ready/error.
   provisioningPresenter.start();
+  // Provisioning syncs the venv the local backend runs from.
+  if (isSidecarAvailable()) when(() => provisioningStore.state === 'ready', connectLocalBackend);
   return (
     <SettingsModalProvider>
       <StartupGate store={provisioningStore} presenter={provisioningPresenter}>
@@ -45,4 +51,12 @@ function renderHost(target: HostTarget): React.ReactElement {
       </StartupGate>
     </SettingsModalProvider>
   );
+}
+
+async function connectLocalBackend(): Promise<void> {
+  try {
+    appSettingsPresenter.setLocalApiBase(await invoke<string>('local_backend_api_base'));
+  } catch (err) {
+    toastStore.showError(`Music search and downloads are unavailable: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }

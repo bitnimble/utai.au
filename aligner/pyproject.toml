@@ -118,6 +118,16 @@ music = [
     "librespot @ git+https://github.com/justin025/librespot-python.git",
 ]
 
+# OnTheSpot itself, for the desktop app, which runs it as a local process
+# (app/music/onthespot_server.py) instead of the Docker harness's own container.
+# Pinned: the server patches its downloader source. Not a default group (PyQt6 is
+# heavy); the desktop startup sync adds it. Includes `music` because OnTheSpot
+# depends on the same librespot git URL, which uv only accepts when declared here.
+onthespot = [
+    { include-group = "music" },
+    "onthespot @ git+https://github.com/justin025/onthespot.git@7f7e04d883dc2d12499e6a0f9a80a09116cf69f7",
+]
+
 # Torch: NOT shipped in the desktop capability install (which runs provisioned
 # fp16 ONNX, torch-free) and NEVER on the runtime path. Needed only for the BUILD
 # side: (1) the one-time ONNX export (separation/export.py +

@@ -44,6 +44,9 @@ export class AppSettingsStore {
   /** Origin phones open to join this device's session as a remote; empty = what the session server advertises. */
   remoteBaseUrl: string = '';
 
+  /** Desktop app: the API base of the backend it runs itself. Not persisted. */
+  localApiBase: string | undefined = undefined;
+
   /**
    * Lyrics-track pitch rendering, applied to every lyrics row. `showLyricsPitch`
    * lifts each word to its sung pitch + draws the pitch line (off => a flat
@@ -77,9 +80,11 @@ export class AppSettingsStore {
   }
 
   /** `<origin>/api`, the base every backend request composes against. An empty
-   *  origin collapses to the origin-relative `/api`. */
+   *  origin means the desktop app's own backend when it runs one, else the
+   *  origin-relative `/api`. */
   get apiBase(): string {
     const origin = this.alignerUrl.trim().replace(/\/+$/, '');
+    if (origin.length === 0 && this.localApiBase != null) return this.localApiBase;
     return `${origin}/api`;
   }
 }

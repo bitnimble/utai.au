@@ -53,6 +53,10 @@ export class AppSettingsPresenter {
     this.settings.remoteBaseUrl = url;
   }
 
+  setLocalApiBase(base: string): void {
+    this.settings.localApiBase = base;
+  }
+
   setShowLyricsPitch(on: boolean): void {
     this.settings.showLyricsPitch = on;
   }

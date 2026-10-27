@@ -64,10 +64,10 @@ by duration + fuzzy title/artist, so that doesn't matter.)
 
 ## First-run checks
 
-- **OnTheSpot web entrypoint.** The compose CMD tries `onthespot-web` then
-  `python -m onthespot.web`. If OnTheSpot fails to start, exec in and find the
-  right launch command (`docker compose -f docker-compose.dev.yml exec onthespot
-  sh`, then `pip show -f onthespot`) and update `docker/onthespot.Dockerfile`.
+- **OnTheSpot version.** The image pins the commit the aligner's `onthespot`
+  group pins, and runs `aligner/app/music/onthespot_server.py`, which patches
+  OnTheSpot's downloader. Bump both pins together; the image build fails if the
+  patches no longer apply.
 - **Add an account.** In the app, open the music settings (gear). **YouTube
   Music** needs no sign-in (always available; searched automatically).
   Deezer/Qobuz/Apple Music/SoundCloud take a token or email+password.

@@ -362,11 +362,25 @@ async fn sync_venv(
     let _ = out_task.await;
     let _ = err_task.await;
 
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("uv sync failed ({status})"))
+    if !status.success() {
+        return Err(format!("uv sync failed ({status})"));
     }
+    let _ = std::fs::write(synced_groups_path(&venv), groups.join("\n"));
+    Ok(())
+}
+
+fn synced_groups_path(venv: &Path) -> PathBuf {
+    venv.join("utai-synced-groups.txt")
+}
+
+/// Whether the venv was last synced with every group in `groups`, so an install
+/// predating a newly added startup group gets it on its next launch.
+fn venv_has_groups(venv: &Path, groups: &[&str]) -> bool {
+    let Ok(synced) = std::fs::read_to_string(synced_groups_path(venv)) else {
+        return false;
+    };
+    let synced: Vec<&str> = synced.lines().collect();
+    groups.iter().all(|g| synced.contains(g))
 }
 
 /// Install (or re-resolve) the app capability venv to `groups`, then pre-fetch the
@@ -636,9 +650,10 @@ async fn prune_models(
 
 // uv groups the startup gate syncs when the venv needs building (dev builds ship
 // no vendored wheels): `lyrics-ja` pulls the full alignment stack (separation is
-// transitive) plus JP romanization; `music` adds the Spotify source. `pitch`
-// needs no packages beyond `separation`, so no pitch group. See scripts/mac-build.ts.
-const STARTUP_SYNC_GROUPS: &[&str] = &["lyrics-ja", "music"];
+// transitive) plus JP romanization; `onthespot` adds the local music stack
+// (`local_backend`), Spotify (`music`) included. `pitch` needs no packages beyond
+// `separation`, so no pitch group. See scripts/mac-build.ts.
+const STARTUP_SYNC_GROUPS: &[&str] = &["lyrics-ja", "onthespot"];
 // Capabilities eagerly provisioned at startup. `lyrics` + `pitch` each compose
 // `separation`, so this downloads every model (separator + both aligners + f0).
 const STARTUP_PROVISION_CAPS: &[&str] = &["lyrics", "pitch"];
@@ -661,7 +676,10 @@ pub async fn ensure_models(app: AppHandle, on_event: Channel<ProvisionEvent>) ->
             return Err(e);
         }
     };
-    if crate::paths::is_dev_build(&app) || !venv_python(&venv).is_file() {
+    if crate::paths::is_dev_build(&app)
+        || !venv_python(&venv).is_file()
+        || !venv_has_groups(&venv, STARTUP_SYNC_GROUPS)
+    {
         let groups: Vec<String> = STARTUP_SYNC_GROUPS.iter().map(|s| s.to_string()).collect();
         if let Err(message) = sync_venv(&app, "startup", &groups, None).await {
             let _ = on_event.send(ProvisionEvent::Error { message: message.clone() });

@@ -34,7 +34,7 @@ pub struct SidecarState {
 }
 
 impl SidecarState {
-    fn track(&self, pid: Option<u32>) {
+    pub(crate) fn track(&self, pid: Option<u32>) {
         if let Some(pid) = pid {
             self.children.lock().unwrap().insert(pid);
         }

@@ -8,6 +8,8 @@ mod audio;
 #[cfg(desktop)]
 mod capability;
 #[cfg(desktop)]
+mod local_backend;
+#[cfg(desktop)]
 mod logs;
 #[cfg(desktop)]
 mod no_console;
@@ -73,6 +75,7 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder
         .manage(sidecar::SidecarState::default())
+        .manage(local_backend::LocalBackend::default())
         .manage(audio::AudioState::new())
         .manage(pitch::PitchState::default())
         .setup(|app| {
@@ -134,6 +137,7 @@ pub fn run() {
             pitch::audio_pitch_subscribe,
             pitch::audio_pitch_unsubscribe,
             session_server::session_server_api_base,
+            local_backend::local_backend_api_base,
         ]);
 
     let app = builder

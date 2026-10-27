@@ -177,18 +177,24 @@ if (DEV) {
     await copyFile(join(wheelCache, w), join(wheelhouse, w));
   }
 
+  const pins: string[] = [];
   for (const spec of gitSpecs) {
     const wheel = wheelFor(spec, wheels);
     if (!wheel) {
       throw new Error(`no wheel built for ${depName(spec)}`);
     }
-    pyproject = mustReplace(
-      pyproject,
-      `"${spec}"`,
-      `"${depName(spec)}==${wheel.split('-')[1]}"`,
-      depName(spec),
-    );
+    const pin = `${depName(spec)}==${wheel.split('-')[1]}`;
+    pins.push(pin);
+    pyproject = mustReplace(pyproject, `"${spec}"`, `"${pin}"`, depName(spec));
   }
+  // A vendored wheel can still name another vendored dep by its git URL in its
+  // own metadata (onthespot -> librespot); overriding every pin replaces those too.
+  pyproject = mustReplace(
+    pyproject,
+    'override-dependencies = [',
+    `override-dependencies = [${pins.map((p) => `"${p}"`).join(', ')}, `,
+    'vendored-pin overrides',
+  );
   pyproject = mustReplace(
     pyproject,
     '[tool.uv]\n',

@@ -218,7 +218,9 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
 Dep groups mirror capabilities (`aligner/pyproject.toml`, PEP 735):
 `separation`, `lyrics` (adds `ctc-forced-aligner`), `lyrics-ja` (adds
 `cutlet`/`fugashi`/`unidic-lite`), `pitch` (SwiftF0 f0 overlay; needs no
-packages beyond the separation stack).
+packages beyond the separation stack). Non-ML: `music` (librespot, Spotify
+sign-in) and `onthespot` (OnTheSpot itself, for the desktop app's local
+music stack).
 
 ## LRCLIB (getting the lyrics + rough timings)
 
