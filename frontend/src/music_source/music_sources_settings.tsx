@@ -2,6 +2,7 @@ import { ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import type { ServiceInfo } from 'src/net/music_source_client';
+import { Checkbox } from 'src/ui/checkbox/checkbox';
 import { MusicSourcePresenterContext, MusicSourceStoreContext } from './music_source_contexts';
 import type { MusicSourcePresenter } from './music_source_presenter';
 import styles from './music_sources_settings.module.css';
@@ -93,7 +94,26 @@ const ServiceRow = observer(function ServiceRow({
         </div>
       </div>
       <AccountControls service={service} presenter={presenter} />
+      {service.id === 'youtube_music' && <YoutubeSearchOption presenter={presenter} />}
     </li>
+  );
+});
+
+const YoutubeSearchOption = observer(function YoutubeSearchOption({
+  presenter,
+}: {
+  presenter: MusicSourcePresenter;
+}) {
+  const store = React.useContext(MusicSourceStoreContext);
+  return (
+    <label className={styles.option}>
+      <Checkbox
+        checked={store?.config?.includeYoutubeSearch ?? false}
+        onChange={(e) => void presenter.setIncludeYoutubeSearch(e.target.checked)}
+        data-testid="music-include-youtube-search"
+      />
+      Also show regular YouTube results (any upload, not just music)
+    </label>
   );
 });
 

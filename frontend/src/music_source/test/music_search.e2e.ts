@@ -37,3 +37,31 @@ test('music search: result rows show the cover thumbnail, or a placeholder witho
   await expect(thumb('broken')).toHaveJSProperty('hidden', true);
   await expect(thumb('none')).toHaveCount(0);
 });
+
+test('music settings: YouTube Music opts in to regular YouTube results, off by default', async ({ page }) => {
+  const patches: unknown[] = [];
+  let config = { priority: ['youtube_music'], includeYoutubeSearch: false };
+  await page.route('**/api/music/**', async (route) => {
+    const request = route.request();
+    if (request.url().includes('/music/services')) {
+      return route.fulfill({
+        json: { services: [{ id: 'youtube_music', label: 'YouTube Music', authKind: 'anonymous', configured: true }] },
+      });
+    }
+    if (request.method() === 'PUT') {
+      const patch = request.postDataJSON();
+      patches.push(patch);
+      config = { ...config, ...patch };
+    }
+    return route.fulfill({ json: config });
+  });
+
+  await page.goto('/');
+  await page.getByTestId('settings-open').click();
+  await page.getByTestId('settings-tab-sources').click();
+  const option = page.getByTestId('music-include-youtube-search');
+  await expect(option).not.toBeChecked();
+  await option.click();
+  await expect(option).toBeChecked();
+  expect(patches).toEqual([{ includeYoutubeSearch: true }]);
+});

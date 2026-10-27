@@ -36,6 +36,9 @@ class MusicConfig(BaseModel):
     # results). Every connected (configured) service is searched; priority only
     # orders the merged results.
     priority: list[str] = Field(default_factory=list)
+    # Also list plain YouTube search results (any upload, music or not) after
+    # YouTube Music's own.
+    includeYoutubeSearch: bool = False
 
 
 class MusicState(BaseModel):

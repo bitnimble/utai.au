@@ -57,6 +57,7 @@ async def aclose_facade() -> None:
 
 class ConfigPatch(BaseModel):
     priority: list[str] | None = None
+    includeYoutubeSearch: bool | None = None
 
 
 class FetchRequest(BaseModel):
@@ -83,7 +84,9 @@ async def get_config() -> MusicConfig:
 
 @router.put("/config", response_model=MusicConfig)
 async def put_config(patch: ConfigPatch) -> MusicConfig:
-    return get_facade().set_config(priority=patch.priority)
+    return get_facade().set_config(
+        priority=patch.priority, include_youtube_search=patch.includeYoutubeSearch
+    )
 
 
 @router.post("/accounts", response_model=AddAccountResult)

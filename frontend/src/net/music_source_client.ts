@@ -28,6 +28,8 @@ export type MusicConfig = {
   /** Service ids in descending search priority (index 0 ranks highest). Every
    *  connected service is searched; priority only orders the merged results. */
   priority: string[];
+  /** Also list plain YouTube search results (any upload) after YouTube Music's own. */
+  includeYoutubeSearch: boolean;
 };
 
 export type TrackResult = {
@@ -67,6 +69,7 @@ export type FetchTrackOptions = {
 
 export type ConfigPatch = {
   priority?: string[];
+  includeYoutubeSearch?: boolean;
 };
 
 function musicUrl(path: string): string {
@@ -297,7 +300,7 @@ function parseService(raw: unknown): ServiceInfo | undefined {
 function parseConfig(raw: unknown): MusicConfig {
   const r = (raw ?? {}) as Record<string, unknown>;
   const priority = Array.isArray(r.priority) ? r.priority.filter((s): s is string => typeof s === 'string') : [];
-  return { priority };
+  return { priority, includeYoutubeSearch: r.includeYoutubeSearch === true };
 }
 
 function parseTrack(raw: unknown): TrackResult | undefined {

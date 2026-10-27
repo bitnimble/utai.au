@@ -90,10 +90,15 @@ describe('searchTracks', () => {
 });
 
 describe('config', () => {
-  test('getMusicConfig parses priority', async () => {
-    fetchHandler = () => json({ priority: ['tidal', 42] });
+  test('getMusicConfig parses priority and the YouTube search opt-in', async () => {
+    fetchHandler = () => json({ priority: ['tidal', 42], includeYoutubeSearch: true });
     const cfg = await getMusicConfig();
-    expect(cfg).toEqual({ priority: ['tidal'] }); // non-strings filtered
+    expect(cfg).toEqual({ priority: ['tidal'], includeYoutubeSearch: true }); // non-strings filtered
+  });
+
+  test('the YouTube search opt-in defaults off', async () => {
+    fetchHandler = () => json({ priority: [] });
+    expect((await getMusicConfig()).includeYoutubeSearch).toBe(false);
   });
 
   test('setMusicConfig PUTs the patch', async () => {

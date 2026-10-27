@@ -65,7 +65,7 @@ _CATALOG_BY_ID: dict[str, ServiceInfo] = {s.id: s for s in SERVICE_CATALOG}
 DONE_STATUSES = frozenset({"Downloaded", "Already Exists"})
 FAIL_STATUSES = frozenset({"Failed", "Cancelled", "Unavailable"})
 
-_UPLOADER_TITLED_SERVICES = frozenset({"soundcloud"})
+_UPLOADER_TITLED_SERVICES = frozenset({"soundcloud", YOUTUBE_MUSIC})
 
 # Only whole tracks are fetchable song sources; albums / artists / playlists in
 # the raw results are dropped from what we hand the UI.
@@ -139,12 +139,16 @@ class MusicFacade:
     def get_config(self) -> MusicConfig:
         return self._effective_config()
 
-    def set_config(self, *, priority: list[str] | None = None) -> MusicConfig:
+    def set_config(
+        self, *, priority: list[str] | None = None, include_youtube_search: bool | None = None
+    ) -> MusicConfig:
         cfg = self._state.config
         if priority is not None:
             # Keep only known services; drop unknowns silently so a stale client
             # can't wedge the order.
             cfg.priority = [s for s in priority if s in _CATALOG_BY_ID]
+        if include_youtube_search is not None:
+            cfg.includeYoutubeSearch = include_youtube_search
         self._save_state()
         return self._effective_config()
 
@@ -228,8 +232,16 @@ class MusicFacade:
         return merged
 
     async def _search_service(self, service: str, query: str) -> list[TrackResult]:
-        if service == YOUTUBE_MUSIC:
-            return await self._youtube_music.search(query)
+        if service != YOUTUBE_MUSIC:
+            return await self._search_onthespot(service, query)
+        results = await self._youtube_music.search(query)
+        if self._state.config.includeYoutubeSearch:
+            # OnTheSpot's own "YouTube Music" search is plain YouTube search.
+            listed = {r.id for r in results}
+            results += [r for r in await self._search_onthespot(service, query) if r.id not in listed]
+        return results
+
+    async def _search_onthespot(self, service: str, query: str) -> list[TrackResult]:
         index = self._index_for_service(service)
         if index is None:
             return []
@@ -310,7 +322,7 @@ class MusicFacade:
         for s in SERVICE_CATALOG:
             if s.id not in seen:
                 seen.append(s.id)
-        return MusicConfig(priority=seen)
+        return cfg.model_copy(update={"priority": seen})
 
     def _search_services(self) -> list[str]:
         """Every connected (configured) service, in priority order, search

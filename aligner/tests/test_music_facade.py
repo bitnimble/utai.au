@@ -226,6 +226,21 @@ def test_youtube_music_searches_youtube_music_not_onthespot(tmp_path):
     assert client.active_index is None
 
 
+def test_plain_youtube_search_is_opt_in_and_listed_after_youtube_music(tmp_path):
+    client = FakeClient()
+    client.search_by_index = {0: [_track_item("KP4tmbzrCEc", "youtube_music"), _track_item("fallon", "youtube_music")]}
+    pool = FakePool([{"service": "youtube_music", "uuid": "public_youtube_music"}])
+    facade = _facade(tmp_path, client, pool, FakeYoutubeMusic([_yt_track("KP4tmbzrCEc")]))
+    facade.set_config(priority=["youtube_music"])
+    assert facade.get_config().includeYoutubeSearch is False
+    assert [r.id for r in asyncio.run(facade.search("hello"))] == ["KP4tmbzrCEc"]
+
+    facade.set_config(include_youtube_search=True)
+    results = asyncio.run(facade.search("hello"))
+    assert [(r.id, r.uploaderTitled) for r in results] == [("KP4tmbzrCEc", False), ("fallon", True)]
+    assert _facade(tmp_path, FakeClient(), pool).get_config().includeYoutubeSearch is True
+
+
 def test_search_seeds_missing_anonymous_account(tmp_path):
     # OnTheSpot shipped no youtube_music account: search seeds it (+ restart)
     # so its downloads work with no UI step.

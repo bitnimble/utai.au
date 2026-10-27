@@ -206,6 +206,10 @@ export class MusicSourcePresenter {
     await this.setPriority(order);
   }
 
+  async setIncludeYoutubeSearch(include: boolean): Promise<void> {
+    await this.patchConfig({ includeYoutubeSearch: include });
+  }
+
   private async patchConfig(patch: ConfigPatch): Promise<void> {
     try {
       const config = await setMusicConfig(patch);
