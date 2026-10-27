@@ -39,7 +39,7 @@ from .models import (
 from .onthespot_client import OnTheSpotApi
 from .spotify_oauth import SpotifyOAuth, SpotifyOAuthUnavailable
 from .youtube_music import SERVICE as YOUTUBE_MUSIC
-from .youtube_music import YoutubeMusicSearch
+from .youtube_music import YoutubeMusicSearch, rank_by_query
 
 log = logging.getLogger(__name__)
 
@@ -239,7 +239,7 @@ class MusicFacade:
             # OnTheSpot's own "YouTube Music" search is plain YouTube search.
             listed = {r.id for r in results}
             results += [r for r in await self._search_onthespot(service, query) if r.id not in listed]
-        return results
+        return rank_by_query(results, query)
 
     async def _search_onthespot(self, service: str, query: str) -> list[TrackResult]:
         index = self._index_for_service(service)

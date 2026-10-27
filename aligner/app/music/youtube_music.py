@@ -3,12 +3,42 @@ metadata for songs. Downloads still go through OnTheSpot."""
 from __future__ import annotations
 
 import asyncio
+import re
+import unicodedata
+from difflib import SequenceMatcher
 from typing import Any, Protocol
 
 from .models import TrackResult
 
 SERVICE = "youtube_music"
 _RESULTS_PER_KIND = 10
+_SAME_WORD_RATIO = 0.8
+_COMBINING_DIACRITICS = re.compile("[̀-ͯ]")
+_WORD = re.compile(r"[^\W_]+")
+
+
+def rank_by_query(results: list[TrackResult], query: str) -> list[TrackResult]:
+    """Most query words found in the title + artists first; ties keep their order."""
+    words = _tokens(query)
+    return sorted(results, key=lambda t: -_matched_count(words, _tokens(f"{t.title} {t.artists}")))
+
+
+def _matched_count(words: list[str], candidate: list[str]) -> int:
+    return sum(1 for w in words if any(_same_word(w, c) for c in candidate))
+
+
+def _same_word(word: str, candidate: str) -> bool:
+    if word == candidate:
+        return True
+    # Non-Latin scripts glue words together ("米津玄師ハチ").
+    if not word.isascii() and len(word) >= 2 and word in candidate:
+        return True
+    return SequenceMatcher(None, word, candidate).ratio() >= _SAME_WORD_RATIO
+
+
+def _tokens(text: str) -> list[str]:
+    folded = _COMBINING_DIACRITICS.sub("", unicodedata.normalize("NFKD", text))
+    return _WORD.findall(unicodedata.normalize("NFC", folded).lower())
 
 
 class YoutubeMusicSearch(Protocol):
