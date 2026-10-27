@@ -40,7 +40,7 @@ impl SidecarState {
         }
     }
 
-    fn untrack(&self, pid: Option<u32>) {
+    pub(crate) fn untrack(&self, pid: Option<u32>) {
         if let Some(pid) = pid {
             self.children.lock().unwrap().remove(&pid);
         }
@@ -57,7 +57,7 @@ impl SidecarState {
 
 /// Kill a process and its descendants (the sidecar may itself spawn workers).
 #[cfg(windows)]
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
     // /T = whole tree; CREATE_NO_WINDOW so it doesn't flash a console.
     let _ = std::process::Command::new("taskkill")
@@ -66,10 +66,13 @@ fn kill_tree(pid: u32) {
         .status();
 }
 
+/// On unix only children spawned as group leaders (`process_group(0)`) take their
+/// descendants with them.
 #[cfg(not(windows))]
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     let _ = std::process::Command::new("kill")
-        .args(["-9", &pid.to_string()])
+        .args(["-9", "--", &format!("-{pid}"), &pid.to_string()])
+        .stderr(Stdio::null())
         .status();
 }
 

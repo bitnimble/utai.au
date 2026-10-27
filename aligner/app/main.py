@@ -4,8 +4,8 @@ Endpoints:
     GET  /health         - readiness + GPU info
     POST /music/align   - word-level lyrics alignment (CTC forced alignment)
 
-The pipeline endpoints are stateless; only /sessions (app/sessions.py) keeps
-in-memory state. All temp files live in per-request tempdirs. At startup a background task provisions the configured model set
+Only /sessions keeps in-memory state. All temp files live in per-request
+tempdirs. At startup a background task provisions the configured model set
 (with update-detection) and warms the separation model; uvicorn accepts
 connections immediately so GET /provision/status can report progress while it
 runs. /health is a liveness probe (process + GPU); /provision/status is the
@@ -48,6 +48,7 @@ from app.request_context import (
     set_request_id,
 )
 from app.round_robin_lock import RoundRobinLock
+from app.sessions import registry as sessions_registry
 from app.sessions import router as sessions_router
 
 # How long the streaming endpoint will sit silent (no real progress event)
@@ -72,7 +73,9 @@ SESSION_HEADER = "x-utai-session"
 
 
 def _session_lane(request: Request) -> str:
-    return request.headers.get(SESSION_HEADER, "")
+    # Only a live session gets a lane: a made-up id per request would jump the rotation.
+    session = sessions_registry.get(request.headers.get(SESSION_HEADER, ""))
+    return session.id if session is not None else ""
 
 
 def _require_pipeline_role() -> None:

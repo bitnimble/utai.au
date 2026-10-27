@@ -178,11 +178,6 @@ fn set_var(key: &str, val: impl AsRef<std::ffi::OsStr>) {
     unsafe { std::env::set_var(key, val) };
 }
 
-/// Point every dependency's cache/download/state dir under `root` via process env
-/// (inherited by the spawned uv + sidecar). `full` (portable only) also redirects
-/// TEMP - so the frontend's staged inputs + the Python scratch + the fs-plugin
-/// `$TEMP` all land under `root` - and the WebView2 user-data folder; an installed
-/// build leaves TEMP + the webview folder at their user-writable OS defaults.
 /// Where the sidecar writes its stem/lyrics deliverables, and where the webview's
 /// fs/asset-protocol scopes are opened to read them back. The ONE place this
 /// join happens -- `redirect_env` (which sets `UTAI_OUTPUTS_DIR` for the
@@ -192,12 +187,15 @@ pub fn outputs_dir(root: &Path) -> PathBuf {
     root.join("outputs")
 }
 
-/// Where startup links the venv's bundled ffmpeg (`capability::ensure_models`),
-/// under the name every caller looks it up by.
 pub fn bundled_ffmpeg(root: &Path) -> PathBuf {
     root.join("bin").join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" })
 }
 
+/// Point every dependency's cache/download/state dir under `root` via process env
+/// (inherited by the spawned uv + sidecar). `full` (portable only) also redirects
+/// TEMP - so the frontend's staged inputs + the Python scratch + the fs-plugin
+/// `$TEMP` all land under `root` - and the WebView2 user-data folder; an installed
+/// build leaves TEMP + the webview folder at their user-writable OS defaults.
 pub fn redirect_env(root: &Path, full: bool) {
     let ffmpeg = bundled_ffmpeg(root);
     if let Some(bin) = ffmpeg.parent() {

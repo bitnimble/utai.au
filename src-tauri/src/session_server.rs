@@ -1,7 +1,5 @@
-//! Karaoke-session relay served by the desktop app over the LAN, so phones can
-//! join a desktop-hosted session with no backend: the protocol of
-//! `aligner/app/sessions.py`, plus the embedded frontend for the remote page.
-//! Desktop-only.
+//! LAN session relay for the desktop app: the protocol of `aligner/app/sessions.py`,
+//! plus the embedded frontend so phones can load the remote page from it.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, TcpListener, UdpSocket};
@@ -22,11 +20,15 @@ use tokio::sync::mpsc;
 const SESSION_ID_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const SESSION_ID_LENGTH: usize = 6;
 const SESSION_IDLE_TTL: Duration = Duration::from_secs(60 * 60);
+const MAX_SESSIONS: usize = 1000;
+const MAX_FRAME_BYTES: usize = 1_000_000;
+const PING_INTERVAL: Duration = Duration::from_secs(20);
+const PEER_TIMEOUT: Duration = Duration::from_secs(45);
 const CLOSE_NO_SESSION: u16 = 4404;
+const CLOSE_BAD_TOKEN: u16 = 4403;
 const CLOSE_REPLACED: u16 = 4000;
 const DEFAULT_PORT: u16 = 7337;
 
-/// The `/api` base the webview talks to, or why the server couldn't start.
 pub struct SessionServer(Result<String, String>);
 
 #[tauri::command]
@@ -34,7 +36,7 @@ pub fn session_server_api_base(server: State<'_, SessionServer>) -> Result<Strin
     server.0.clone()
 }
 
-/// Binds the port (`UTAI_SESSION_PORT`, default 7337) and serves in the background.
+/// Binds `UTAI_SESSION_PORT` (default 7337) on all interfaces and serves in the background.
 pub fn start<R: Runtime>(app: &AppHandle<R>) -> SessionServer {
     let port = std::env::var("UTAI_SESSION_PORT")
         .ok()
@@ -51,10 +53,9 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) -> SessionServer {
             return SessionServer(Err(message));
         }
     };
-    let public_url = lan_ip().map(|ip| format!("http://{ip}:{port}"));
-    log::info!("session server on port {port}, LAN origin {public_url:?}");
+    log::info!("session server on port {port}");
     let resolver = Arc::new(app.asset_resolver());
-    let routes = router(public_url).fallback(get(move |uri: Uri| {
+    let routes = router(Some(port)).fallback(get(move |uri: Uri| {
         let resolver = resolver.clone();
         async move { serve_asset(&resolver, &uri) }
     }));
@@ -70,10 +71,11 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) -> SessionServer {
     SessionServer(Ok(format!("http://127.0.0.1:{port}/api")))
 }
 
-fn router(public_url: Option<String>) -> Router {
+/// `port` advertises `http://<lan-ip>:<port>` as the join origin; None advertises none.
+fn router(port: Option<u16>) -> Router {
     let relay = Relay {
         registry: Arc::new(Mutex::new(Registry::default())),
-        public_url,
+        port,
     };
     Router::new()
         .route("/api/sessions", post(create_session))
@@ -110,7 +112,7 @@ fn lan_ip() -> Option<IpAddr> {
 #[derive(Clone)]
 struct Relay {
     registry: Arc<Mutex<Registry>>,
-    public_url: Option<String>,
+    port: Option<u16>,
 }
 
 impl Relay {
@@ -118,11 +120,12 @@ impl Relay {
         self.registry.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn describe(&self, id: String) -> Response {
-        api_response(
-            StatusCode::OK,
-            json!({ "id": id, "publicUrl": self.public_url }),
-        )
+    fn describe(&self, id: &str) -> Value {
+        // Per request, not at startup: the machine may since have joined or changed networks.
+        let public_url = self
+            .port
+            .and_then(|port| lan_ip().map(|ip| format!("http://{ip}:{port}")));
+        json!({ "id": id, "publicUrl": public_url })
     }
 }
 
@@ -136,8 +139,16 @@ fn api_response(status: StatusCode, body: Value) -> Response {
 }
 
 async fn create_session(AxumState(relay): AxumState<Relay>) -> Response {
-    let id = relay.registry().create(Instant::now());
-    relay.describe(id)
+    let created = relay.registry().create(Instant::now());
+    let Some((id, host_token)) = created else {
+        return api_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({ "detail": "Too many sessions; try again later." }),
+        );
+    };
+    let mut body = relay.describe(&id);
+    body["hostToken"] = json!(host_token);
+    api_response(StatusCode::OK, body)
 }
 
 async fn get_session(AxumState(relay): AxumState<Relay>, Path(id): Path<String>) -> Response {
@@ -146,7 +157,7 @@ async fn get_session(AxumState(relay): AxumState<Relay>, Path(id): Path<String>)
         .find(&id, Instant::now())
         .map(|s| s.id.clone());
     match found {
-        Some(id) => relay.describe(id),
+        Some(id) => api_response(StatusCode::OK, relay.describe(&id)),
         None => api_response(
             StatusCode::NOT_FOUND,
             json!({ "detail": "No such session." }),
@@ -163,36 +174,59 @@ enum Role {
 }
 
 #[derive(Deserialize)]
-struct RoleQuery {
+struct SocketQuery {
     #[serde(default)]
     role: Role,
+    #[serde(default)]
+    token: String,
 }
 
 async fn session_socket(
     ws: WebSocketUpgrade,
     AxumState(relay): AxumState<Relay>,
     Path(id): Path<String>,
-    Query(query): Query<RoleQuery>,
+    Query(query): Query<SocketQuery>,
 ) -> Response {
-    ws.on_upgrade(move |socket| run_client(socket, relay, id, query.role))
+    ws.on_upgrade(move |socket| run_client(socket, relay, id, query))
 }
 
-async fn run_client(mut socket: WebSocket, relay: Relay, raw_id: String, role: Role) {
+async fn run_client(mut socket: WebSocket, relay: Relay, raw_id: String, query: SocketQuery) {
     let (outbox, mut inbox) = mpsc::unbounded_channel();
-    let Some(client) = relay.registry().join(&raw_id, role, outbox, Instant::now()) else {
-        let _ = socket.send(close(CLOSE_NO_SESSION)).await;
-        return;
+    let joined = relay
+        .registry()
+        .join(&raw_id, query.role, &query.token, outbox, Instant::now());
+    let client = match joined {
+        Ok(client) => client,
+        Err(code) => {
+            let _ = socket.send(close(code)).await;
+            return;
+        }
     };
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + PING_INTERVAL, PING_INTERVAL);
+    let mut last_heard = Instant::now();
     loop {
         tokio::select! {
             outgoing = inbox.recv() => match outgoing {
                 Some(message) => if socket.send(message).await.is_err() { break },
                 None => break,
             },
-            incoming = socket.recv() => match incoming {
-                Some(Ok(Message::Text(text))) => relay.registry().route(&client, &text),
-                Some(Ok(_)) => {}
-                _ => break,
+            incoming = socket.recv() => {
+                last_heard = Instant::now();
+                match incoming {
+                    Some(Ok(Message::Text(text))) if text.len() <= MAX_FRAME_BYTES => {
+                        relay.registry().route(&client, &text)
+                    }
+                    Some(Ok(_)) => {}
+                    _ => break,
+                }
+            },
+            _ = ping.tick() => {
+                // A phone that sleeps or leaves the network never closes its socket.
+                if last_heard.elapsed() > PEER_TIMEOUT
+                    || socket.send(Message::Ping(Default::default())).await.is_err()
+                {
+                    break;
+                }
             },
         }
     }
@@ -248,6 +282,7 @@ type Outbox = mpsc::UnboundedSender<Message>;
 
 struct Session {
     id: String,
+    host_token: String,
     idle_since: Option<Instant>,
     host: Option<(String, Outbox)>,
     remotes: HashMap<String, Outbox>,
@@ -280,25 +315,31 @@ struct Registry {
 }
 
 impl Registry {
-    fn create(&mut self, now: Instant) -> String {
+    /// `(id, host_token)`, or None when the relay already holds MAX_SESSIONS.
+    fn create(&mut self, now: Instant) -> Option<(String, String)> {
         self.sweep(now);
+        if self.sessions.len() >= MAX_SESSIONS {
+            return None;
+        }
         let id = loop {
             let id = random_session_id();
             if !self.sessions.contains_key(&id) {
                 break id;
             }
         };
+        let host_token = random_host_token();
         self.sessions.insert(
             id.clone(),
             Session {
                 id: id.clone(),
+                host_token: host_token.clone(),
                 idle_since: Some(now),
                 host: None,
                 remotes: HashMap::new(),
                 state: Value::Null,
             },
         );
-        id
+        Some((id, host_token))
     }
 
     fn find(&mut self, raw_id: &str, now: Instant) -> Option<&mut Session> {
@@ -306,11 +347,26 @@ impl Registry {
         self.sessions.get_mut(&normalize_session_id(raw_id))
     }
 
-    fn join(&mut self, raw_id: &str, role: Role, outbox: Outbox, now: Instant) -> Option<Client> {
-        let session_id = self.find(raw_id, now)?.id.clone();
+    /// Err is the close code to refuse the socket with.
+    fn join(
+        &mut self,
+        raw_id: &str,
+        role: Role,
+        token: &str,
+        outbox: Outbox,
+        now: Instant,
+    ) -> Result<Client, u16> {
+        let session = self.find(raw_id, now).ok_or(CLOSE_NO_SESSION)?;
+        if role == Role::Host && !tokens_match(token, &session.host_token) {
+            return Err(CLOSE_BAD_TOKEN);
+        }
+        let session_id = session.id.clone();
         self.client_count += 1;
         let client_id = format!("c{}", self.client_count);
-        let session = self.sessions.get_mut(&session_id)?;
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(CLOSE_NO_SESSION)?;
         let hello = Frame::Hello {
             client_id: &client_id,
             host_connected: session.host.is_some(),
@@ -330,7 +386,7 @@ impl Registry {
             }
         }
         session.idle_since = None;
-        Some(Client {
+        Ok(Client {
             session_id,
             client_id,
             role,
@@ -419,7 +475,21 @@ fn random_session_id() -> String {
         .collect()
 }
 
-/// Crockford-style: case-insensitive, with O/I/L read as 0/1/1.
+fn random_host_token() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("OS randomness is available");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn tokens_match(given: &str, expected: &str) -> bool {
+    given.len() == expected.len()
+        && given
+            .bytes()
+            .zip(expected.bytes())
+            .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
+}
+
 fn normalize_session_id(raw: &str) -> String {
     raw.trim()
         .to_uppercase()
@@ -442,7 +512,7 @@ mod tests {
     fn ids_use_the_alphabet() {
         let mut registry = Registry::default();
         for _ in 0..200 {
-            let id = registry.create(Instant::now());
+            let (id, _) = registry.create(Instant::now()).unwrap();
             assert_eq!(id.len(), SESSION_ID_LENGTH);
             assert!(id.bytes().all(|b| SESSION_ID_ALPHABET.contains(&b)), "{id}");
         }
@@ -457,9 +527,9 @@ mod tests {
     fn session_expires_after_an_idle_hour_without_clients() {
         let start = Instant::now();
         let mut registry = Registry::default();
-        let id = registry.create(start);
+        let (id, token) = registry.create(start).unwrap();
         let (outbox, _inbox) = mpsc::unbounded_channel();
-        let host = registry.join(&id, Role::Host, outbox, start).unwrap();
+        let host = registry.join(&id, Role::Host, &token, outbox, start).unwrap();
         let later = start + 2 * SESSION_IDLE_TTL;
         assert!(registry.find(&id, later).is_some());
         registry.leave(&host, later);
@@ -476,6 +546,7 @@ mod tests {
         let (status, created) = http(&base, "POST", "/api/sessions").await;
         assert_eq!(status, 200);
         let id = created["id"].as_str().unwrap();
+        assert_eq!(created["hostToken"].as_str().unwrap().len(), 32);
         let (status, found) = http(
             &base,
             "GET",
@@ -492,15 +563,23 @@ mod tests {
     #[tokio::test]
     async fn unknown_session_socket_closes_4404() {
         let base = serve().await;
-        let mut ws = connect(&base, "ZZZZZZ", "remote").await;
+        let mut ws = connect(&base, "ZZZZZZ", "remote", "").await;
         assert_eq!(close_code(&mut ws).await, 4404);
+    }
+
+    #[tokio::test]
+    async fn hosting_needs_the_host_token() {
+        let base = serve().await;
+        let (id, _) = create(&base).await;
+        let mut ws = connect(&base, &id, "host", "guessed").await;
+        assert_eq!(close_code(&mut ws).await, 4403);
     }
 
     #[tokio::test]
     async fn relays_commands_state_and_replies() {
         let base = serve().await;
-        let id = create(&base).await;
-        let mut host = connect(&base, &id, "host").await;
+        let (id, token) = create(&base).await;
+        let mut host = connect(&base, &id, "host", &token).await;
         assert_eq!(
             recv(&mut host).await,
             json!({ "type": "hello", "clientId": "c1", "hostConnected": false, "state": null })
@@ -510,7 +589,7 @@ mod tests {
             json!({ "type": "state", "state": { "queue": ["a"] } }),
         )
         .await;
-        let mut remote = connect(&base, &id, "remote").await;
+        let mut remote = connect(&base, &id, "remote", "").await;
         assert_eq!(
             recv(&mut remote).await,
             json!({ "type": "hello", "clientId": "c2", "hostConnected": true, "state": { "queue": ["a"] } })
@@ -551,16 +630,16 @@ mod tests {
     #[tokio::test]
     async fn remotes_hear_host_leave_and_a_new_host_replaces_the_old() {
         let base = serve().await;
-        let id = create(&base).await;
-        let mut remote = connect(&base, &id, "remote").await;
+        let (id, token) = create(&base).await;
+        let mut remote = connect(&base, &id, "remote", "").await;
         recv(&mut remote).await;
-        let mut first = connect(&base, &id, "host").await;
+        let mut first = connect(&base, &id, "host", &token).await;
         recv(&mut first).await;
         assert_eq!(
             recv(&mut remote).await,
             json!({ "type": "host", "connected": true })
         );
-        let mut second = connect(&base, &id, "host").await;
+        let mut second = connect(&base, &id, "host", &token).await;
         assert_eq!(recv(&mut second).await["hostConnected"], true);
         assert_eq!(recv(&mut first).await, json!({ "type": "replaced" }));
         assert_eq!(close_code(&mut first).await, 4000);
@@ -603,13 +682,16 @@ mod tests {
         )
     }
 
-    async fn create(base: &str) -> String {
+    async fn create(base: &str) -> (String, String) {
         let (_, created) = http(base, "POST", "/api/sessions").await;
-        created["id"].as_str().unwrap().to_string()
+        (
+            created["id"].as_str().unwrap().to_string(),
+            created["hostToken"].as_str().unwrap().to_string(),
+        )
     }
 
-    async fn connect(base: &str, id: &str, role: &str) -> Socket {
-        let url = format!("ws://{base}/api/sessions/{id}/ws?role={role}");
+    async fn connect(base: &str, id: &str, role: &str, token: &str) -> Socket {
+        let url = format!("ws://{base}/api/sessions/{id}/ws?role={role}&token={token}");
         tokio_tungstenite::connect_async(url).await.unwrap().0
     }
 

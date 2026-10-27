@@ -15,29 +15,35 @@ const SEARCH_TIMEOUT_MS = 30_000;
 const OFFLINE_TOAST_TEST_ID = 'remote-offline';
 const DRAG_SEND_INTERVAL_MS = 150;
 
-/** Sole writer for {@link RemoteStore}: relays the user's actions to the host. */
+type DragKind = 'seek' | 'setVolume';
+
 export class RemotePresenter {
   private socket: SessionSocket | undefined;
   private searchRequestId = 0;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly dragSends = new Map<'seek' | 'setVolume', ThrottledSend>();
+  private readonly dragSends = new Map<DragKind, ThrottledSend>();
+  private readonly releasedDrags = new Set<DragKind>();
 
   constructor(
     private readonly store: RemoteStore,
     private readonly apiBase: string,
   ) {
-    makeAutoObservable<this, 'store' | 'apiBase' | 'socket' | 'searchRequestId' | 'searchTimer' | 'dragSends'>(this, {
+    makeAutoObservable<
+      this,
+      'store' | 'apiBase' | 'socket' | 'searchRequestId' | 'searchTimer' | 'dragSends' | 'releasedDrags'
+    >(this, {
       store: false,
       apiBase: false,
       socket: false,
       searchRequestId: false,
       searchTimer: false,
       dragSends: false,
+      releasedDrags: false,
     });
   }
 
   start(): void {
-    this.socket = SessionSocket.forSession(this.apiBase, this.store.sessionId, 'remote', {
+    this.socket = SessionSocket.forRemote(this.apiBase, this.store.sessionId, {
       onFrame: (frame) => this.onFrame(frame),
       onStatus: (status) => this.setStatus(status),
     });
@@ -60,11 +66,19 @@ export class RemotePresenter {
   }
 
   seek(sec: number): void {
+    this.store.seekDraftSec = sec;
     this.throttled('seek', { kind: 'seek', sec });
   }
 
   setVolume(volume: number): void {
+    this.store.volumeDraft = volume;
     this.throttled('setVolume', { kind: 'setVolume', volume });
+  }
+
+  /** The drag ended: send its last value now, and drop the draft once the host's next state lands. */
+  release(kind: DragKind): void {
+    this.dragSends.get(kind)?.flush();
+    this.releasedDrags.add(kind);
   }
 
   remove(id: string): void {
@@ -116,7 +130,8 @@ export class RemotePresenter {
     return sent;
   }
 
-  private throttled(kind: 'seek' | 'setVolume', command: RemoteCommand): void {
+  private throttled(kind: DragKind, command: RemoteCommand): void {
+    this.releasedDrags.delete(kind);
     let send = this.dragSends.get(kind);
     if (send == null) {
       send = new ThrottledSend(DRAG_SEND_INTERVAL_MS, (latest) => this.send(latest));
@@ -127,6 +142,9 @@ export class RemotePresenter {
 
   private setStatus(status: SocketStatus): void {
     this.store.status = status;
+    if (status === 'open') return;
+    this.store.seekDraftSec = undefined;
+    this.store.volumeDraft = undefined;
   }
 
   private onFrame(frame: RelayFrame): void {
@@ -154,6 +172,8 @@ export class RemotePresenter {
     if (!parsed.success) return;
     this.store.host = parsed.data;
     this.store.hostReceivedAtMs = Date.now();
+    if (this.releasedDrags.delete('seek')) this.store.seekDraftSec = undefined;
+    if (this.releasedDrags.delete('setVolume')) this.store.volumeDraft = undefined;
   }
 
   private onReply(reply: HostReply): void {
@@ -168,7 +188,6 @@ export class RemotePresenter {
   }
 }
 
-/** Sends the first value at once, then at most one (the latest) per interval. */
 class ThrottledSend {
   private pending: RemoteCommand | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -193,7 +212,8 @@ class ThrottledSend {
     this.pending = undefined;
   }
 
-  private flush(): void {
+  flush(): void {
+    clearTimeout(this.timer);
     this.timer = undefined;
     const pending = this.pending;
     this.pending = undefined;

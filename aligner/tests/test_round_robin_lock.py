@@ -31,18 +31,29 @@ def test_alternates_lanes_and_keeps_fifo_within_a_lane() -> None:
 
 
 def test_cancelled_waiter_does_not_block_the_lock() -> None:
-    async def scenario() -> bool:
+    async def scenario() -> list[str]:
         lock = RoundRobinLock()
         await lock.acquire("a")
-        waiter = asyncio.create_task(lock.acquire("b"))
-        await asyncio.sleep(0)
-        waiter.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await waiter
-        lock.release()
-        return lock.locked()
+        cancelled = asyncio.create_task(lock.acquire("b"))
+        order: list[str] = []
 
-    assert asyncio.run(scenario()) is False
+        async def job(lane: str) -> None:
+            await lock.acquire(lane)
+            order.append(lane)
+            lock.release()
+
+        kept = asyncio.create_task(job("b"))
+        await asyncio.sleep(0)
+        cancelled.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await cancelled
+        lock.release()
+        await kept
+        assert not lock.locked()
+        assert not lock._lanes
+        return order
+
+    assert asyncio.run(scenario()) == ["b"]
 
 
 def test_waiter_cancelled_after_grant_passes_the_lock_on() -> None:

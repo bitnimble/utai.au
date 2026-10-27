@@ -15,6 +15,7 @@ import styles from './slider.module.css';
 export const Slider = ({
   value,
   onChange,
+  onCommit,
   min = 0,
   max = 1,
   step,
@@ -29,6 +30,8 @@ export const Slider = ({
 }: {
   value: number;
   onChange: (value: number) => void;
+  /** The user let go: pointer up, key up, or blur. */
+  onCommit?: () => void;
   min?: number;
   max?: number;
   step?: number | 'any';
@@ -55,6 +58,9 @@ export const Slider = ({
       onClick={stop}
       onMouseDown={stop}
       onMouseUp={stop}
+      onPointerUp={onCommit}
+      onKeyUp={onCommit}
+      onBlur={onCommit}
       aria-label={ariaLabel}
       title={title}
       data-testid={testId}

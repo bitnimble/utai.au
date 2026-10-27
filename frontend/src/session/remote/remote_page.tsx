@@ -115,6 +115,7 @@ const NowPlaying = observer(function NowPlaying({ store, presenter }: Props) {
           step="any"
           disabled={durationSec <= 0 || !store.connected}
           onChange={(sec) => presenter.seek(sec)}
+          onCommit={() => presenter.release('seek')}
           ariaLabel="Seek"
           testId="remote-seek"
         />
@@ -146,11 +147,12 @@ const NowPlaying = observer(function NowPlaying({ store, presenter }: Props) {
         <Volume2 size={18} aria-hidden="true" />
         <Slider
           className={styles.seek}
-          value={Math.round((host?.outputVolume ?? 1) * 100)}
+          value={Math.round(store.outputVolume * 100)}
           max={100}
           step={1}
           disabled={!store.connected}
           onChange={(v) => presenter.setVolume(v / 100)}
+          onCommit={() => presenter.release('setVolume')}
           ariaLabel="Volume"
           testId="remote-volume"
         />

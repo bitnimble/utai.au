@@ -1,29 +1,27 @@
-"""`/sessions/*`: karaoke sessions, one playback host plus any number of remotes.
+"""Karaoke sessions: one playback host plus any number of remotes, through a relay
+that forwards payloads untouched.
 
-The server is a relay and knows nothing about what it carries. The host owns
-the queue and playback and publishes its state; remotes send commands to the
-host and get its state (and its replies, e.g. search results) back.
-
-    POST /sessions              -> {"id", "publicUrl"}
-    GET  /sessions/{id}         -> {"id", "publicUrl"} | 404
-    WS   /sessions/{id}/ws?role=host|remote
+`POST /sessions` returns the session's `hostToken`, which only the creator gets;
+a `role=host` socket must pass it as `?token=`, so knowing the code alone only
+lets you join as a remote.
 
 Frames (JSON text):
     server -> any     {"type": "hello", "clientId", "hostConnected", "state"}
     server -> remote  {"type": "state", "state"} | {"type": "host", "connected"}
                       | {"type": "reply", "reply"}
     server -> host    {"type": "command", "from", "command"}
-    server -> host    {"type": "replaced"}, then close: another host took over
+    server -> host    {"type": "replaced"}, then close 4000: another host took over
     host -> server    {"type": "state", "state"} | {"type": "reply", "to", "reply"}
     remote -> server  {"type": "command", "command"}
 
-An unknown session id closes the socket with code 4404. A session with no
-connected clients for an hour is dropped.
+An unknown session closes the socket with 4404, a wrong host token with 4403. A
+session with no connected clients for an hour is dropped.
 
 `src-tauri/src/session_server.rs` serves the same protocol for the desktop app.
 """
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 import secrets
@@ -40,7 +38,10 @@ from app.config import settings
 SESSION_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 SESSION_ID_LENGTH = 6
 SESSION_IDLE_TTL_SEC = 60 * 60
+MAX_SESSIONS = 1000
+MAX_FRAME_CHARS = 1_000_000
 CLOSE_NO_SESSION = 4404
+CLOSE_BAD_TOKEN = 4403
 CLOSE_REPLACED = 4000
 
 Role = Literal["host", "remote"]
@@ -52,15 +53,34 @@ def normalize_session_id(raw: str) -> str:
 
 
 @dataclass
+class Client:
+    id: str
+    ws: WebSocket
+    # Each client has its own writer, so a remote that stops reading only backs up its own queue.
+    outbox: asyncio.Queue[str | int] = field(default_factory=asyncio.Queue)
+
+    def send(self, message: dict[str, Any]) -> None:
+        self.outbox.put_nowait(json.dumps(message))
+
+    def close(self, code: int) -> None:
+        self.outbox.put_nowait(code)
+
+
+@dataclass
 class Session:
     id: str
+    host_token: str
     idle_since: float | None
-    host: WebSocket | None = None
-    remotes: dict[str, WebSocket] = field(default_factory=dict)
+    host: Client | None = None
+    remotes: dict[str, Client] = field(default_factory=dict)
     state: Any = None
 
     def has_clients(self) -> bool:
         return self.host is not None or bool(self.remotes)
+
+    def broadcast(self, message: dict[str, Any]) -> None:
+        for remote in self.remotes.values():
+            remote.send(message)
 
 
 class SessionRegistry:
@@ -74,15 +94,20 @@ class SessionRegistry:
         self._idle_ttl_sec = idle_ttl_sec
         self._clock = clock
 
-    def create(self) -> Session:
+    def create(self) -> Session | None:
+        """None when the server already holds MAX_SESSIONS."""
         self._sweep()
+        if len(self._sessions) >= MAX_SESSIONS:
+            return None
         while True:
             session_id = "".join(
                 secrets.choice(SESSION_ID_ALPHABET) for _ in range(SESSION_ID_LENGTH)
             )
             if session_id not in self._sessions:
                 break
-        session = Session(id=session_id, idle_since=self._clock())
+        session = Session(
+            id=session_id, host_token=secrets.token_urlsafe(16), idle_since=self._clock()
+        )
         self._sessions[session_id] = session
         return session
 
@@ -121,7 +146,10 @@ def _describe(session: Session) -> dict[str, Any]:
 
 @router.post("")
 async def create_session() -> dict[str, Any]:
-    return _describe(registry.create())
+    session = registry.create()
+    if session is None:
+        raise HTTPException(status_code=503, detail="Too many sessions; try again later.")
+    return {**_describe(session), "hostToken": session.host_token}
 
 
 @router.get("/{session_id}")
@@ -133,88 +161,94 @@ async def get_session(session_id: str) -> dict[str, Any]:
 
 
 @router.websocket("/{session_id}/ws")
-async def session_socket(ws: WebSocket, session_id: str, role: Role = "remote") -> None:
+async def session_socket(
+    ws: WebSocket, session_id: str, role: Role = "remote", token: str = ""
+) -> None:
     await ws.accept()
     session = registry.get(session_id)
     if session is None:
         await ws.close(code=CLOSE_NO_SESSION)
         return
+    if role == "host" and not secrets.compare_digest(token.encode(), session.host_token.encode()):
+        await ws.close(code=CLOSE_BAD_TOKEN)
+        return
 
-    client_id = registry.next_client_id()
-    await _send(
-        ws,
+    client = Client(id=registry.next_client_id(), ws=ws)
+    writer = asyncio.create_task(_write(client))
+    client.send(
         {
             "type": "hello",
-            "clientId": client_id,
+            "clientId": client.id,
             "hostConnected": session.host is not None,
             "state": session.state,
-        },
+        }
     )
     if role == "host":
         previous = session.host
-        session.host = ws
+        session.host = client
         if previous is not None:
-            await _send(previous, {"type": "replaced"})
-            with suppress(Exception):
-                await previous.close(code=CLOSE_REPLACED)
+            previous.send({"type": "replaced"})
+            previous.close(CLOSE_REPLACED)
         else:
-            await _broadcast(session, {"type": "host", "connected": True})
+            session.broadcast({"type": "host", "connected": True})
     else:
-        session.remotes[client_id] = ws
+        session.remotes[client.id] = client
     registry.mark_active(session)
 
     try:
         while True:
-            message = _parse(await ws.receive_text())
+            frame = await ws.receive()
+            if frame["type"] == "websocket.disconnect":
+                break
+            text = frame.get("text")
+            message = _parse(text) if text is not None and len(text) <= MAX_FRAME_CHARS else None
             if message is not None:
-                await _route(session, ws, role, client_id, message)
-    except WebSocketDisconnect:
+                _route(session, client, role, message)
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         if role == "host":
-            if session.host is ws:
+            if session.host is client:
                 session.host = None
-                await _broadcast(session, {"type": "host", "connected": False})
+                session.broadcast({"type": "host", "connected": False})
         else:
-            session.remotes.pop(client_id, None)
+            session.remotes.pop(client.id, None)
         registry.mark_idle_if_empty(session)
+        writer.cancel()
 
 
-async def _route(
-    session: Session, ws: WebSocket, role: Role, client_id: str, message: dict[str, Any]
-) -> None:
+def _route(session: Session, client: Client, role: Role, message: dict[str, Any]) -> None:
     kind = message.get("type")
     if role == "host":
-        if session.host is not ws:
+        if session.host is not client:
             return
         if kind == "state":
             session.state = message.get("state")
-            await _broadcast(session, {"type": "state", "state": session.state})
+            session.broadcast({"type": "state", "state": session.state})
         elif kind == "reply":
             target = session.remotes.get(str(message.get("to")))
             if target is not None:
-                await _send(target, {"type": "reply", "reply": message.get("reply")})
+                target.send({"type": "reply", "reply": message.get("reply")})
     elif kind == "command" and session.host is not None:
-        await _send(
-            session.host,
-            {"type": "command", "from": client_id, "command": message.get("command")},
-        )
+        session.host.send({"type": "command", "from": client.id, "command": message.get("command")})
 
 
-async def _broadcast(session: Session, message: dict[str, Any]) -> None:
-    for remote in list(session.remotes.values()):
-        await _send(remote, message)
-
-
-async def _send(ws: WebSocket, message: dict[str, Any]) -> None:
-    # A peer that's mid-disconnect must not take down the sender's loop.
-    with suppress(Exception):
-        await ws.send_text(json.dumps(message))
+async def _write(client: Client) -> None:
+    while True:
+        item = await client.outbox.get()
+        if isinstance(item, int):
+            with suppress(Exception):
+                await client.ws.close(code=item)
+            return
+        try:
+            await client.ws.send_text(item)
+        except Exception:
+            return
 
 
 def _parse(text: str) -> dict[str, Any] | None:
     try:
         message = json.loads(text)
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         return None
     return message if isinstance(message, dict) else None

@@ -175,24 +175,19 @@ function buildSession(hostSession: HostSession | undefined): Session {
   const videoPresenter = new VideoPresenter(videoStore);
   const skipSegments = new SkipSegmentsStore(song, playbackEngine);
   const skipSegmentsPresenter = new SkipSegmentsPresenter(skipSegments, videoStore, playbackEngine);
-  const sessionHost = hostSession && new SessionHostStore(hostSession.info, appSettingsStore, window.location.origin);
+  const sessionHost = hostSession && new SessionHostStore(hostSession, appSettingsStore, window.location.origin);
   const sessionHostPresenter =
-    hostSession &&
     sessionHost &&
-    new SessionHostPresenter(
-      sessionHost,
-      {
-        queue,
-        queuePresenter,
-        song,
-        karaoke: presenter,
-        transport: playbackEngine,
-        audioDevice,
-        audioDevicePresenter,
-        searchTracks,
-      },
-      hostSession.apiBase,
-    );
+    new SessionHostPresenter(sessionHost, {
+      queue,
+      queuePresenter,
+      song,
+      karaoke: presenter,
+      transport: playbackEngine,
+      audioDevice,
+      audioDevicePresenter,
+      searchTracks,
+    });
   return {
     song,
     viewport,

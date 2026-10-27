@@ -1,4 +1,3 @@
-"""A mutex whose waiters are served one lane at a time, in turn."""
 from __future__ import annotations
 
 import asyncio
@@ -6,9 +5,7 @@ from collections import OrderedDict, deque
 
 
 class RoundRobinLock:
-    """`asyncio.Lock` with fair hand-off across lanes (one lane per session):
-    FIFO within a lane, and each release passes the lock to the next lane in
-    rotation, so one lane's backlog never starves another's."""
+    """`asyncio.Lock` whose releases rotate through lanes (one per session), FIFO within a lane."""
 
     def __init__(self) -> None:
         self._held = False

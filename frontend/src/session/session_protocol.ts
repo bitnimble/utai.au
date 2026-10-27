@@ -1,10 +1,6 @@
-/**
- * What the playback host and its remotes say to each other through the session
- * relay (`aligner/app/sessions.py`, `src-tauri/src/session_server.rs`). The relay
- * forwards these payloads untouched, so both ends validate what they receive.
- */
-
 import { z } from 'zod';
+
+const MAX_SEARCH_QUERY_CHARS = 200;
 
 const trackResultSchema = z.object({
   id: z.string(),
@@ -51,7 +47,6 @@ export const hostStateSchema = z.object({
   positionSec: z.number(),
   outputVolume: z.number(),
   queue: z.array(remoteQueueItemSchema),
-  /** The queue item the player is idle waiting on. */
   waitingForId: z.string().optional(),
   canSkip: z.boolean(),
 });
@@ -67,7 +62,7 @@ export const remoteCommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('remove'), id: z.string() }),
   z.object({ kind: z.literal('move'), id: z.string(), toIndex: z.number().int() }),
   z.object({ kind: z.literal('playNext'), id: z.string() }),
-  z.object({ kind: z.literal('search'), requestId: z.number(), query: z.string() }),
+  z.object({ kind: z.literal('search'), requestId: z.number(), query: z.string().max(MAX_SEARCH_QUERY_CHARS) }),
 ]);
 export type RemoteCommand = z.infer<typeof remoteCommandSchema>;
 
@@ -77,7 +72,6 @@ export const hostReplySchema = z.discriminatedUnion('kind', [
 ]);
 export type HostReply = z.infer<typeof hostReplySchema>;
 
-/** Frames the relay itself sends. */
 export const relayFrameSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hello'),
@@ -94,4 +88,5 @@ export const relayFrameSchema = z.discriminatedUnion('type', [
 export type RelayFrame = z.infer<typeof relayFrameSchema>;
 
 export const CLOSE_NO_SESSION = 4404;
+export const CLOSE_BAD_TOKEN = 4403;
 export const CLOSE_REPLACED = 4000;

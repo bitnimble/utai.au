@@ -9,13 +9,14 @@ export type RemoteTab = 'queue' | 'search';
 
 const POSITION_TICK_MS = 250;
 
-/** A remote's view of the session it joined. Data only; {@link import('./remote_presenter').RemotePresenter} writes it. */
 export class RemoteStore {
   status: SocketStatus = 'connecting';
   hostConnected = false;
   host: HostState | undefined = undefined;
-  /** `Date.now()` when {@link host} arrived, to run the position on between updates. */
   hostReceivedAtMs = 0;
+  /** Slider values mid-drag, shown until the host's state catches up. */
+  seekDraftSec: number | undefined = undefined;
+  volumeDraft: number | undefined = undefined;
   tab: RemoteTab = 'queue';
   searchQuery = '';
   searchPhase: SearchPhase = { kind: 'idle' };
@@ -30,11 +31,16 @@ export class RemoteStore {
   }
 
   get positionSec(): number {
+    if (this.seekDraftSec != null) return this.seekDraftSec;
     const host = this.host;
     if (host == null) return 0;
-    if (host.playback !== 'playing') return host.positionSec;
+    if (host.playback !== 'playing' || !this.connected) return host.positionSec;
     const elapsedSec = (now(POSITION_TICK_MS) - this.hostReceivedAtMs) / 1000;
     const durationSec = host.nowPlaying?.durationSec ?? Infinity;
     return Math.min(durationSec, host.positionSec + elapsedSec);
+  }
+
+  get outputVolume(): number {
+    return this.volumeDraft ?? this.host?.outputVolume ?? 1;
   }
 }

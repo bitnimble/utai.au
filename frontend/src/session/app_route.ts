@@ -10,7 +10,7 @@ export function parseRoute(pathname: string): AppRoute {
   return match[2] != null ? { kind: 'remote', sessionId } : { kind: 'host', sessionId };
 }
 
-/** Mirrors the server's normalization: case-insensitive, O/I/L read as 0/1/1, separators dropped. */
+/** The server's normalization (case-insensitive, O/I/L read as 0/1/1), plus dropping separators. */
 export function normalizeSessionCode(raw: string): string {
   return raw
     .toUpperCase()

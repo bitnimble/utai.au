@@ -54,7 +54,11 @@ def test_an_upstream_change_fails_loudly():
 def test_patches_apply_to_the_installed_onthespot():
     spec = importlib.util.find_spec("onthespot.downloader")
     assert spec is not None and spec.origin is not None
-    compile(patch_downloader(Path(spec.origin).read_text(encoding="utf-8")), spec.origin, "exec")
+    patched = patch_downloader(Path(spec.origin).read_text(encoding="utf-8"))
+    compile(patched, spec.origin, "exec")
+    assert patched.count("default_format = '.webm'") == 1
+    assert patched.count("def _headless_ytdlp_progress(") == 1
+    assert "else _headless_ytdlp_progress(item, d)" in patched
 
 
 def test_download_dir_is_written_into_an_existing_config(tmp_path):

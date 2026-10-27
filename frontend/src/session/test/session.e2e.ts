@@ -1,10 +1,9 @@
 import { expect, type Page, type WebSocketRoute } from '@playwright/test';
 import { makeSongBundle } from 'src/testing/song_bundle';
-import { E2E_SESSION_ID, HOST_PATH, test } from 'src/testing/e2e_test';
+import { E2E_HOST_TOKEN, E2E_SESSION_ID, HOST_PATH, test } from 'src/testing/e2e_test';
 
 const REMOTE_PATH = `${HOST_PATH}/remote`;
 
-/** In-test stand-in for `aligner/app/sessions.py`'s socket relay, shared by every page it's attached to. */
 class FakeRelay {
   private host: WebSocketRoute | undefined;
   private readonly remotes = new Map<string, WebSocketRoute>();
@@ -16,18 +15,38 @@ class FakeRelay {
   }
 
   private connect(ws: WebSocketRoute): void {
-    const role = new URL(ws.url()).searchParams.get('role');
+    const params = new URL(ws.url()).searchParams;
+    const role = params.get('role');
+    if (role === 'host' && params.get('token') !== E2E_HOST_TOKEN) {
+      void ws.close({ code: 4403 });
+      return;
+    }
     const clientId = `c${this.nextClient++}`;
     send(ws, { type: 'hello', clientId, hostConnected: this.host != null, state: this.state });
     if (role === 'host') {
+      const previous = this.host;
       this.host = ws;
-      this.broadcast({ type: 'host', connected: true });
+      if (previous != null) {
+        send(previous, { type: 'replaced' });
+        void previous.close({ code: 4000 });
+      } else {
+        this.broadcast({ type: 'host', connected: true });
+      }
     } else {
       this.remotes.set(clientId, ws);
     }
+    ws.onClose(() => {
+      if (role !== 'host') {
+        this.remotes.delete(clientId);
+      } else if (this.host === ws) {
+        this.host = undefined;
+        this.broadcast({ type: 'host', connected: false });
+      }
+    });
     ws.onMessage((raw) => {
       const message = JSON.parse(String(raw)) as Record<string, unknown>;
       if (role === 'host') {
+        if (this.host !== ws) return;
         if (message.type === 'state') {
           this.state = message.state;
           this.broadcast({ type: 'state', state: message.state });
@@ -140,6 +159,56 @@ test('remote: searches through the host, queues, removes, and drives playback', 
   await expect(remote.getByTestId('remote-play')).toHaveAttribute('aria-label', 'Play');
   await remote.getByTestId('remote-play').click();
   await expect.poll(() => hostPlayerState(page)).toBe('playing');
+});
+
+test('host: another device can take over hosting, and this one can take it back',async ({ page, context }) => {
+  const relay = new FakeRelay();
+  await relay.attach(page);
+  await page.goto(HOST_PATH);
+  await expect(page.getByTestId('session-join-open')).toBeVisible();
+
+  const other = await context.newPage();
+  await relay.attach(other);
+  await other.route(/\/api\/sessions\/[A-Z0-9]+$/, (route) =>
+    route.fulfill({ json: { id: E2E_SESSION_ID, publicUrl: null } }),
+  );
+  await other.goto(HOST_PATH);
+  await expect(other.getByTestId('session-join-open')).toBeVisible();
+  await expect(page.getByTestId('session-reclaim')).toBeVisible();
+
+  await page.getByTestId('session-reclaim').click();
+  await expect(page.getByTestId('session-join-open')).toBeVisible();
+  await expect(other.getByTestId('session-reclaim')).toBeVisible();
+});
+
+test('host: a session the relay lost is swapped for a new one', async ({ page }) => {
+  let restarted = false;
+  let live: WebSocketRoute | undefined;
+  await page.routeWebSocket(/\/api\/sessions\/[^/]+\/ws/, (ws) => {
+    if (restarted && ws.url().includes(E2E_SESSION_ID)) {
+      void ws.close({ code: 4404 });
+      return;
+    }
+    live = ws;
+    send(ws, { type: 'hello', clientId: 'c1', hostConnected: false, state: null });
+  });
+  await page.route(/\/api\/sessions$/, (route) =>
+    route.fulfill({ json: { id: 'NEW111', publicUrl: null, hostToken: 'new-token' } }),
+  );
+  await page.goto(HOST_PATH);
+  await expect(page.getByTestId('session-code')).toHaveText(E2E_SESSION_ID);
+
+  restarted = true;
+  await live?.close({ code: 1012 });
+  await expect(page.getByTestId('session-code')).toHaveText('NEW111');
+  await expect(page).toHaveURL('/session/NEW111');
+});
+
+test('host: a session this browser did not create offers to join it as a remote', async ({ page }) => {
+  await page.route(/\/api\/sessions\/XYZ123$/, (route) => route.fulfill({ json: { id: 'XYZ123', publicUrl: null } }));
+  await page.goto('/session/XYZ123');
+  await page.getByTestId('host-elsewhere').getByRole('link', { name: 'Join it as a remote' }).click();
+  await expect(page).toHaveURL('/session/XYZ123/remote');
 });
 
 test('remote: an unknown session says so', async ({ page }) => {

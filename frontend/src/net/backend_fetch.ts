@@ -20,8 +20,7 @@ export function isBackendUnreachable(err: unknown): err is BackendUnreachableErr
   return err instanceof BackendUnreachableError;
 }
 
-/** Tags backend requests with the hosted session, so the backend's GPU queue
- *  can take turns between sessions. */
+/** Tags backend requests so the backend's GPU queue takes turns between sessions. */
 class SessionLane {
   id: string | undefined = undefined;
 }

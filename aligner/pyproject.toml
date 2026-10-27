@@ -25,7 +25,7 @@ dependencies = [
     # IFrame embed, which refuses embedding-disabled uploads. Pure-Python +
     # ffmpeg, torch-free. In the base deps (not a capability group) so it ships
     # with every install; it has no model to provision. `default` + `deno`: the
-    # EJS challenge solver and the JS runtime YouTube extraction now needs.
+    # EJS challenge solver and the JS runtime YouTube extraction needs.
     "yt-dlp[default,deno]>=2026.10.26",
     "ytmusicapi>=1.10",
     # A static ffmpeg for the desktop app, which links it onto PATH
@@ -122,8 +122,7 @@ music = [
     "librespot @ git+https://github.com/justin025/librespot-python.git",
 ]
 
-# OnTheSpot itself, for the desktop app, which runs it as a local process
-# (app/music/onthespot_server.py) instead of the Docker harness's own container.
+# OnTheSpot for the desktop app's local process (app/music/onthespot_server.py).
 # Pinned: the server patches its downloader source. Not a default group (PyQt6 is
 # heavy); the desktop startup sync adds it. Includes `music` because OnTheSpot
 # depends on the same librespot git URL, which uv only accepts when declared here.

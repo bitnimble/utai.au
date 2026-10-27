@@ -373,8 +373,7 @@ fn sync_stamp_path(venv: &Path) -> PathBuf {
     venv.join("utai-sync-stamp.txt")
 }
 
-/// What a venv synced with `groups` from `aligner_dir`'s lock records, so an app
-/// update that changes the lock or the startup groups resyncs on next launch.
+/// Changes with the lock or the groups, so an app update resyncs on next launch.
 fn sync_stamp(aligner_dir: &Path, groups: &[String]) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -382,11 +381,12 @@ fn sync_stamp(aligner_dir: &Path, groups: &[String]) -> String {
     format!("{}\n{:016x}", groups.join(","), hasher.finish())
 }
 
-/// Copy (hard-link when possible) the venv's bundled ffmpeg to the name and dir
-/// startup put on PATH (`paths::redirect_env`).
+/// Puts the venv's ffmpeg where `paths::redirect_env` put it on PATH.
 async fn link_bundled_ffmpeg(venv: &Path, dest: &Path) -> Result<(), String> {
     let out = Command::new(venv_python(venv))
         .args(["-c", "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"])
+        // Windows stdout is otherwise the ANSI codepage, mangling a non-ASCII path.
+        .env("PYTHONUTF8", "1")
         .no_console()
         .output()
         .await
@@ -671,10 +671,8 @@ async fn prune_models(
 }
 
 // uv groups the startup gate syncs when the venv needs building (dev builds ship
-// no vendored wheels): `lyrics-ja` pulls the full alignment stack (separation is
-// transitive) plus JP romanization; `onthespot` adds the local music stack
-// (`local_backend`), Spotify (`music`) included. `pitch` needs no packages beyond
-// `separation`, so no pitch group. See scripts/mac-build.ts.
+// no vendored wheels). `pitch` needs nothing beyond `separation` (transitive via
+// `lyrics-ja`), so no pitch group. See scripts/mac-build.ts.
 const STARTUP_SYNC_GROUPS: &[&str] = &["lyrics-ja", "onthespot"];
 // Capabilities eagerly provisioned at startup. `lyrics` + `pitch` each compose
 // `separation`, so this downloads every model (separator + both aligners + f0).

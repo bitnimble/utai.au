@@ -41,18 +41,21 @@ and the frontend's `apiBase` points at it. The venv also carries ffmpeg
 and deno (yt-dlp's JS runtime for YouTube). The **Android** app reuses
 the same shell + frontend but has **no sidecar** (no on-device Python/ML):
 it aligns over the HTTP backend, same as the web build. Desktop-only Rust
-(sidecar, capability install, portable paths) is `#[cfg(desktop)]`-gated.
+(sidecar, capability install, portable paths, session server, local backend)
+is `#[cfg(desktop)]`-gated.
 
 ### Sessions
 
 The website's `/` offers Create a session or Join one as a remote. `/session/<ID>`
 is the playback host (the full player); `/session/<ID>/remote` is a phone
-remote (queue, search, transport, volume). `/session/<ID>` stays the host page
-until synced multi-device playback exists. The desktop and Android apps skip
+remote (queue, search, transport, volume). The desktop and Android apps skip
 the landing page and host their own session at launch. The host owns the queue
-and playback and does all backend work (search included); the session server
+and playback and does all backend work (search included; remotes may only add
+tracks the host's own search returned); the session server
 (`aligner/app/sessions.py`, in-memory, 1h idle expiry) is a dumb relay
-between host and remotes. The desktop app serves the same protocol, plus the
+between host and remotes. Creating a session returns a host token, kept in
+localStorage, that a host socket must present; a host whose session the relay
+lost creates a new one and keeps its queue. The desktop app serves the same protocol, plus the
 remote page itself, from an in-process Rust server
 (`src-tauri/src/session_server.rs`, `0.0.0.0:7337`, `UTAI_SESSION_PORT`), so a
 desktop HTPC needs no container. Keep the two relays behaviour-identical.
@@ -148,7 +151,8 @@ heavy Rust/Tauri artifacts off the repo disk (maps to `CARGO_TARGET_DIR`).
 **Windows cross-build (`win:build`).** Emits `Utai.exe` + the NSIS `*-setup.exe`
 to `UTAI_WIN_DIST_DIR` (set in `.env`, e.g. a `/codebox-workspace` path reachable
 over SMB from Windows). Drops the ML-sidecar resources (can't cross-stage a
-Windows Python), so **alignment is unavailable in this build**; audio + UI work.
+Windows Python), so **alignment, music search and downloads are unavailable in
+this build**; audio + UI work.
 One-time host prereqs: `rustup target add x86_64-pc-windows-msvc`, `cargo install
 --locked cargo-xwin`, `apt install clang llvm lld nsis`, and
 `ln -sf "$(which makensis)" /usr/local/bin/makensis.exe` (Tauri runs `makensis.exe`).

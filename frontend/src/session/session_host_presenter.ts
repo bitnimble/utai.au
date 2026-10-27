@@ -9,7 +9,8 @@ import type { TrackResult } from 'src/net/music_source_client';
 import type { QueuePresenter } from 'src/queue/queue_presenter';
 import type { QueueItem, QueueStore } from 'src/queue/queue_store';
 import { toastStore } from 'src/ui/toasts/toasts';
-import { SessionSocket, type SocketStatus } from './session_client';
+import { hostPath } from './app_route';
+import { createSession, type HostSession, SessionSocket, type SocketStatus } from './session_client';
 import {
   type HostReply,
   type HostState,
@@ -37,35 +38,43 @@ export type SessionHostDeps = {
 };
 
 const POSITION_PUBLISH_MS = 1000;
+const MAX_REMOTE_QUEUE_LENGTH = 100;
+const MAX_CONCURRENT_SEARCHES = 3;
+const MAX_OFFERED_TRACKS = 500;
 
-/** Publishes this device's playback + queue to the session's remotes and carries out their commands. */
 export class SessionHostPresenter {
   private socket: SessionSocket | undefined;
   private restored = false;
+  private disposed = false;
+  private replacedSinceOpen = false;
+  private searches = 0;
+  /** Search results sent to remotes, keyed by `sourceUrl`: the only tracks a remote may add. */
+  private readonly offered = new Map<string, TrackResult>();
   private disposers: Array<() => void> = [];
 
   constructor(
     private readonly store: SessionHostStore,
     private readonly deps: SessionHostDeps,
-    private readonly apiBase: string,
   ) {
-    makeAutoObservable<this, 'store' | 'deps' | 'apiBase' | 'socket' | 'restored' | 'disposers'>(this, {
+    makeAutoObservable<
+      this,
+      'store' | 'deps' | 'socket' | 'restored' | 'disposed' | 'replacedSinceOpen' | 'searches' | 'offered' | 'disposers'
+    >(this, {
       store: false,
       deps: false,
-      apiBase: false,
       socket: false,
       restored: false,
+      disposed: false,
+      replacedSinceOpen: false,
+      searches: false,
+      offered: false,
       disposers: false,
     });
   }
 
   start(): void {
-    sessionLane.id = this.store.session.id;
-    this.socket = SessionSocket.forSession(this.apiBase, this.store.session.id, 'host', {
-      onFrame: (frame) => this.onFrame(frame),
-      onStatus: (status) => this.setStatus(status),
-    });
-    this.socket.open();
+    this.disposed = false;
+    this.connect();
     const positionTimer = setInterval(() => {
       if (this.deps.transport.state === 'playing') this.publish();
     }, POSITION_PUBLISH_MS);
@@ -84,16 +93,40 @@ export class SessionHostPresenter {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const dispose of this.disposers) dispose();
     this.disposers = [];
     this.socket?.close();
     this.socket = undefined;
-    if (sessionLane.id === this.store.session.id) sessionLane.id = undefined;
+    if (sessionLane.id === this.store.code) sessionLane.id = undefined;
   }
 
-  /** Take hosting back after another device took it over. */
   reclaim(): void {
     this.socket?.open();
+  }
+
+  /** Replaces a session the relay lost (e.g. it restarted), keeping this device's queue. */
+  async startNewSession(): Promise<void> {
+    const lost = this.store.session;
+    this.socket?.close();
+    this.setStatus('connecting');
+    let next: HostSession;
+    try {
+      next = await createSession(lost.apiBase);
+    } catch (err) {
+      this.setStatus('missing');
+      toastStore.showWarning(
+        `This session ended and a new one couldn't start, so phones can't join: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    if (this.disposed) return;
+    this.adopt(next);
+    if (window.location.pathname === hostPath(lost.info.id)) {
+      window.history.replaceState(null, '', hostPath(next.info.id));
+    }
+    toastStore.showWarning(`This session ended, so it's now session ${next.info.id}. Phones need to join again.`);
+    this.connect();
   }
 
   openJoin(): void {
@@ -104,13 +137,38 @@ export class SessionHostPresenter {
     this.store.joinOpen = false;
   }
 
-  private setStatus(status: SocketStatus): void {
+  private connect(): void {
+    sessionLane.id = this.store.code;
+    this.socket = SessionSocket.forHost(this.store.session, {
+      onFrame: (frame) => this.onFrame(frame),
+      onStatus: (status) => this.onStatus(status),
+    });
+    this.socket.open();
+  }
+
+  private adopt(session: HostSession): void {
+    this.store.session = session;
+    this.restored = true;
+    this.offered.clear();
+  }
+
+  private onStatus(status: SocketStatus): void {
     const was = this.store.status;
-    this.store.status = status;
+    this.setStatus(status);
     if (status === 'replaced' && was !== 'replaced') {
       void this.deps.transport.pause();
       toastStore.showWarning('Another device is now hosting this session; playback paused here.');
     }
+    if (status === 'open') this.replacedSinceOpen = false;
+    // Once per open: a relay that rejects even a fresh session would otherwise spin creating them.
+    if ((status === 'missing' || status === 'forbidden') && !this.replacedSinceOpen) {
+      this.replacedSinceOpen = true;
+      void this.startNewSession();
+    }
+  }
+
+  private setStatus(status: SocketStatus): void {
+    this.store.status = status;
   }
 
   private onFrame(frame: RelayFrame): void {
@@ -154,9 +212,12 @@ export class SessionHostPresenter {
       case 'setVolume':
         this.deps.audioDevicePresenter.setOutputVolume(command.volume);
         return;
-      case 'add':
-        queuePresenter.add({ kind: 'streaming', track: command.track });
+      case 'add': {
+        const track = this.offered.get(command.track.sourceUrl);
+        if (track == null || this.deps.queue.items.length >= MAX_REMOTE_QUEUE_LENGTH) return;
+        queuePresenter.add({ kind: 'streaming', track });
         return;
+      }
       case 'remove':
         queuePresenter.remove(command.id);
         return;
@@ -173,12 +234,36 @@ export class SessionHostPresenter {
   }
 
   private async search(query: string, requestId: number, to: string): Promise<void> {
+    if (this.searches >= MAX_CONCURRENT_SEARCHES) {
+      this.reply(to, { kind: 'searchError', requestId, message: 'The host is busy searching. Try again.' });
+      return;
+    }
+    this.searches++;
     let reply: HostReply;
     try {
-      reply = { kind: 'searchResults', requestId, results: await this.deps.searchTracks(query) };
+      const results = await this.deps.searchTracks(query);
+      this.offer(results);
+      reply = { kind: 'searchResults', requestId, results };
     } catch (err) {
       reply = { kind: 'searchError', requestId, message: err instanceof Error ? err.message : String(err) };
+    } finally {
+      this.searches--;
     }
+    this.reply(to, reply);
+  }
+
+  private offer(results: TrackResult[]): void {
+    for (const track of results) {
+      this.offered.delete(track.sourceUrl);
+      this.offered.set(track.sourceUrl, track);
+    }
+    for (const sourceUrl of this.offered.keys()) {
+      if (this.offered.size <= MAX_OFFERED_TRACKS) break;
+      this.offered.delete(sourceUrl);
+    }
+  }
+
+  private reply(to: string, reply: HostReply): void {
     this.socket?.send({ type: 'reply', to, reply });
   }
 

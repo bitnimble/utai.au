@@ -8,12 +8,24 @@ import { renderSVG } from 'uqr';
 import { SessionHostPresenterContext, SessionHostStoreContext } from './session_host_contexts';
 import styles from './session_host_view.module.css';
 
-/** Header chip showing the session code; opens the join QR. */
 export const SessionHostButton = observer(function SessionHostButton({ className }: { className: string }) {
   const store = React.useContext(SessionHostStoreContext);
   const presenter = React.useContext(SessionHostPresenterContext);
   if (store == null || presenter == null) return null;
   const { status } = store;
+  if (store.ended) {
+    return (
+      <button
+        type="button"
+        className={classNames(className, styles.warning)}
+        onClick={() => void presenter.startNewSession()}
+        title="Phones can't join this session any more. Start a new one."
+        data-testid="session-ended"
+      >
+        Session ended
+      </button>
+    );
+  }
   if (status === 'replaced') {
     return (
       <button
@@ -37,7 +49,7 @@ export const SessionHostButton = observer(function SessionHostButton({ className
     >
       <QrCode size={14} aria-hidden="true" />
       <span className={classNames(styles.code, status !== 'open' && styles.offline)} data-testid="session-code">
-        {store.session.id}
+        {store.code}
       </span>
     </button>
   );
@@ -65,7 +77,7 @@ export const SessionJoinModal = observer(function SessionJoinModal() {
         )}
         <p className={styles.hint}>
           Or open the app on a phone, choose Join, and enter
-          <span className={styles.bigCode}>{store.session.id}</span>
+          <span className={styles.bigCode}>{store.code}</span>
         </p>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Address phones open</span>
@@ -73,7 +85,7 @@ export const SessionJoinModal = observer(function SessionJoinModal() {
             type="url"
             className={styles.input}
             value={appSettingsStore.remoteBaseUrl}
-            placeholder={store.session.publicUrl ?? 'https://karaoke.lan'}
+            placeholder={store.session.info.publicUrl ?? 'https://karaoke.lan'}
             onChange={(e) => appSettingsPresenter.setRemoteBaseUrl(e.target.value)}
             data-testid="session-remote-url"
           />
