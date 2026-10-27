@@ -44,7 +44,7 @@ export function musicDurationSec(segments: readonly SkipSegment[], durationSec: 
 }
 
 /** How far {@link musicDurationSec} may be off: each crowd-placed cut edge
- *  inside the video (not its own start/end) can be out by about a second. */
+ *  inside the video (not its own start/end) can be out by a few seconds. */
 export function musicDurationSlackSec(segments: readonly SkipSegment[], durationSec: number): number {
   const cutEdges = nonMusicSpans(segments, durationSec)
     .flatMap((s) => [s.startSec, s.endSec])
@@ -59,7 +59,7 @@ export function musicStartSec(segments: readonly SkipSegment[], durationSec: num
 }
 
 const VIDEO_EDGE_SLACK_SEC = 0.5;
-const CUT_EDGE_SLACK_SEC = 1;
+const CUT_EDGE_SLACK_SEC = 4;
 
 /** The `music_offtopic` segments merged into disjoint spans, in time order. */
 function nonMusicSpans(segments: readonly SkipSegment[], durationSec: number): { startSec: number; endSec: number }[] {

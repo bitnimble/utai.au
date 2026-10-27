@@ -101,9 +101,9 @@ describe('musicDurationSlackSec', () => {
     videoDurationSec: 0,
   });
 
-  test('a second per cut edge inside the video, none for its own start/end', () => {
-    expect(musicDurationSlackSec([offtopic(0, 14.932), offtopic(220.6, 243.878)], 244)).toBe(2);
-    expect(musicDurationSlackSec([offtopic(100, 110)], 244)).toBe(2);
+  test('slack per cut edge inside the video, none for its own start/end', () => {
+    expect(musicDurationSlackSec([offtopic(0, 14.932), offtopic(220.6, 243.878)], 244)).toBe(8);
+    expect(musicDurationSlackSec([offtopic(100, 110)], 244)).toBe(8);
     expect(musicDurationSlackSec([], 244)).toBe(0);
   });
 });
