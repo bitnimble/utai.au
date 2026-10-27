@@ -7,6 +7,7 @@ import { SkipSegmentsStore } from '../skip_segments_store';
 import {
   fetchSkipSegments,
   musicDurationSec,
+  musicDurationSlackSec,
   musicStartSec,
   parseSkipSegments,
   type SkipSegment,
@@ -89,6 +90,21 @@ describe('musicDurationSec', () => {
   test('ignores segments submitted against a different cut', () => {
     expect(musicDurationSec([seg('music_offtopic', 0, 20, 300)], 280)).toBe(280);
     expect(musicDurationSec([seg('music_offtopic', 0, 20, 281)], 280)).toBe(260);
+  });
+});
+
+describe('musicDurationSlackSec', () => {
+  const offtopic = (startSec: number, endSec: number): SkipSegment => ({
+    category: 'music_offtopic',
+    startSec,
+    endSec,
+    videoDurationSec: 0,
+  });
+
+  test('a second per cut edge inside the video, none for its own start/end', () => {
+    expect(musicDurationSlackSec([offtopic(0, 14.932), offtopic(220.6, 243.878)], 244)).toBe(2);
+    expect(musicDurationSlackSec([offtopic(100, 110)], 244)).toBe(2);
+    expect(musicDurationSlackSec([], 244)).toBe(0);
   });
 });
 

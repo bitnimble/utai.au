@@ -27,6 +27,7 @@ import { fetchTrack, type TrackResult } from 'src/net/music_source_client';
 import {
   fetchSkipSegments,
   musicDurationSec,
+  musicDurationSlackSec,
   musicStartSec,
   type SkipSegment,
 } from 'src/skip_segments/sponsorblock';
@@ -99,6 +100,7 @@ async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promi
   const music = {
     durationSec: musicDurationSec(segments, durationSec),
     startSec: musicStartSec(segments, durationSec),
+    durationSlackSec: musicDurationSlackSec(segments, durationSec),
   };
   return prepareMix(mix, meta, music, opts);
 }
@@ -121,10 +123,10 @@ async function lookUpSkipSegments(sourceUrl: string | undefined, signal: AbortSi
 async function prepareMix(
   mix: File,
   meta: SongMeta,
-  knownMusic: { durationSec: number; startSec: number } | undefined,
+  knownMusic: { durationSec: number; startSec: number; durationSlackSec: number } | undefined,
   { signal, onStage }: PrepareOptions,
 ): Promise<PreparedSong> {
-  const music = knownMusic ?? { durationSec: await decodeDurationSec(mix), startSec: 0 };
+  const music = knownMusic ?? { durationSec: await decodeDurationSec(mix), startSec: 0, durationSlackSec: 0 };
   const parsed = parseSongFilename(mix.name);
   const title = meta.title || parsed.title;
   const songLabel = title || mix.name;
@@ -141,7 +143,7 @@ async function prepareMix(
       if (!signal.aborted && !isBackendUnreachable(err)) console.warn('[beats] analysis failed:', message(err));
       return undefined;
     }),
-    findSyncedLyrics(title, meta.artist || parsed.artist, music.durationSec, signal),
+    findSyncedLyrics(title, meta.artist || parsed.artist, music, signal),
   ]);
   signal.throwIfAborted();
 
@@ -212,15 +214,16 @@ async function alignWords(
 async function findSyncedLyrics(
   rawTitle: string,
   rawArtist: string,
-  durationSec: number,
+  music: { durationSec: number; durationSlackSec: number },
   signal: AbortSignal,
 ): Promise<{ lines: LyricLine[]; trackName: string; artistName: string } | undefined> {
   const title = rawTitle.trim();
   const artist = rawArtist.trim();
   if (title.length === 0 && artist.length === 0) return undefined;
-  let best = await searchAndPick(title, artist, durationSec, signal, { title, artist });
+  const { durationSec, durationSlackSec } = music;
+  let best = await searchAndPick(title, artist, durationSec, signal, { title, artist, durationSlackSec });
   if (best == null && title.length > 0 && artist.length > 0) {
-    best = await searchAndPick(title, '', durationSec, signal, { title, ignoreArtist: true });
+    best = await searchAndPick(title, '', durationSec, signal, { title, ignoreArtist: true, durationSlackSec });
   }
   if (best?.syncedLyrics == null) return undefined;
   const lines = parseLrc(best.syncedLyrics);
@@ -233,7 +236,7 @@ async function searchAndPick(
   artistName: string,
   durationSec: number,
   signal: AbortSignal,
-  matchOpts: { title: string; artist?: string; ignoreArtist?: boolean },
+  matchOpts: { title: string; artist?: string; ignoreArtist?: boolean; durationSlackSec: number },
 ): Promise<LrclibMatch | undefined> {
   let matches: LrclibMatch[];
   try {

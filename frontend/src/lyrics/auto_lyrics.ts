@@ -10,7 +10,7 @@ import { LrclibMatch } from './lrclib';
 /** Duration window (seconds) within which an LRCLIB result counts as the same
  *  recording. Loose enough for encode-length drift, tight enough to reject a
  *  different edit / a live or extended version. */
-const DEFAULT_TOLERANCE_SEC = 2;
+const DURATION_TOLERANCE_SEC = 2;
 
 /** Minimum word-level similarity (0..1) between the query "title artist" and a
  *  result's "trackName artistName" for it to count as the same song. */
@@ -36,10 +36,10 @@ export type MatchTrace = {
 };
 
 /**
- * Pick the confident LRCLIB result: its duration is within `toleranceSec` of the
- * song's duration AND its "trackName artistName" is a word-level fuzzy match
- * (>= `nameThreshold`) for the query's "title artist". Duration disambiguates
- * covers / live / remixes; the name gate rejects a different song that happens to
+ * Pick the confident LRCLIB result: its duration is within tolerance (widened by
+ * `durationSlackSec`, the song duration's own uncertainty) of the song's duration
+ * AND its "trackName artistName" is a word-level fuzzy match (>= `nameThreshold`)
+ * for the query's "title artist". Duration disambiguates covers / live / remixes; the name gate rejects a different song that happens to
  * share a length. Among the survivors the closest duration wins (ties break
  * toward the stronger name match). undefined when the song duration is unknown or
  * nothing qualifies. `opts.onTrace` (if given) fires once per result with its
@@ -54,14 +54,14 @@ export function pickConfidentMatch(
   opts: {
     title?: string;
     artist?: string;
-    toleranceSec?: number;
+    durationSlackSec?: number;
     nameThreshold?: number;
     ignoreArtist?: boolean;
     onTrace?: (t: MatchTrace) => void;
   } = {},
 ): LrclibMatch | undefined {
   if (!(durationSec > 0)) return undefined;
-  const tolerance = opts.toleranceSec ?? DEFAULT_TOLERANCE_SEC;
+  const tolerance = DURATION_TOLERANCE_SEC + (opts.durationSlackSec ?? 0);
   const nameThreshold = opts.nameThreshold ?? DEFAULT_NAME_THRESHOLD;
   const ignoreArtist = opts.ignoreArtist ?? false;
   const query = ignoreArtist ? (opts.title ?? '') : `${opts.title ?? ''} ${opts.artist ?? ''}`;

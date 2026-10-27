@@ -55,6 +55,11 @@ describe('pickConfidentMatch', () => {
     expect(pickConfidentMatch([match({ duration: 265 })], 260, QUERY)).toBeUndefined();
   });
 
+  test('durationSlackSec widens the tolerance', () => {
+    expect(pickConfidentMatch([match({ duration: 208 })], 205.8, QUERY)).toBeUndefined();
+    expect(pickConfidentMatch([match({ duration: 208 })], 205.8, { ...QUERY, durationSlackSec: 2 })).toBeDefined();
+  });
+
   test('skips results without a duration or synced lyrics', () => {
     expect(pickConfidentMatch([match({ duration: null })], 260, QUERY)).toBeUndefined();
     expect(pickConfidentMatch([match({ syncedLyrics: null })], 260, QUERY)).toBeUndefined();
