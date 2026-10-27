@@ -39,8 +39,8 @@ export type MatchTrace = {
  * Pick the confident LRCLIB result: its duration is within tolerance (widened by
  * `durationSlackSec`, the song duration's own uncertainty) of the song's duration
  * AND its "trackName artistName" is a word-level fuzzy match (>= `nameThreshold`)
- * for the query's "title artist". Duration disambiguates covers / live / remixes; the name gate rejects a different song that happens to
- * share a length. Among the survivors the closest duration wins (ties break
+ * for the query's "title artist". Duration disambiguates live versions / remixes;
+ * the name gate rejects a different song that happens to share a length. Among the survivors the closest duration wins (ties break
  * toward the stronger name match). undefined when the song duration is unknown or
  * nothing qualifies. `opts.onTrace` (if given) fires once per result with its
  * scoring + accept/reject reason, for debug logging. With `opts.ignoreArtist`
@@ -136,26 +136,42 @@ export function wordLevelSimilarity(a: string, b: string): number {
 }
 
 /**
- * Whether every word of `needle` turns up in `haystack`, fuzzily as in
- * {@link wordLevelSimilarity} with each haystack word used once, or else as a
- * substring of the haystack's words run together (so "米津玄師" is found in
- * "米津玄師ハチ" and "astley" in "RickAstleyVEVO"). Extra haystack words don't
- * count against it.
+ * Whether every phrase is in `haystack`, each haystack word accounting for one
+ * phrase word: fuzzily, as a non-Latin word inside a longer one ("米津玄師" in
+ * "米津玄師ハチ"), or as a whole phrase glued into one ("Rick Astley" in "RickAstleyVEVO").
  */
-export function wordsContained(needle: string, haystack: string): boolean {
-  const words = normalizeTokens(needle);
+export function phrasesContained(phrases: readonly string[], haystack: string): boolean {
   const pool = normalizeTokens(haystack);
-  const runTogether = pool.join('');
   const used = new Array<boolean>(pool.length).fill(false);
-  return (
-    words.length > 0 &&
-    words.every((w) => takeBestMatch(w, pool, used) || (isSubstringMatchable(w) && runTogether.includes(w)))
-  );
+  return phrases.every((p) => takePhrase(normalizeTokens(p), pool, used));
 }
 
-/** Short Latin words are too likely to occur inside unrelated ones. */
-function isSubstringMatchable(word: string): boolean {
-  return word.length >= 4 || /[^\p{Script=Latin}\p{N}]/u.test(word);
+const MIN_GLUED_PHRASE_LENGTH = 6;
+
+function takePhrase(words: readonly string[], pool: readonly string[], used: boolean[]): boolean {
+  if (words.length === 0) return false;
+  const trial = [...used];
+  const wordByWord = words.every(
+    (w) => takeBestMatch(w, pool, trial) || (isGluedScriptWord(w) && takeContaining(w, pool, trial)),
+  );
+  if (wordByWord) {
+    trial.forEach((u, i) => (used[i] = u));
+    return true;
+  }
+  const glued = words.join('');
+  return glued.length >= MIN_GLUED_PHRASE_LENGTH && takeContaining(glued, pool, used);
+}
+
+/** A Latin word inside another is usually a different word ("time" in "sometimes"). */
+function isGluedScriptWord(word: string): boolean {
+  return word.length >= 2 && /[^\p{Script=Latin}\p{N}]/u.test(word);
+}
+
+function takeContaining(part: string, pool: readonly string[], used: boolean[]): boolean {
+  const idx = pool.findIndex((p, i) => !used[i] && p.includes(part));
+  if (idx < 0) return false;
+  used[idx] = true;
+  return true;
 }
 
 /** Marks the best unused `pool` word matching `word` as used; false if none does. */
@@ -180,8 +196,7 @@ export function normalizeTokens(s: string): string[] {
     s
       .normalize('NFKD')
       .replace(/[̀-ͯ]/g, '') // strip combining diacritics
-      // Recompose what NFKD split that isn't a diacritic (kana dakuten, Hangul
-      // jamo), else "ド" splits into "ト" + a mark the next line turns into a space.
+      // NFKD splits kana dakuten / Hangul jamo too; unrecomposed, "ド" becomes "ト" + a word break.
       .normalize('NFC')
       .toLowerCase()
       .replace(/[^\p{L}\p{N}]+/gu, ' ') // punctuation / symbols -> space
@@ -235,12 +250,12 @@ export function parseSongFilename(name: string): { title: string; artist: string
  *  Video", "Lyric Video", "(Audio)", "[4K]", … A bracketed group or a trailing
  *  " - …" segment is dropped only when EVERY one of its words is one of these,
  *  so a real title word survives ("Video Games", "Blinding Lights - Live"). */
-const TITLE_DESCRIPTOR_WORDS = new Set([
+export const TITLE_DESCRIPTOR_WORDS = new Set([
   'official', 'music', 'video', 'audio', 'lyric', 'lyrics', 'visualizer',
   'visualiser', 'mv', 'hd', 'hq', 'uhd', 'hdr', '4k', '8k', 'explicit',
 ]);
 
-/** Descriptors that are also a whole song title on their own ("Madonna - Music"). */
+/** Descriptors that may be the whole title after an "Artist - " ("Madonna - Music"). */
 const TITLE_LIKE_DESCRIPTOR_WORDS = new Set(['music', 'video']);
 
 function descriptorWords(text: string): string[] {
@@ -252,10 +267,9 @@ function isDescriptorOnly(text: string): boolean {
   return words.length > 0 && words.every((w) => TITLE_DESCRIPTOR_WORDS.has(w));
 }
 
-/** A " - …" piece that's only descriptors, and not a lone one that could be the title. */
-function isDescriptorSegment(text: string): boolean {
+function isTitleLikeDescriptor(text: string): boolean {
   const words = descriptorWords(text);
-  return isDescriptorOnly(text) && !(words.length === 1 && TITLE_LIKE_DESCRIPTOR_WORDS.has(words[0]));
+  return words.length === 1 && TITLE_LIKE_DESCRIPTOR_WORDS.has(words[0]);
 }
 
 function escapeRegExp(s: string): string {
@@ -277,7 +291,11 @@ export function cleanStreamingTitle(rawTitle: string, artist?: string): string {
   );
   // Drop trailing dash-separated junk: "Artist - Song - Official Music Video".
   const segs = t.split(/\s+[-–]\s+/);
-  while (segs.length > 1 && isDescriptorSegment(segs[segs.length - 1])) segs.pop();
+  while (segs.length > 1) {
+    const last = segs[segs.length - 1];
+    if (!isDescriptorOnly(last) || (segs.length === 2 && isTitleLikeDescriptor(last))) break;
+    segs.pop();
+  }
   t = segs.join(' - ');
   // Strip a leading "Artist - " when the uploader/channel opens the title
   // (normalising the "- Topic" / "VEVO" channel suffixes first).

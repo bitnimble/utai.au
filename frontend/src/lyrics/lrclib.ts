@@ -16,6 +16,8 @@
  * local dump never means fewer results than today.
  */
 
+import { BoundedCache } from 'src/utils/bounded_cache';
+
 export type LrclibMatch = {
   id: number;
   trackName: string;
@@ -47,7 +49,7 @@ export type SearchOptions = {
 // from the jot's title/artist), plus manual re-searches. An in-memory
 // result cache keyed on the normalised query makes every repeat instant.
 const CACHE_LIMIT = 50;
-const searchCache = new Map<string, LrclibMatch[]>();
+const searchCache = new BoundedCache<string, LrclibMatch[]>(CACHE_LIMIT);
 
 function cacheKey(trackName: string, artistName: string): string {
   return `${trackName.trim().toLowerCase()} ${artistName.trim().toLowerCase()}`;
@@ -87,7 +89,7 @@ export async function searchLrclib(opts: SearchOptions): Promise<LrclibMatch[]> 
   // propagate (the caller stays silent on them).
   if (out.length === 0) out = await searchOne(PUBLIC_BASE_URL, opts);
 
-  cacheResult(key, out);
+  searchCache.set(key, out);
   return out;
 }
 
@@ -135,14 +137,6 @@ async function searchOne(baseUrl: string, opts: SearchOptions): Promise<LrclibMa
 
 function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'AbortError';
-}
-
-function cacheResult(key: string, matches: LrclibMatch[]): void {
-  if (searchCache.size >= CACHE_LIMIT) {
-    const oldest = searchCache.keys().next().value;
-    if (oldest != null) searchCache.delete(oldest);
-  }
-  searchCache.set(key, matches);
 }
 
 type LrclibApiRow = {

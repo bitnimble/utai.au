@@ -103,22 +103,24 @@ async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promi
   const music = {
     durationSec: musicDurationSec(segments, durationSec),
     startSec: musicStartSec(segments, durationSec),
-    durationSlackSec: musicDurationSlackSec(segments, durationSec) + (identity.isCover ? COVER_DURATION_SLACK_SEC : 0),
+    durationSlackSec: musicDurationSlackSec(segments, durationSec),
+    isCover: identity.isCover,
   };
   return prepareMix(mix, meta, music, opts);
 }
 
-const COVER_DURATION_SLACK_SEC = 30;
-
 /** Services whose "title" is a video title and "artist" its uploader. */
 const UPLOADER_TITLED_SERVICES = new Set(['youtube_music', 'soundcloud']);
+
+const IDENTIFY_TIMEOUT_MS = 10_000;
 
 /** Best-effort: a miss keeps the source's own title, minus the usual video-title junk. */
 async function identifyTrack(track: TrackResult, signal: AbortSignal): Promise<SongIdentity> {
   const fallback = { title: cleanStreamingTitle(track.title, track.artists), artist: track.artists, isCover: false };
   if (!UPLOADER_TITLED_SERVICES.has(track.service)) return fallback;
+  const bounded = AbortSignal.any([signal, AbortSignal.timeout(IDENTIFY_TIMEOUT_MS)]);
   try {
-    const search = (term: string, country: Storefront) => itunesCatalogue.search(term, country, signal);
+    const search = (term: string, country: Storefront) => itunesCatalogue.search(term, country, bounded);
     return (await identifySong(track.title, track.artists, search)) ?? fallback;
   } catch (err) {
     if (!signal.aborted) console.warn('[identify] catalogue search failed:', message(err));
@@ -140,14 +142,21 @@ async function lookUpSkipSegments(sourceUrl: string | undefined, signal: AbortSi
   }
 }
 
+type KnownMusic = { durationSec: number; startSec: number; durationSlackSec: number; isCover: boolean };
+
 /** Separate, beat-track, and fetch + align lyrics for a full mix. */
 async function prepareMix(
   mix: File,
   meta: SongMeta,
-  knownMusic: { durationSec: number; startSec: number; durationSlackSec: number } | undefined,
+  knownMusic: KnownMusic | undefined,
   { signal, onStage }: PrepareOptions,
 ): Promise<PreparedSong> {
-  const music = knownMusic ?? { durationSec: await decodeDurationSec(mix), startSec: 0, durationSlackSec: 0 };
+  const music = knownMusic ?? {
+    durationSec: await decodeDurationSec(mix),
+    startSec: 0,
+    durationSlackSec: 0,
+    isCover: false,
+  };
   const parsed = parseSongFilename(mix.name);
   const title = meta.title || parsed.title;
   const songLabel = title || mix.name;
@@ -235,14 +244,19 @@ async function alignWords(
 async function findSyncedLyrics(
   rawTitle: string,
   rawArtist: string,
-  music: { durationSec: number; durationSlackSec: number },
+  music: KnownMusic,
   signal: AbortSignal,
 ): Promise<{ lines: LyricLine[]; trackName: string; artistName: string } | undefined> {
   const title = rawTitle.trim();
   const artist = rawArtist.trim();
   if (title.length === 0 && artist.length === 0) return undefined;
   const { durationSec, durationSlackSec } = music;
-  let best = await searchAndPick(title, artist, durationSec, signal, { title, artist, durationSlackSec });
+  let best = await searchAndPick(title, artist, durationSec, signal, {
+    title,
+    artist,
+    durationSlackSec: durationSlackSec + (music.isCover ? COVER_DURATION_SLACK_SEC : 0),
+  });
+  // Title alone is too weak a name gate to also widen for a cover: any same-titled song would pass.
   if (best == null && title.length > 0 && artist.length > 0) {
     best = await searchAndPick(title, '', durationSec, signal, { title, ignoreArtist: true, durationSlackSec });
   }
@@ -251,6 +265,8 @@ async function findSyncedLyrics(
   if (lines.length === 0) return undefined;
   return { lines, trackName: best.trackName, artistName: best.artistName };
 }
+
+const COVER_DURATION_SLACK_SEC = 30;
 
 async function searchAndPick(
   trackName: string,

@@ -1,13 +1,10 @@
-/**
- * iTunes Search API (https://itunes.apple.com/search) as a song catalogue:
- * public, no API key, CORS `*`. Apple documents ~20 requests/minute per IP and
- * answers 403 once a client goes over.
- */
+/** iTunes Search API as a song catalogue. Apple documents ~20 requests/minute
+ *  per IP and answers 403 once a client goes over. */
+
+import { BoundedCache } from 'src/utils/bounded_cache';
 
 export type CatalogueTrack = { trackName: string; artistName: string };
 
-/** `jp` lists Japanese artists under their native-script names ("米津玄師"),
- *  the `us` storefront romanised ("Kenshi Yonezu"). */
 export type Storefront = 'us' | 'jp';
 
 const API_URL = 'https://itunes.apple.com/search';
@@ -15,12 +12,11 @@ const RESULT_LIMIT = 20;
 const CACHE_LIMIT = 100;
 const RATE_LIMITED_BACKOFF_MS = 60_000;
 
-class ItunesCatalogue {
-  private readonly cache = new Map<string, CatalogueTrack[]>();
+export class ItunesCatalogue {
+  private readonly cache = new BoundedCache<string, CatalogueTrack[]>(CACHE_LIMIT);
   private rateLimitedUntil = 0;
 
-  /** Songs matching `term`. Throws on transport / HTTP failure, and without a
-   *  request while backing off after a rate-limit. */
+  /** Throws on transport / HTTP failure, and without a request while backing off after a rate-limit. */
   readonly search = async (term: string, country: Storefront, signal?: AbortSignal): Promise<CatalogueTrack[]> => {
     const key = `${country} ${term}`;
     const cached = this.cache.get(key);
@@ -28,20 +24,24 @@ class ItunesCatalogue {
     if (performance.now() < this.rateLimitedUntil) throw new Error('iTunes search rate-limited');
 
     const params = new URLSearchParams({ term, country, entity: 'song', limit: String(RESULT_LIMIT) });
-    const res = await fetch(`${API_URL}?${params.toString()}`, { signal });
-    if (res.status === 403 || res.status === 429) {
-      this.rateLimitedUntil = performance.now() + RATE_LIMITED_BACKOFF_MS;
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}?${params.toString()}`, { signal });
+    } catch (err) {
+      // A 403 without CORS headers surfaces as a network error, not a status.
+      if (!signal?.aborted) this.backOff();
+      throw err;
     }
+    if (res.status === 403 || res.status === 429) this.backOff();
     if (!res.ok) throw new Error(`iTunes search failed (${res.status} ${res.statusText})`);
     const tracks = parseResults(await res.json());
-
-    if (this.cache.size >= CACHE_LIMIT) {
-      const oldest = this.cache.keys().next().value;
-      if (oldest != null) this.cache.delete(oldest);
-    }
     this.cache.set(key, tracks);
     return tracks;
   };
+
+  private backOff(): void {
+    this.rateLimitedUntil = performance.now() + RATE_LIMITED_BACKOFF_MS;
+  }
 }
 
 export const itunesCatalogue = new ItunesCatalogue();

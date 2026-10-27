@@ -101,9 +101,17 @@ describe('musicDurationSlackSec', () => {
     videoDurationSec: 0,
   });
 
-  test('slack per cut edge inside the video, none for its own start/end', () => {
-    expect(musicDurationSlackSec([offtopic(0, 14.932), offtopic(220.6, 243.878)], 244)).toBe(8);
+  test('4s per cut edge inside the video', () => {
     expect(musicDurationSlackSec([offtopic(100, 110)], 244)).toBe(8);
+  });
+
+  test("none for an edge at the video's own start or end", () => {
+    expect(musicDurationSlackSec([offtopic(0, 14.932), offtopic(220.6, 243.878)], 244)).toBe(8);
+    expect(musicDurationSlackSec([offtopic(0.4, 10)], 244)).toBe(4);
+    expect(musicDurationSlackSec([offtopic(0.6, 10)], 244)).toBe(8);
+  });
+
+  test('none without segments', () => {
     expect(musicDurationSlackSec([], 244)).toBe(0);
   });
 });

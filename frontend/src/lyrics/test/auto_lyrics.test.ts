@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
   cleanStreamingTitle,
+  normalizeTokens,
   parseSongFilename,
   pickConfidentMatch,
+  phrasesContained,
   wordLevelSimilarity,
 } from '../auto_lyrics';
 import { LrclibMatch } from '../lrclib';
@@ -26,7 +28,7 @@ const QUERY = { title: 'Karma Police', artist: 'Radiohead' };
 describe('pickConfidentMatch', () => {
   test('picks the closest duration among name+duration matches', () => {
     const m = pickConfidentMatch(
-      [match({ id: 1, duration: 250 }), match({ id: 2, duration: 261 }), match({ id: 3, duration: 268 })],
+      [match({ id: 1, duration: 258.5 }), match({ id: 2, duration: 261 }), match({ id: 3, duration: 262 })],
       260,
       QUERY,
     );
@@ -92,6 +94,42 @@ describe('pickConfidentMatch', () => {
     ).toBeUndefined();
     // ...but the title-only retry accepts it (the duration gate still applies).
     expect(pickConfidentMatch([song], 220, { title: 'Victorious', ignoreArtist: true })).toBeDefined();
+  });
+});
+
+describe('normalizeTokens', () => {
+  test('folds case, diacritics, and full-width forms, splitting on punctuation', () => {
+    expect(normalizeTokens('Beyoncé – ＬＡＤＹ (Live)')).toEqual(['beyonce', 'lady', 'live']);
+  });
+
+  test('keeps voiced kana and Hangul whole', () => {
+    expect(normalizeTokens('ドーナツホール 아이브')).toEqual(['ドーナツホール', '아이브']);
+  });
+});
+
+describe('phrasesContained', () => {
+  test('every phrase word in the haystack, in any order, extra words ignored', () => {
+    expect(phrasesContained(['Karma Police', 'Radiohead'], 'Radiohead - Karma Police (Official Video)')).toBe(true);
+    expect(phrasesContained(['Paranoid Android'], 'Radiohead - Karma Police')).toBe(false);
+  });
+
+  test('each haystack word accounts for one phrase word', () => {
+    expect(phrasesContained(['Queen', 'Queen'], 'Queen - Live Aid')).toBe(false);
+    expect(phrasesContained(['Queen', 'Queen'], 'Queen - Queen II')).toBe(true);
+  });
+
+  test('a whole name glued into one haystack word', () => {
+    expect(phrasesContained(['Never Gonna Give You Up', 'Rick Astley'], 'Never Gonna Give You Up RickAstleyVEVO')).toBe(
+      true,
+    );
+  });
+
+  test('a non-Latin word inside a longer one', () => {
+    expect(phrasesContained(['米津玄師'], 'LADY 米津玄師ハチ')).toBe(true);
+  });
+
+  test('a Latin word inside an unrelated one is not found', () => {
+    expect(phrasesContained(['Time', 'Pink Floyd'], 'Pink Floyd - Sometimes')).toBe(false);
   });
 });
 
@@ -162,6 +200,7 @@ describe('cleanStreamingTitle', () => {
 
   test('strips a trailing dash-separated qualifier, no leftover separator', () => {
     expect(cleanStreamingTitle('Artist - Song - Official Music Video')).toBe('Artist - Song');
+    expect(cleanStreamingTitle('Artist - Song - Video')).toBe('Artist - Song');
     expect(cleanStreamingTitle('Song Title - Lyric Video')).toBe('Song Title');
   });
 

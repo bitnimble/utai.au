@@ -6,16 +6,16 @@ type Entry = CatalogueTrack & { country?: Storefront; aliases?: string };
 
 const RESULT_LIMIT = 3;
 
-/** Like iTunes search: a song matches when every query word is in its title,
- *  artist, or the artist's other-script names; only the first few come back. */
+/** Like iTunes search: a song matches when every query word is a word of its
+ *  title, artist, or the artist's other-script names; only the first few come back. */
 function catalogue(entries: readonly Entry[]): { search: SearchCatalogue; queries: string[] } {
   const queries: string[] = [];
   const search: SearchCatalogue = async (term, country) => {
     queries.push(term);
     const words = term.toLowerCase().split(/\s+/);
     const hits = entries.filter((e) => {
-      const text = `${e.trackName} ${e.artistName} ${e.aliases ?? ''}`.toLowerCase();
-      return (e.country ?? 'us') === country && words.every((w) => text.includes(w));
+      const entryWords = `${e.trackName} ${e.artistName} ${e.aliases ?? ''}`.toLowerCase().split(/[^\p{L}\p{N}]+/u);
+      return (e.country ?? 'us') === country && words.every((w) => entryWords.includes(w));
     });
     return hits.slice(0, RESULT_LIMIT);
   };
@@ -26,6 +26,9 @@ const CATALOGUE: Entry[] = [
   { trackName: 'LADY', artistName: 'Kenshi Yonezu', aliases: '米津玄師' },
   { trackName: 'LADY', artistName: '米津玄師', country: 'jp', aliases: 'Kenshi Yonezu' },
   { trackName: 'Lemon', artistName: '米津玄師', country: 'jp', aliases: 'Kenshi Yonezu' },
+  { trackName: 'Lemon', artistName: 'Kenshi Yonezu', aliases: '米津玄師' },
+  { trackName: 'Time', artistName: 'Pink Floyd' },
+  { trackName: 'Money', artistName: 'Pink Floyd' },
   { trackName: 'ドーナツホール', artistName: 'ハチ', country: 'jp', aliases: 'HACHI 米津玄師' },
   {
     trackName: 'LADY (Karaoke) [Yonezu Kenshi]',
@@ -137,12 +140,42 @@ describe('identifySong', () => {
     });
   });
 
-  test('queries kana with its voicing marks intact', async () => {
-    expect(await identify('ハチ - ドーナツホール', 'ハチ')).toEqual({
+  test('resolves a kana-only title, querying its voiced kana intact', async () => {
+    const { search, queries } = catalogue(CATALOGUE);
+    expect(await identifySong('ハチ - ドーナツホール', 'ハチ', search)).toEqual({
       title: 'ドーナツホール',
       artist: 'ハチ',
       isCover: false,
     });
+    expect(queries).toEqual(['ハチ ドーナツホール']);
+  });
+
+  test('curly quotes delimit like straight ones', async () => {
+    expect(await identify('IVE 아이브 ‘LOVE DIVE’ MV', 'STARSHIP')).toEqual({
+      title: 'LOVE DIVE',
+      artist: 'IVE',
+      isCover: false,
+    });
+  });
+
+  test('Korean cover marker', async () => {
+    expect(await identify("IVE 'LOVE DIVE' 커버", 'Dance Studio')).toEqual({
+      title: 'LOVE DIVE',
+      artist: 'IVE',
+      isCover: true,
+    });
+  });
+
+  test('falls back to the us storefront when Japanese text romanises the artist', async () => {
+    expect(await identify('Kenshi Yonezu - Lemon 歌ってみた', 'うたいて')).toEqual({
+      title: 'Lemon',
+      artist: 'Kenshi Yonezu',
+      isCover: true,
+    });
+  });
+
+  test('a catalogue title inside an unrelated raw word is not a match', async () => {
+    expect(await identify('Pink Floyd - Sometimes', 'Fan Channel')).toBeUndefined();
   });
 
   test('undefined when no catalogue song is accounted for by the raw text', async () => {
@@ -152,12 +185,19 @@ describe('identifySong', () => {
   test('stops at the first query with an accepted match', async () => {
     const { search, queries } = catalogue(CATALOGUE);
     await identifySong('米津玄師  Kenshi Yonezu - LADY', 'Kenshi Yonezu  米津玄師', search);
-    expect(queries).toHaveLength(1);
+    expect(queries).toEqual(['米津玄師 kenshi yonezu lady']);
   });
 
-  test('bounded number of catalogue requests on a miss', async () => {
+  test('stops after 6 queries on a miss', async () => {
     const { search, queries } = catalogue([]);
-    await identifySong('A - B | C / D (E) [F] 【G】', 'H', search);
-    expect(queries.length).toBeLessThanOrEqual(6);
+    expect(await identifySong('A - B | C / D (E) [F] 【G】', 'H', search)).toBeUndefined();
+    expect(queries).toHaveLength(6);
+  });
+
+  test('a failing search throws', async () => {
+    const failing: SearchCatalogue = async () => {
+      throw new Error('rate-limited');
+    };
+    await expect(identifySong('Radiohead - Karma Police', 'Radiohead', failing)).rejects.toThrow('rate-limited');
   });
 });
