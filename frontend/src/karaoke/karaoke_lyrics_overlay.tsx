@@ -170,13 +170,12 @@ type LineView = (idx: number | undefined, lineWidthPx: number, oneRowFontSizePx?
 
 type CountIn = { total: number; left: number };
 
-/** The count-in's dots, spent from the left so the rest keep their place. */
+/** The count-in's dots, spent from the right so the rest keep their place. */
 function CountInDots({ countIn, aboveRuby }: { countIn: CountIn; aboveRuby?: boolean }): React.ReactNode {
-  const spent = countIn.total - countIn.left;
   return (
     <span className={classNames(styles.countIn, aboveRuby && styles.countInAboveRuby)} data-testid="karaoke-count-in" aria-hidden>
       {Array.from({ length: countIn.total }, (_, i) => (
-        <span key={i} className={styles.countInDot} data-spent={i < spent || undefined} />
+        <span key={i} className={styles.countInDot} data-spent={i >= countIn.left || undefined} />
       ))}
     </span>
   );

@@ -263,12 +263,13 @@ test('karaoke counts a line in after a gap: a dot per beat of the bar above its 
   const seek = (sec: number) =>
     page.evaluate((s) => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(s), sec);
   const countIn = page.getByTestId('karaoke-count-in');
-  const dotsLeft = () => countIn.locator('> span:not([data-spent])').count();
+  const dots = () =>
+    countIn.locator('> span').evaluateAll((els) => els.map((e) => (e.hasAttribute('data-spent') ? '-' : 'o')).join(''));
 
   await seek(2.2);
   await expect(page.getByTestId('karaoke-line')).toHaveText('count me in');
   await expect(countIn.locator('> span')).toHaveCount(4);
-  await expect.poll(dotsLeft).toBe(4);
+  await expect.poll(dots).toBe('oooo');
   const firstWord = page.getByTestId('karaoke-line').locator('[data-word-state]').first();
   const [dotsBox, wordBox] = [await countIn.boundingBox(), await firstWord.boundingBox()];
   expect(dotsBox!.y + dotsBox!.height).toBeLessThanOrEqual(wordBox!.y + 1);
@@ -282,9 +283,9 @@ test('karaoke counts a line in after a gap: a dot per beat of the bar above its 
   await page.getByTestId('karaoke-show-pitch').click();
   await page.keyboard.press('Escape');
   await seek(3.2);
-  await expect.poll(dotsLeft).toBe(2);
+  await expect.poll(dots).toBe('oo--');
   await seek(3.8);
-  await expect.poll(dotsLeft).toBe(1);
+  await expect.poll(dots).toBe('o---');
   await seek(4.05);
   await expect(countIn).toHaveCount(0);
 
