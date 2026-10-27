@@ -83,6 +83,7 @@ import {
 } from 'src/skip_segments/skip_segments_contexts';
 import { SkipSegmentButton } from 'src/skip_segments/skip_segment_button';
 import { prepareSong } from 'src/queue/prepare_song';
+import { identifyTrack } from 'src/song_identity/identify_track';
 import { QueueStore } from 'src/queue/queue_store';
 import { QueuePresenter } from 'src/queue/queue_presenter';
 import { QueuePresenterContext, QueueStoreContext } from 'src/queue/queue_contexts';
@@ -135,7 +136,7 @@ function buildSession(): Session {
   const lyricsPresenter = new LyricsPresenter(lyricsAlign, (meta) => presenter.captureSongMeta(meta));
   const songIo = new SongIoPresenter(song, presenter, lyricsPresenter, beats);
   const queue = new QueueStore();
-  const queuePresenter = new QueuePresenter(queue, songIo, playbackEngine, prepareSong);
+  const queuePresenter = new QueuePresenter(queue, songIo, playbackEngine, prepareSong, identifyTrack);
   const musicSource = new MusicSourceStore();
   const musicPresenter = new MusicSourcePresenter(musicSource, (track) =>
     queuePresenter.add({ kind: 'streaming', track }),

@@ -3,6 +3,9 @@ import type { PlaybackEngine } from 'src/editing/playback/playback_engine';
 import type { SongIoPresenter } from 'src/karaoke/song_io_presenter';
 import { cleanStreamingTitle, parseSongFilename } from 'src/lyrics/auto_lyrics';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
+import type { TrackResult } from 'src/net/music_source_client';
+import type { SongIdentity } from 'src/song_identity/identify_song';
+import type { IdentifyTrack } from 'src/song_identity/identify_track';
 import { toastStore } from 'src/ui/toasts/toasts';
 import type { PrepareSong, PrepareStage, QueueSource } from './prepare_song';
 import { QueueItem, QueueItemId, QueueSidebarTab, QueueStore } from './queue_store';
@@ -14,6 +17,7 @@ type Transport = Pick<PlaybackEngine, 'state' | 'play' | 'onEnded'>;
 export class QueuePresenter {
   private itemIdCounter = 0;
   private preparing: { id: QueueItemId; controller: AbortController } | undefined;
+  private readonly identities = new Map<QueueItemId, Promise<SongIdentity>>();
   private disposers: Array<() => void> = [];
   private disposed = false;
 
@@ -22,17 +26,29 @@ export class QueuePresenter {
     private readonly songIo: SongLoader,
     private readonly transport: Transport,
     private readonly prepare: PrepareSong,
+    private readonly identify: IdentifyTrack,
   ) {
     makeAutoObservable<
       this,
-      'store' | 'songIo' | 'transport' | 'prepare' | 'itemIdCounter' | 'preparing' | 'disposers' | 'disposed'
+      | 'store'
+      | 'songIo'
+      | 'transport'
+      | 'prepare'
+      | 'identify'
+      | 'itemIdCounter'
+      | 'preparing'
+      | 'identities'
+      | 'disposers'
+      | 'disposed'
     >(this, {
       store: false,
       songIo: false,
       transport: false,
       prepare: false,
+      identify: false,
       itemIdCounter: false,
       preparing: false,
+      identities: false,
       disposers: false,
       disposed: false,
     });
@@ -81,13 +97,10 @@ export class QueuePresenter {
 
   add(source: QueueSource): void {
     const label = sourceLabel(source);
-    this.store.items.push({
-      id: `queue-${++this.itemIdCounter}`,
-      ...label,
-      source,
-      status: { kind: 'waiting' },
-    });
+    const id = `queue-${++this.itemIdCounter}`;
+    this.store.items.push({ id, ...label, source, status: { kind: 'waiting' } });
     toastStore.showSuccess(`Added ${label.title} to the queue.`, { testId: 'queue-added' });
+    if (source.kind === 'streaming') this.identifyItem(id, source.track);
     this.prepareNext();
   }
 
@@ -106,6 +119,7 @@ export class QueuePresenter {
 
   remove(id: QueueItemId): void {
     this.store.items = this.store.items.filter((i) => i.id !== id);
+    this.identities.delete(id);
     if (this.preparing?.id === id) this.preparing.controller.abort();
   }
 
@@ -114,6 +128,17 @@ export class QueuePresenter {
     if (!this.store.canSkip) return;
     this.songIo.clearSong();
     this.store.awaitingNext = true;
+  }
+
+  /** Relabels the item as soon as its song is known; its prepare reuses the same lookup. */
+  private identifyItem(id: QueueItemId, track: TrackResult): void {
+    const identity = this.identify(track);
+    this.identities.set(id, identity);
+    void identity.then((song) => this.relabel(id, song));
+  }
+
+  private relabel(id: QueueItemId, song: SongIdentity): void {
+    this.update(id, { title: song.title, artist: song.artist });
   }
 
   /** An action: `onEnded` fires from a timer / IPC callback, outside any action. */
@@ -126,6 +151,7 @@ export class QueuePresenter {
     this.store.awaitingNext = false;
     this.store.starting = item;
     this.store.items = this.store.items.filter((i) => i.id !== item.id);
+    this.identities.delete(item.id);
     try {
       await this.songIo.loadPreparedSong(item.status.song);
       await this.transport.play();
@@ -158,6 +184,7 @@ export class QueuePresenter {
       const song = await this.prepare(item.source, {
         signal: controller.signal,
         onStage: (stage) => this.setStage(item.id, stage),
+        identity: this.identities.get(item.id),
       });
       this.update(item.id, {
         status: { kind: 'ready', song },
@@ -171,7 +198,8 @@ export class QueuePresenter {
       } else {
         const message = err instanceof Error ? err.message : String(err);
         this.update(item.id, { status: { kind: 'failed', message } });
-        if (!isBackendUnreachable(err)) toastStore.showError(`Could not prepare ${item.title}: ${message}`);
+        const title = this.store.items.find((i) => i.id === item.id)?.title ?? item.title;
+        if (!isBackendUnreachable(err)) toastStore.showError(`Could not prepare ${title}: ${message}`);
       }
     } finally {
       this.preparing = undefined;

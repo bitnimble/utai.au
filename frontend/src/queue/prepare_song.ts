@@ -16,7 +16,7 @@ import {
   unpackSongBundle,
 } from 'src/karaoke/song_bundle';
 import type { SongMeta } from 'src/karaoke/song_schema';
-import { cleanStreamingTitle, parseSongFilename, pickConfidentMatch } from 'src/lyrics/auto_lyrics';
+import { parseSongFilename, pickConfidentMatch } from 'src/lyrics/auto_lyrics';
 import { alignLyricsForced } from 'src/lyrics/forced_align';
 import { LyricLine, parseLrc, shiftLines } from 'src/lyrics/lrc';
 import { LrclibMatch, searchLrclib } from 'src/lyrics/lrclib';
@@ -31,8 +31,8 @@ import {
   musicStartSec,
   type SkipSegment,
 } from 'src/skip_segments/sponsorblock';
-import { identifySong, type SongIdentity } from 'src/song_identity/identify_song';
-import { itunesCatalogue, type Storefront } from 'src/song_identity/itunes';
+import type { SongIdentity } from 'src/song_identity/identify_song';
+import { identifyTrack } from 'src/song_identity/identify_track';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { prefetchBackingVideo } from 'src/video/video_client';
 import { songVideoId } from 'src/video/youtube';
@@ -50,6 +50,8 @@ export type PrepareStage =
 export type PrepareOptions = {
   signal: AbortSignal;
   onStage: (stage: PrepareStage) => void;
+  /** A streaming track's identity, if already being looked up. */
+  identity?: Promise<SongIdentity>;
 };
 
 export type PrepareSong = (source: QueueSource, opts: PrepareOptions) => Promise<PreparedSong>;
@@ -61,7 +63,7 @@ export const prepareSong: PrepareSong = async (source, opts) => {
     return prepared;
   }
   if (source.kind === 'file') {
-    return prepareMix(source.file, {}, undefined, opts);
+    return prepareFile(source.file, opts);
   }
   const { track } = source;
   const video = warmBackingVideo({ sourceUrl: track.sourceUrl }, opts.signal);
@@ -82,50 +84,50 @@ async function warmBackingVideo(meta: SongMeta, signal: AbortSignal): Promise<vo
   }
 }
 
+async function prepareFile(file: File, opts: PrepareOptions): Promise<PreparedSong> {
+  const music = { durationSec: await decodeDurationSec(file), startSec: 0, durationSlackSec: 0, isCover: false };
+  const parsed = parseSongFilename(file.name);
+  return prepareMix(file, {}, music, findSyncedLyrics(parsed.title, parsed.artist, music, opts.signal), opts);
+}
+
+/** The lyrics search starts once the song is identified, without waiting for the download. */
 async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promise<PreparedSong> {
   opts.onStage({ kind: 'downloading', frac: 0 });
-  const [mix, segments, identity] = await Promise.all([
-    fetchTrack(track, {
-      signal: opts.signal,
-      onProgress: (p) => opts.onStage({ kind: 'downloading', frac: p.frac }),
-    }),
-    lookUpSkipSegments(track.sourceUrl, opts.signal),
-    identifyTrack(track, opts.signal),
-  ]);
-  const durationSec = track.durationSec ?? (await decodeDurationSec(mix));
+  const download = fetchTrack(track, {
+    signal: opts.signal,
+    onProgress: (p) => opts.onStage({ kind: 'downloading', frac: p.frac }),
+  });
+  const identity = opts.identity ?? identifyTrack(track, opts.signal);
+  const music = streamingMusic(track, download, lookUpSkipSegments(track.sourceUrl, opts.signal), identity);
+  const lyrics = Promise.all([identity, music])
+    .then(([song, m]) => findSyncedLyrics(song.title, song.artist, m, opts.signal))
+    // Only rejects when `music` does, i.e. a failed download, which the await below reports.
+    .catch(() => undefined);
+  const [mix, song, knownMusic] = await Promise.all([download, identity, music]);
   const meta: SongMeta = {
-    title: identity.title,
-    artist: identity.artist || undefined,
+    title: song.title,
+    artist: song.artist || undefined,
     album: track.album ?? undefined,
     albumArtUrl: track.coverUrl ?? undefined,
     sourceUrl: track.sourceUrl,
   };
-  const music = {
+  return prepareMix(mix, meta, knownMusic, lyrics, opts);
+}
+
+async function streamingMusic(
+  track: TrackResult,
+  download: Promise<File>,
+  skipSegments: Promise<SkipSegment[]>,
+  identity: Promise<SongIdentity>,
+): Promise<KnownMusic> {
+  const [segments, song] = await Promise.all([skipSegments, identity]);
+  const durationSec = track.durationSec ?? (await decodeDurationSec(await download));
+  return {
     durationSec: musicDurationSec(segments, durationSec),
     startSec: musicStartSec(segments, durationSec),
     durationSlackSec: musicDurationSlackSec(segments, durationSec),
-    isCover: identity.isCover,
+    isCover: song.isCover,
   };
-  return prepareMix(mix, meta, music, opts);
-}
-
-/** Services whose "title" is a video title and "artist" its uploader. */
-const UPLOADER_TITLED_SERVICES = new Set(['youtube_music', 'soundcloud']);
-
-const IDENTIFY_TIMEOUT_MS = 10_000;
-
-/** Best-effort: a miss keeps the source's own title, minus the usual video-title junk. */
-async function identifyTrack(track: TrackResult, signal: AbortSignal): Promise<SongIdentity> {
-  const fallback = { title: cleanStreamingTitle(track.title, track.artists), artist: track.artists, isCover: false };
-  if (!UPLOADER_TITLED_SERVICES.has(track.service)) return fallback;
-  const bounded = AbortSignal.any([signal, AbortSignal.timeout(IDENTIFY_TIMEOUT_MS)]);
-  try {
-    const search = (term: string, country: Storefront) => itunesCatalogue.search(term, country, bounded);
-    return (await identifySong(track.title, track.artists, search)) ?? fallback;
-  } catch (err) {
-    if (!signal.aborted) console.warn('[identify] catalogue search failed:', message(err));
-    return fallback;
-  }
 }
 
 const SKIP_SEGMENTS_TIMEOUT_MS = 10_000;
@@ -144,22 +146,19 @@ async function lookUpSkipSegments(sourceUrl: string | undefined, signal: AbortSi
 
 type KnownMusic = { durationSec: number; startSec: number; durationSlackSec: number; isCover: boolean };
 
-/** Separate, beat-track, and fetch + align lyrics for a full mix. */
+type SyncedLyrics = { lines: LyricLine[]; trackName: string; artistName: string };
+
+/** Separate and beat-track a full mix, then align the lyrics once both the
+ *  vocal stem and `lyricsSearch` are in. */
 async function prepareMix(
   mix: File,
   meta: SongMeta,
-  knownMusic: KnownMusic | undefined,
+  music: KnownMusic,
+  lyricsSearch: Promise<SyncedLyrics | undefined>,
   { signal, onStage }: PrepareOptions,
 ): Promise<PreparedSong> {
-  const music = knownMusic ?? {
-    durationSec: await decodeDurationSec(mix),
-    startSec: 0,
-    durationSlackSec: 0,
-    isCover: false,
-  };
   const parsed = parseSongFilename(mix.name);
-  const title = meta.title || parsed.title;
-  const songLabel = title || mix.name;
+  const songLabel = meta.title || parsed.title || mix.name;
 
   onStage({ kind: 'separating' });
   const [stems, beats, match] = await Promise.all([
@@ -173,7 +172,7 @@ async function prepareMix(
       if (!signal.aborted && !isBackendUnreachable(err)) console.warn('[beats] analysis failed:', message(err));
       return undefined;
     }),
-    findSyncedLyrics(title, meta.artist || parsed.artist, music, signal),
+    lyricsSearch,
   ]);
   signal.throwIfAborted();
 
@@ -246,7 +245,7 @@ async function findSyncedLyrics(
   rawArtist: string,
   music: KnownMusic,
   signal: AbortSignal,
-): Promise<{ lines: LyricLine[]; trackName: string; artistName: string } | undefined> {
+): Promise<SyncedLyrics | undefined> {
   const title = rawTitle.trim();
   const artist = rawArtist.trim();
   if (title.length === 0 && artist.length === 0) return undefined;

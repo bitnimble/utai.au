@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { makeAutoObservable } from 'mobx';
 import type { PlayerState } from 'src/editing/playback/player';
 import type { PreparedSong } from 'src/karaoke/song_bundle';
+import type { TrackResult } from 'src/net/music_source_client';
+import type { SongIdentity } from 'src/song_identity/identify_song';
+import type { IdentifyTrack } from 'src/song_identity/identify_track';
 import type { PrepareOptions, QueueSource } from '../prepare_song';
 import { QueuePresenter } from '../queue_presenter';
 import { QueueStore } from '../queue_store';
@@ -38,11 +41,14 @@ class FakeTransport {
   }
 }
 
+type Identifying = { track: TrackResult; resolve: (song: SongIdentity) => void };
+
 type Harness = {
   store: QueueStore;
   transport: FakeTransport;
   loaded: string[];
   pending: Pending[];
+  identifying: Identifying[];
   presenter: QueuePresenter;
   add: (name: string) => void;
   order: () => string[];
@@ -76,14 +82,24 @@ function setup(): Harness {
         reject,
       });
     });
-  const presenter = new QueuePresenter(store, songIo, transport, prepare);
+  const identifying: Identifying[] = [];
+  const identify: IdentifyTrack = (track) => new Promise((resolve) => identifying.push({ track, resolve }));
+  const presenter = new QueuePresenter(store, songIo, transport, prepare, identify);
   presenter.init();
   const add = (name: string): void => presenter.add({ kind: 'file', file: new File([], name) });
   const fileName = (source: QueueSource): string => (source.kind === 'file' ? source.file.name : '');
   const order = (): string[] => store.items.map((i) => fileName(i.source));
   const idOf = (name: string): string => store.items.find((i) => fileName(i.source) === name)!.id;
-  return { store, transport, loaded, pending, presenter, add, order, idOf };
+  return { store, transport, loaded, pending, identifying, presenter, add, order, idOf };
 }
+
+const LADY_UPLOAD: TrackResult = {
+  id: 'DdF-u3fe5pg',
+  service: 'youtube_music',
+  title: '米津玄師  Kenshi Yonezu - LADY',
+  artists: 'Kenshi Yonezu  米津玄師',
+  sourceUrl: 'https://youtu.be/DdF-u3fe5pg',
+};
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
@@ -288,5 +304,30 @@ describe('QueuePresenter', () => {
       ['Get Lucky', ''],
       ['Get Lucky', 'Daft Punk'],
     ]);
+  });
+
+  test('relabels a streaming track as soon as it is identified, while it is still preparing', async () => {
+    const { store, presenter, pending, identifying } = setup();
+    presenter.add({ kind: 'streaming', track: LADY_UPLOAD });
+    expect(identifying.map((i) => i.track)).toEqual([LADY_UPLOAD]);
+    identifying[0].resolve({ title: 'LADY', artist: '米津玄師', isCover: false });
+    await flush();
+    expect(store.items.map((i) => [i.title, i.artist])).toEqual([['LADY', '米津玄師']]);
+    expect(pending).toHaveLength(1);
+  });
+
+  test('its prepare reuses the same identification instead of starting another', async () => {
+    const { presenter, pending, identifying } = setup();
+    presenter.add({ kind: 'streaming', track: LADY_UPLOAD });
+    const song = { title: 'LADY', artist: '米津玄師', isCover: false };
+    identifying[0].resolve(song);
+    expect(await pending[0].opts.identity).toEqual(song);
+    expect(identifying).toHaveLength(1);
+  });
+
+  test('local files are not identified', () => {
+    const { identifying, add } = setup();
+    add('a');
+    expect(identifying).toHaveLength(0);
   });
 });
