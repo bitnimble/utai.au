@@ -28,6 +28,7 @@ const CATALOGUE: Entry[] = [
   { trackName: 'Lemon', artistName: '米津玄師', country: 'jp', aliases: 'Kenshi Yonezu' },
   { trackName: 'Lemon', artistName: 'Kenshi Yonezu', aliases: '米津玄師' },
   { trackName: 'Time', artistName: 'Pink Floyd' },
+  { trackName: 'Jealous Girl', artistName: 'Lana Del Rey' },
   { trackName: 'Money', artistName: 'Pink Floyd' },
   { trackName: 'ドーナツホール', artistName: 'ハチ', country: 'jp', aliases: 'HACHI 米津玄師' },
   {
@@ -172,6 +173,18 @@ describe('identifySong', () => {
       artist: 'Kenshi Yonezu',
       isCover: true,
     });
+  });
+
+  test('splits on a one-sided dash and emoji, ignoring hashtags and "unreleased song"', async () => {
+    const { search, queries } = catalogue(CATALOGUE);
+    expect(
+      await identifySong(
+        'Jealous girl- Lana del rey🤎 unreleased song#jealousgirl #lanadelreylyrics',
+        'Selkies Studio',
+        search,
+      ),
+    ).toEqual({ title: 'Jealous Girl', artist: 'Lana Del Rey', isCover: false });
+    expect(queries).toEqual(['jealous girl lana del rey']);
   });
 
   test('a catalogue title inside an unrelated raw word is not a match', async () => {

@@ -29,23 +29,29 @@ const NOISE_WORDS = new Set(
     ...TITLE_DESCRIPTOR_WORDS, 'm', 'v', 'pv', 'rom', 'kan', 'eng', 'romanized', 'romanised', 'romaji',
     'sub', 'subs', 'subbed', 'subtitles', 'color', 'coded', 'vevo', 'topic', 'by', 'feat', 'ft', 'ver',
     'version', 'full', 'live', 'performance', 'teaser', 'remaster', 'remastered', 'opening', 'ending',
-    'op', 'ed', 'ost', 'tv', 'size', 'channel', '中字', '字幕', ...COVER_WORDS,
+    'op', 'ed', 'ost', 'tv', 'size', 'channel', 'song', 'unreleased', 'leak', 'leaked', 'snippet', '中字',
+    '字幕', ...COVER_WORDS,
   ].flatMap(normalizeTokens),
 );
 
 const NOISE_SUBSTRINGS = ['歌詞', '가사', ...COVER_SUBSTRINGS];
 
-/** An apostrophe delimits only as a quote ("IVE 'LOVE DIVE' MV"), not inside a word. */
-const SEGMENT_DELIMITERS = /\s[\p{Pd}~]\s|[|/∥【】「」『』[\](){}《》〈〉"“”‘]|(?<=^|\s)'|['’](?=\s|$)/u;
+const HASHTAG = /#[^\s#]+/gu;
+
+/** A dash delimits with a space on either side ("girl- Lana"), not inside a word
+ *  ("Anti-Hero"); an apostrophe only as a quote ("IVE 'LOVE DIVE' MV"). */
+const SEGMENT_DELIMITERS =
+  /\s[\p{Pd}~]|[\p{Pd}~]\s|\p{Extended_Pictographic}|[|/∥【】「」『』[\](){}《》〈〉"“”‘]|(?<=^|\s)'|['’](?=\s|$)/u;
 
 /** The catalogue song the raw text accounts for, else undefined. Throws when `search` does. */
 export async function identifySong(
   rawTitle: string,
   uploader: string,
   search: SearchCatalogue,
+  maxQueries = MAX_QUERIES,
 ): Promise<SongIdentity | undefined> {
   const raw = `${rawTitle} ${uploader}`;
-  for (const [term, country] of attempts(rawTitle, uploader)) {
+  for (const [term, country] of attempts(rawTitle, uploader, maxQueries)) {
     const match = bestMatch(await search(term, country), raw);
     if (match == null) continue;
     const isCover = hasUnexplainedCoverMarker(raw, `${match.title} ${match.artist}`);
@@ -65,21 +71,24 @@ function hasUnexplainedCoverMarker(raw: string, song: string): boolean {
 }
 
 /**
- * At most {@link MAX_QUERIES} searches, most specific first. The us storefront
- * lists Japanese artists romanised ("Kenshi Yonezu"), jp in native script, so
+ * At most `maxQueries` searches, most specific first. The us storefront lists
+ * Japanese artists romanised ("Kenshi Yonezu"), jp in native script, so
  * Japanese text searches jp, then us in case the title only romanises the artist.
  */
-function attempts(rawTitle: string, uploader: string): [string, Storefront][] {
+function attempts(rawTitle: string, uploader: string, maxQueries: number): [string, Storefront][] {
   const queries = candidateQueries(rawTitle, uploader);
   if (queries.length === 0) return [];
   const isJapanese = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(`${rawTitle} ${uploader}`);
-  if (!isJapanese) return queries.slice(0, MAX_QUERIES).map((q) => [q, 'us']);
-  return [...queries.slice(0, MAX_QUERIES - 1).map((q): [string, Storefront] => [q, 'jp']), [queries[0], 'us']];
+  if (!isJapanese) return queries.slice(0, maxQueries).map((q) => [q, 'us']);
+  const inJapan = queries.slice(0, Math.max(1, maxQueries - 1)).map((q): [string, Storefront] => [q, 'jp']);
+  const inUs: [string, Storefront] = [queries[0], 'us'];
+  return [...inJapan, inUs].slice(0, maxQueries);
 }
 
 function candidateQueries(rawTitle: string, uploader: string): string[] {
   const segments = rawTitle
     .normalize('NFKC')
+    .replace(HASHTAG, ' ')
     .split(SEGMENT_DELIMITERS)
     .map((s) => queryWords(s).join(' '))
     .filter((s) => s.length > 0);

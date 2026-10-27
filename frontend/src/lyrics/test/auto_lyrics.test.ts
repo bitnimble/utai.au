@@ -201,6 +201,9 @@ describe('cleanStreamingTitle', () => {
   test('strips a trailing dash-separated qualifier, no leftover separator', () => {
     expect(cleanStreamingTitle('Artist - Song - Official Music Video')).toBe('Artist - Song');
     expect(cleanStreamingTitle('Artist - Song - Video')).toBe('Artist - Song');
+    expect(cleanStreamingTitle('Jealous girl- Lana del rey🤎 song#jealousgirl #lanadelreylyrics')).toBe(
+      'Jealous girl- Lana del rey song',
+    );
     expect(cleanStreamingTitle('Song Title - Lyric Video')).toBe('Song Title');
   });
 

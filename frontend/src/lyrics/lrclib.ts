@@ -37,9 +37,8 @@ const localEnv = import.meta.env.VITE_LRCLIB_URL;
 const LOCAL_BASE_URL =
   typeof localEnv === 'string' ? localEnv.trim().replace(/\/+$/, '') : '';
 
-export type SearchOptions = {
-  trackName: string;
-  artistName: string;
+/** By track + artist, or by free text matched against any field. */
+export type SearchOptions = ({ trackName: string; artistName: string } | { query: string }) & {
   signal?: AbortSignal;
 };
 
@@ -52,12 +51,19 @@ export type SearchOptions = {
 const CACHE_LIMIT = 50;
 const searchCache = new BoundedCache<string, LrclibMatch[]>(CACHE_LIMIT);
 
-function cacheKey(trackName: string, artistName: string): string {
-  return `${trackName.trim().toLowerCase()} ${artistName.trim().toLowerCase()}`;
+function searchParams(opts: SearchOptions): URLSearchParams {
+  const params = new URLSearchParams();
+  if ('query' in opts) {
+    params.set('q', opts.query.trim());
+    return params;
+  }
+  if (opts.trackName.trim().length > 0) params.set('track_name', opts.trackName.trim());
+  if (opts.artistName.trim().length > 0) params.set('artist_name', opts.artistName.trim());
+  return params;
 }
 
 /**
- * Search LRCLIB for `trackName` + `artistName`. Returns only entries
+ * Search LRCLIB (see {@link SearchOptions}). Returns only entries
  * with non-empty `syncedLyrics` (the modal's exact-match / auto-load
  * logic only operates on synced lyrics; plain lyrics aren't useful
  * for the timeline-anchored row).
@@ -70,7 +76,7 @@ function cacheKey(trackName: string, artistName: string): string {
  * is responsible for filtering stale responses against newer searches.
  */
 export async function searchLrclib(opts: SearchOptions): Promise<LrclibMatch[]> {
-  const key = cacheKey(opts.trackName, opts.artistName);
+  const key = searchParams(opts).toString().toLowerCase();
   const cached = searchCache.get(key);
   if (cached != null) return cached;
 
@@ -100,13 +106,10 @@ const NO_RETRY: RetryPolicy = { attempts: 1, baseDelayMs: 0 };
 /** One `/api/search` against `baseUrl`, parsed to synced-only matches.
  *  Throws on transport / HTTP failure. */
 async function searchOne(baseUrl: string, opts: SearchOptions, retry: RetryPolicy): Promise<LrclibMatch[]> {
-  const params = new URLSearchParams();
-  if (opts.trackName.trim().length > 0) params.set('track_name', opts.trackName.trim());
-  if (opts.artistName.trim().length > 0) params.set('artist_name', opts.artistName.trim());
   // LRCLIB accepts an empty query (returns nothing); the modal guards
   // against firing when neither field has content, so by the time we
   // get here at least one of the two is set.
-  const url = `${baseUrl}/search?${params.toString()}`;
+  const url = `${baseUrl}/search?${searchParams(opts).toString()}`;
   // No custom request headers on purpose: any non-safelisted header
   // (LRCLIB's optional `Lrclib-Client` identifier) would force the
   // browser to send a CORS preflight before every GET, and LRCLIB

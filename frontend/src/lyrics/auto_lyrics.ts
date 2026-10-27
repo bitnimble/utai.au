@@ -285,10 +285,10 @@ function escapeRegExp(s: string): string {
  * title (falls back to the trimmed original if everything was stripped).
  */
 export function cleanStreamingTitle(rawTitle: string, artist?: string): string {
-  // Drop bracketed junk groups: "(Official Music Video)", "[Audio]", "{4K}".
-  let t = rawTitle.replace(/[([{][^)\]}]*[)\]}]/g, (grp) =>
-    isDescriptorOnly(grp.slice(1, -1)) ? '' : grp,
-  );
+  // Drop hashtags, emoji, and bracketed junk groups: "(Official Music Video)", "[Audio]", "{4K}".
+  let t = rawTitle
+    .replace(/#[^\s#]+|\p{Extended_Pictographic}/gu, ' ')
+    .replace(/[([{][^)\]}]*[)\]}]/g, (grp) => (isDescriptorOnly(grp.slice(1, -1)) ? '' : grp));
   // Drop trailing dash-separated junk: "Artist - Song - Official Music Video".
   const segs = t.split(/\s+[-–]\s+/);
   while (segs.length > 1) {
