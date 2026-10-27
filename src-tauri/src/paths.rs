@@ -192,7 +192,23 @@ pub fn outputs_dir(root: &Path) -> PathBuf {
     root.join("outputs")
 }
 
+/// Where startup links the venv's bundled ffmpeg (`capability::ensure_models`),
+/// under the name every caller looks it up by.
+pub fn bundled_ffmpeg(root: &Path) -> PathBuf {
+    root.join("bin").join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" })
+}
+
 pub fn redirect_env(root: &Path, full: bool) {
+    let ffmpeg = bundled_ffmpeg(root);
+    if let Some(bin) = ffmpeg.parent() {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let dirs = std::iter::once(bin.to_path_buf()).chain(std::env::split_paths(&path));
+        if let Ok(joined) = std::env::join_paths(dirs) {
+            set_var("PATH", joined);
+        }
+    }
+    // OnTheSpot only looks in fixed system paths and this.
+    set_var("FFMPEG_PATH", &ffmpeg);
     let cache = root.join("cache");
     // aligner settings + the sidecar outputs. Their defaults (/models, /cache,
     // /outputs) are Docker paths, invalid for a packaged desktop app, so these

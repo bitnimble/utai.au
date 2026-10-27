@@ -131,6 +131,8 @@ mod tests {
     async fn serves_the_music_api_from_a_synced_venv() {
         let python = std::env::var("UTAI_LOCAL_BACKEND_PYTHON").expect("UTAI_LOCAL_BACKEND_PYTHON");
         let root = std::env::temp_dir().join("utai-local-backend-test");
+        // The app redirects this at startup (`paths::redirect_env`); OnTheSpot caches under it.
+        std::env::set_var("XDG_CACHE_HOME", root.join("cache"));
         let sidecar = SidecarState::default();
         let base = start(&python, &root, &sidecar).await.unwrap();
         let addr = base.trim_start_matches("http://");

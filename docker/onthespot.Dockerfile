@@ -10,8 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Same commit as the aligner's `onthespot` dependency group: the launcher below
-# patches this version's downloader source.
-RUN pip install --no-cache-dir "git+https://github.com/justin025/onthespot.git@7f7e04d883dc2d12499e6a0f9a80a09116cf69f7"
+# patches this version's downloader source. yt-dlp's `default` + `deno` extras
+# bring the JS challenge solver + runtime YouTube downloads need.
+RUN pip install --no-cache-dir \
+        "git+https://github.com/justin025/onthespot.git@7f7e04d883dc2d12499e6a0f9a80a09116cf69f7" \
+        "yt-dlp[default,deno]>=2026.10.26"
 
 # The launcher the desktop app runs too. `--check` fails the build if an
 # upstream change stops its patches applying.

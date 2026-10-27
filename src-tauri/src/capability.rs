@@ -365,22 +365,44 @@ async fn sync_venv(
     if !status.success() {
         return Err(format!("uv sync failed ({status})"));
     }
-    let _ = std::fs::write(synced_groups_path(&venv), groups.join("\n"));
+    let _ = std::fs::write(sync_stamp_path(&venv), sync_stamp(&dir, groups));
     Ok(())
 }
 
-fn synced_groups_path(venv: &Path) -> PathBuf {
-    venv.join("utai-synced-groups.txt")
+fn sync_stamp_path(venv: &Path) -> PathBuf {
+    venv.join("utai-sync-stamp.txt")
 }
 
-/// Whether the venv was last synced with every group in `groups`, so an install
-/// predating a newly added startup group gets it on its next launch.
-fn venv_has_groups(venv: &Path, groups: &[&str]) -> bool {
-    let Ok(synced) = std::fs::read_to_string(synced_groups_path(venv)) else {
-        return false;
-    };
-    let synced: Vec<&str> = synced.lines().collect();
-    groups.iter().all(|g| synced.contains(g))
+/// What a venv synced with `groups` from `aligner_dir`'s lock records, so an app
+/// update that changes the lock or the startup groups resyncs on next launch.
+fn sync_stamp(aligner_dir: &Path, groups: &[String]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::fs::read(aligner_dir.join("uv.lock")).unwrap_or_default().hash(&mut hasher);
+    format!("{}\n{:016x}", groups.join(","), hasher.finish())
+}
+
+/// Copy (hard-link when possible) the venv's bundled ffmpeg to the name and dir
+/// startup put on PATH (`paths::redirect_env`).
+async fn link_bundled_ffmpeg(venv: &Path, dest: &Path) -> Result<(), String> {
+    let out = Command::new(venv_python(venv))
+        .args(["-c", "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"])
+        .no_console()
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+    }
+    let src = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    if let Some(dir) = dest.parent() {
+        tokio::fs::create_dir_all(dir).await.map_err(|e| e.to_string())?;
+    }
+    let _ = tokio::fs::remove_file(dest).await;
+    if tokio::fs::hard_link(&src, dest).await.is_err() {
+        tokio::fs::copy(&src, dest).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Install (or re-resolve) the app capability venv to `groups`, then pre-fetch the
@@ -676,17 +698,28 @@ pub async fn ensure_models(app: AppHandle, on_event: Channel<ProvisionEvent>) ->
             return Err(e);
         }
     };
-    if crate::paths::is_dev_build(&app)
-        || !venv_python(&venv).is_file()
-        || !venv_has_groups(&venv, STARTUP_SYNC_GROUPS)
-    {
-        let groups: Vec<String> = STARTUP_SYNC_GROUPS.iter().map(|s| s.to_string()).collect();
+    let dir = resolve_aligner_dir(&app);
+    let groups: Vec<String> = STARTUP_SYNC_GROUPS.iter().map(|s| s.to_string()).collect();
+    let stale = std::fs::read_to_string(sync_stamp_path(&venv)).ok() != Some(sync_stamp(&dir, &groups));
+    let ffmpeg = match crate::paths::data_root(&app) {
+        Ok(root) => crate::paths::bundled_ffmpeg(&root),
+        Err(e) => {
+            let _ = on_event.send(ProvisionEvent::Error { message: e.clone() });
+            return Err(e);
+        }
+    };
+    if crate::paths::is_dev_build(&app) || !venv_python(&venv).is_file() || stale {
         if let Err(message) = sync_venv(&app, "startup", &groups, None).await {
             let _ = on_event.send(ProvisionEvent::Error { message: message.clone() });
             return Err(message);
         }
+        let _ = tokio::fs::remove_file(&ffmpeg).await;
     }
-    let dir = resolve_aligner_dir(&app);
+    if !ffmpeg.is_file() {
+        if let Err(message) = link_bundled_ffmpeg(&venv, &ffmpeg).await {
+            log::warn!("couldn't link the bundled ffmpeg: {message}");
+        }
+    }
     let caps: Vec<String> = STARTUP_PROVISION_CAPS.iter().map(|s| s.to_string()).collect();
     if let Err(message) = provision_models_streaming(&venv, &dir, &caps, &on_event).await {
         let _ = on_event.send(ProvisionEvent::Error { message: message.clone() });
@@ -730,6 +763,33 @@ mod tests {
                 None => std::env::remove_var(self.key),
             }
         }
+    }
+
+    #[test]
+    fn sync_stamp_changes_with_the_lock_and_the_groups() {
+        let dir = std::env::temp_dir().join("utai-sync-stamp-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let groups = vec!["lyrics-ja".to_string(), "onthespot".to_string()];
+        std::fs::write(dir.join("uv.lock"), "a").unwrap();
+        let first = sync_stamp(&dir, &groups);
+        assert_eq!(sync_stamp(&dir, &groups), first);
+        assert_ne!(sync_stamp(&dir, &groups[..1]), first);
+        std::fs::write(dir.join("uv.lock"), "b").unwrap();
+        assert_ne!(sync_stamp(&dir, &groups), first);
+    }
+
+    /// Needs a venv with imageio-ffmpeg:
+    /// `UTAI_TEST_VENV=<venv> cargo test --lib links_the_bundled_ffmpeg -- --ignored`
+    #[tokio::test]
+    #[ignore]
+    async fn links_the_bundled_ffmpeg() {
+        let venv = PathBuf::from(std::env::var("UTAI_TEST_VENV").expect("UTAI_TEST_VENV"));
+        let root = std::env::temp_dir().join("utai-ffmpeg-link-test");
+        let dest = crate::paths::bundled_ffmpeg(&root);
+        link_bundled_ffmpeg(&venv, &dest).await.unwrap();
+        let out = tokio::process::Command::new(&dest).arg("-version").output().await.unwrap();
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).starts_with("ffmpeg version"));
     }
 
     #[test]

@@ -7,8 +7,8 @@ ffmpeg pass, vs `librosa.load`'s audioread path, which pipes the whole file
 through ffmpeg frame by frame (the slow case this replaces). Resampling stays on
 the numpy path (`librosa.resample`); only the decode leaves librosa.
 
-ffmpeg is assumed on PATH: it's baked into the dev/sandbox Docker images and taken
-as present on the desktop host (we don't bundle it). soundfile's wheel bundles
+ffmpeg is assumed on PATH: it's baked into the dev/sandbox Docker images, and the
+desktop app puts the imageio-ffmpeg build on PATH. soundfile's wheel bundles
 libsndfile, so decoding compatible formats needs no system library.
 """
 from __future__ import annotations

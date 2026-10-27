@@ -36,7 +36,9 @@ the backend container provides runs locally. ML runs on per-job stdio sidecars;
 the music stack (OnTheSpot via `aligner/app/music/onthespot_server.py`, plus the
 aligner HTTP API in `api` role) runs as long-lived loopback processes started by
 `src-tauri/src/local_backend.rs` once startup provisioning has synced the venv,
-and the frontend's `apiBase` points at it. The **Android** app reuses
+and the frontend's `apiBase` points at it. The venv also carries ffmpeg
+(imageio-ffmpeg, which startup links to `<data>/bin/ffmpeg`, put first on PATH)
+and deno (yt-dlp's JS runtime for YouTube). The **Android** app reuses
 the same shell + frontend but has **no sidecar** (no on-device Python/ML):
 it aligns over the HTTP backend, same as the web build. Desktop-only Rust
 (sidecar, capability install, portable paths) is `#[cfg(desktop)]`-gated.
