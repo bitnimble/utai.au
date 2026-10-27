@@ -172,6 +172,7 @@ describe('cleanStreamingTitle', () => {
   test('keeps a real title word that collides with a qualifier', () => {
     expect(cleanStreamingTitle('Lana Del Rey - Video Games', 'Lana Del Rey')).toBe('Video Games');
     expect(cleanStreamingTitle('Music (Official Video)')).toBe('Music');
+    expect(cleanStreamingTitle('Madonna - Music (Official Video)', 'Madonna')).toBe('Music');
   });
 
   test('leaves a clean title untouched and never blanks out', () => {

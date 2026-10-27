@@ -131,34 +131,63 @@ export function wordLevelSimilarity(a: string, b: string): number {
   const tb = normalizeTokens(b);
   if (ta.length === 0 || tb.length === 0) return 0;
   const used = new Array<boolean>(tb.length).fill(false);
-  let matched = 0;
-  for (const wa of ta) {
-    let bestIdx = -1;
-    let bestSim = WORD_MATCH_THRESHOLD;
-    for (let j = 0; j < tb.length; j++) {
-      if (used[j]) continue;
-      const sim = wordSim(wa, tb[j]);
-      if (sim >= bestSim) {
-        bestSim = sim;
-        bestIdx = j;
-      }
-    }
-    if (bestIdx >= 0) {
-      used[bestIdx] = true;
-      matched++;
-    }
-  }
+  const matched = ta.filter((wa) => takeBestMatch(wa, tb, used)).length;
   return (2 * matched) / (ta.length + tb.length);
 }
 
-function normalizeTokens(s: string): string[] {
-  return s
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '') // strip combining diacritics
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ') // punctuation / symbols -> space
-    .split(' ')
-    .filter((t) => t.length > 0);
+/**
+ * Whether every word of `needle` turns up in `haystack`, fuzzily as in
+ * {@link wordLevelSimilarity} with each haystack word used once, or else as a
+ * substring of the haystack's words run together (so "米津玄師" is found in
+ * "米津玄師ハチ" and "astley" in "RickAstleyVEVO"). Extra haystack words don't
+ * count against it.
+ */
+export function wordsContained(needle: string, haystack: string): boolean {
+  const words = normalizeTokens(needle);
+  const pool = normalizeTokens(haystack);
+  const runTogether = pool.join('');
+  const used = new Array<boolean>(pool.length).fill(false);
+  return (
+    words.length > 0 &&
+    words.every((w) => takeBestMatch(w, pool, used) || (isSubstringMatchable(w) && runTogether.includes(w)))
+  );
+}
+
+/** Short Latin words are too likely to occur inside unrelated ones. */
+function isSubstringMatchable(word: string): boolean {
+  return word.length >= 4 || /[^\p{Script=Latin}\p{N}]/u.test(word);
+}
+
+/** Marks the best unused `pool` word matching `word` as used; false if none does. */
+function takeBestMatch(word: string, pool: readonly string[], used: boolean[]): boolean {
+  let bestIdx = -1;
+  let bestSim = WORD_MATCH_THRESHOLD;
+  for (let j = 0; j < pool.length; j++) {
+    if (used[j]) continue;
+    const sim = wordSim(word, pool[j]);
+    if (sim >= bestSim) {
+      bestSim = sim;
+      bestIdx = j;
+    }
+  }
+  if (bestIdx < 0) return false;
+  used[bestIdx] = true;
+  return true;
+}
+
+export function normalizeTokens(s: string): string[] {
+  return (
+    s
+      .normalize('NFKD')
+      .replace(/[̀-ͯ]/g, '') // strip combining diacritics
+      // Recompose what NFKD split that isn't a diacritic (kana dakuten, Hangul
+      // jamo), else "ド" splits into "ト" + a mark the next line turns into a space.
+      .normalize('NFC')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, ' ') // punctuation / symbols -> space
+      .split(' ')
+      .filter((t) => t.length > 0)
+  );
 }
 
 /** Sorensen-Dice coefficient over the two words' character bigrams (1 on an
@@ -211,9 +240,22 @@ const TITLE_DESCRIPTOR_WORDS = new Set([
   'visualiser', 'mv', 'hd', 'hq', 'uhd', 'hdr', '4k', '8k', 'explicit',
 ]);
 
+/** Descriptors that are also a whole song title on their own ("Madonna - Music"). */
+const TITLE_LIKE_DESCRIPTOR_WORDS = new Set(['music', 'video']);
+
+function descriptorWords(text: string): string[] {
+  return text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
 function isDescriptorOnly(text: string): boolean {
-  const words = text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const words = descriptorWords(text);
   return words.length > 0 && words.every((w) => TITLE_DESCRIPTOR_WORDS.has(w));
+}
+
+/** A " - …" piece that's only descriptors, and not a lone one that could be the title. */
+function isDescriptorSegment(text: string): boolean {
+  const words = descriptorWords(text);
+  return isDescriptorOnly(text) && !(words.length === 1 && TITLE_LIKE_DESCRIPTOR_WORDS.has(words[0]));
 }
 
 function escapeRegExp(s: string): string {
@@ -235,7 +277,7 @@ export function cleanStreamingTitle(rawTitle: string, artist?: string): string {
   );
   // Drop trailing dash-separated junk: "Artist - Song - Official Music Video".
   const segs = t.split(/\s+[-–]\s+/);
-  while (segs.length > 1 && isDescriptorOnly(segs[segs.length - 1])) segs.pop();
+  while (segs.length > 1 && isDescriptorSegment(segs[segs.length - 1])) segs.pop();
   t = segs.join(' - ');
   // Strip a leading "Artist - " when the uploader/channel opens the title
   // (normalising the "- Topic" / "VEVO" channel suffixes first).

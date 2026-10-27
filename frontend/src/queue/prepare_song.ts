@@ -31,6 +31,8 @@ import {
   musicStartSec,
   type SkipSegment,
 } from 'src/skip_segments/sponsorblock';
+import { identifySong, type SongIdentity } from 'src/song_identity/identify_song';
+import { itunesCatalogue, type Storefront } from 'src/song_identity/itunes';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { prefetchBackingVideo } from 'src/video/video_client';
 import { songVideoId } from 'src/video/youtube';
@@ -82,17 +84,18 @@ async function warmBackingVideo(meta: SongMeta, signal: AbortSignal): Promise<vo
 
 async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promise<PreparedSong> {
   opts.onStage({ kind: 'downloading', frac: 0 });
-  const [mix, segments] = await Promise.all([
+  const [mix, segments, identity] = await Promise.all([
     fetchTrack(track, {
       signal: opts.signal,
       onProgress: (p) => opts.onStage({ kind: 'downloading', frac: p.frac }),
     }),
     lookUpSkipSegments(track.sourceUrl, opts.signal),
+    identifyTrack(track, opts.signal),
   ]);
   const durationSec = track.durationSec ?? (await decodeDurationSec(mix));
   const meta: SongMeta = {
-    title: cleanStreamingTitle(track.title, track.artists),
-    artist: track.artists || undefined,
+    title: identity.title,
+    artist: identity.artist || undefined,
     album: track.album ?? undefined,
     albumArtUrl: track.coverUrl ?? undefined,
     sourceUrl: track.sourceUrl,
@@ -103,6 +106,22 @@ async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promi
     durationSlackSec: musicDurationSlackSec(segments, durationSec),
   };
   return prepareMix(mix, meta, music, opts);
+}
+
+/** Services whose "title" is a video title and "artist" its uploader. */
+const UPLOADER_TITLED_SERVICES = new Set(['youtube_music', 'soundcloud']);
+
+/** Best-effort: a miss keeps the source's own title, minus the usual video-title junk. */
+async function identifyTrack(track: TrackResult, signal: AbortSignal): Promise<SongIdentity> {
+  const fallback = { title: cleanStreamingTitle(track.title, track.artists), artist: track.artists };
+  if (!UPLOADER_TITLED_SERVICES.has(track.service)) return fallback;
+  try {
+    const search = (term: string, country: Storefront) => itunesCatalogue.search(term, country, signal);
+    return (await identifySong(track.title, track.artists, search)) ?? fallback;
+  } catch (err) {
+    if (!signal.aborted) console.warn('[identify] catalogue search failed:', message(err));
+    return fallback;
+  }
 }
 
 const SKIP_SEGMENTS_TIMEOUT_MS = 10_000;
