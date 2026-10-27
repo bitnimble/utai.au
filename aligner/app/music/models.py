@@ -56,6 +56,9 @@ class TrackResult(BaseModel):
     coverUrl: str | None = None
     # The service URL OnTheSpot parses to enqueue the download.
     sourceUrl: str
+    # `title` is an upload's own title and `artists` its uploader, not the
+    # song's catalogue metadata ("Artist - Song (Official Video)" by a channel).
+    uploaderTitled: bool = False
 
 
 class SearchResponse(BaseModel):

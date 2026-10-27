@@ -18,7 +18,7 @@ from app.music.facade import (
     _normalize_results,
     _opt_seconds,
 )
-from app.music.models import AddAccountRequest
+from app.music.models import AddAccountRequest, TrackResult
 
 # --- fakes ----------------------------------------------------------------
 
@@ -86,8 +86,30 @@ class FakePool:
         self._accounts.append(entry)
 
 
-def _facade(tmp_path, client: FakeClient, pool: FakePool) -> MusicFacade:
-    return MusicFacade(client, pool, tmp_path / "music_config.json")
+class FakeYoutubeMusic:
+    def __init__(self, results: list[TrackResult] | None = None) -> None:
+        self.results = list(results or [])
+        self.queries: list[str] = []
+
+    async def search(self, query: str) -> list[TrackResult]:
+        self.queries.append(query)
+        return self.results
+
+
+def _facade(
+    tmp_path, client: FakeClient, pool: FakePool, youtube_music: FakeYoutubeMusic | None = None
+) -> MusicFacade:
+    return MusicFacade(client, pool, tmp_path / "music_config.json", youtube_music or FakeYoutubeMusic())
+
+
+def _yt_track(video_id: str) -> TrackResult:
+    return TrackResult(
+        id=video_id,
+        service="youtube_music",
+        title=f"Song {video_id}",
+        artists="Artist",
+        sourceUrl=f"https://music.youtube.com/watch?v={video_id}",
+    )
 
 
 def _collect(agen: AsyncIterator[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -165,9 +187,9 @@ def test_find_queue_item_matches_by_item_id_when_url_differs():
 
 def test_search_merges_in_priority_order(tmp_path):
     client = FakeClient()
-    client.search_by_index = {0: [_track_item("t", "tidal")], 1: [_track_item("y", "youtube_music")]}
+    client.search_by_index = {0: [_track_item("t", "tidal")]}
     pool = FakePool([{"service": "tidal", "uuid": "t"}, {"service": "youtube_music", "uuid": "y"}])
-    facade = _facade(tmp_path, client, pool)
+    facade = _facade(tmp_path, client, pool, FakeYoutubeMusic([_yt_track("y")]))
     facade.set_config(priority=["tidal", "youtube_music"])
     results = asyncio.run(facade.search("hello"))
     assert [r.service for r in results] == ["tidal", "youtube_music"]
@@ -185,19 +207,31 @@ def test_search_skips_unconfigured(tmp_path):
     facade = _facade(tmp_path, client, pool)
     facade.set_config(priority=["spotify", "tidal", "youtube_music"])
     # spotify has no account (unconfigured) -> filtered out of the search set.
-    # youtube_music is no-login "configured" and auto-seeded on first search, but
-    # the fake has no results for its index, so only tidal comes back.
+    # youtube_music is no-login "configured", but its search has no results, so
+    # only tidal comes back.
     results = asyncio.run(facade.search("hello"))
     assert [r.service for r in results] == ["tidal"]
 
 
-def test_search_seeds_missing_anonymous_account(tmp_path):
-    # OnTheSpot shipped no youtube_music account: search must seed it (+ restart)
-    # so the no-login service becomes searchable with no UI step.
+def test_youtube_music_searches_youtube_music_not_onthespot(tmp_path):
     client = FakeClient()
-    client.search_by_index = {0: [_track_item("y", "youtube_music")]}
+    client.search_by_index = {0: [_track_item("ots", "youtube_music")]}
+    pool = FakePool([{"service": "youtube_music", "uuid": "public_youtube_music"}])
+    youtube_music = FakeYoutubeMusic([_yt_track("KP4tmbzrCEc")])
+    facade = _facade(tmp_path, client, pool, youtube_music)
+    facade.set_config(priority=["youtube_music"])
+    results = asyncio.run(facade.search("macklemore wings"))
+    assert [r.id for r in results] == ["KP4tmbzrCEc"]
+    assert youtube_music.queries == ["macklemore wings"]
+    assert client.active_index is None
+
+
+def test_search_seeds_missing_anonymous_account(tmp_path):
+    # OnTheSpot shipped no youtube_music account: search seeds it (+ restart)
+    # so its downloads work with no UI step.
+    client = FakeClient()
     pool = FakePool()  # empty, nothing pre-seeded
-    facade = _facade(tmp_path, client, pool)
+    facade = _facade(tmp_path, client, pool, FakeYoutubeMusic([_yt_track("y")]))
     facade.set_config(priority=["youtube_music"])
     results = asyncio.run(facade.search("hello"))
     assert client.restarted == 1
@@ -231,7 +265,7 @@ def test_config_roundtrip_and_persist(tmp_path):
     assert cfg.priority[0] == "youtube_music"
 
     # A fresh facade over the same file sees the persisted config.
-    reloaded = MusicFacade(FakeClient(), FakePool(), tmp_path / "music_config.json")
+    reloaded = _facade(tmp_path, FakeClient(), FakePool())
     cfg2 = reloaded.get_config()
     assert cfg2.priority[0] == "youtube_music"
 
@@ -276,19 +310,19 @@ def test_services_ignore_placeholder_public_accounts(tmp_path):
     assert by_id["deezer"].accountUuid == "real-arl"
 
 
-def test_youtube_music_searchable_from_placeholder_only(tmp_path):
+def test_youtube_music_downloads_from_placeholder_only(tmp_path):
     # Fresh install: OnTheSpot ships ONLY its default public YouTube Music
-    # account. It's no-login (always configured), and search must still route to
-    # it via the placeholder fallback -- no utai-side seeding needed.
+    # account. It's no-login (always configured), and downloads must still route
+    # to it via the placeholder fallback -- no utai-side seeding needed.
     client = FakeClient()
-    client.search_by_index = {0: [_track_item("y", "youtube_music")]}
-    pool = FakePool([{"service": "youtube_music", "uuid": "public_youtube_music"}])
+    pool = FakePool([{"service": "tidal", "uuid": "t"}, {"service": "youtube_music", "uuid": "public_youtube_music"}])
     facade = _facade(tmp_path, client, pool)
     assert {s.id: s.configured for s in facade.services()}["youtube_music"] is True
-    facade.set_config(priority=["youtube_music"])
-    results = asyncio.run(facade.search("hello"))
-    assert [r.service for r in results] == ["youtube_music"]
-    assert client.active_index == 0
+    url = "https://music.youtube.com/watch?v=KP4tmbzrCEc"
+    client.queue_sequence = [{"1": {"item_url": url, "item_id": "KP4tmbzrCEc", "item_status": "Downloaded"}}]
+    events = _collect(facade.fetch(url, service="youtube_music", item_id="KP4tmbzrCEc"))
+    assert events[-1]["type"] == "result"
+    assert client.active_index == 1
 
 
 def test_search_prefers_real_account_over_placeholder(tmp_path):
@@ -391,7 +425,7 @@ def test_add_account_token_service(tmp_path):
 def test_add_account_youtube_music_anonymous(tmp_path):
     client = FakeClient()
     pool = FakePool()
-    facade = MusicFacade(client, pool, tmp_path / "music_config.json")
+    facade = _facade(tmp_path, client, pool)
     result = asyncio.run(facade.add_account(AddAccountRequest(service="youtube_music")))
     assert result.status == "added"
     assert any(a.get("service") == "youtube_music" for a in pool.accounts())

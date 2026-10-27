@@ -30,6 +30,7 @@ from .models import (
 from .onthespot_client import OnTheSpotClient
 from .ots_config import OtsConfigFile
 from .spotify_oauth import SpotifyOAuthUnavailable
+from .youtube_music import YtMusicSearch
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def get_facade() -> MusicFacade:
     if _facade is None:
         client = OnTheSpotClient(settings.onthespot_base_url, settings.onthespot_timeout_sec)
         pool = OtsConfigFile(settings.onthespot_config_path)
-        _facade = MusicFacade(client, pool, settings.music_config_path)
+        _facade = MusicFacade(client, pool, settings.music_config_path, YtMusicSearch())
     return _facade
 
 

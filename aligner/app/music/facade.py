@@ -11,10 +11,11 @@ Wraps OnTheSpot with the behaviour its raw HTTP API doesn't provide:
   own config, which keeps the credentials.
 
 The facade knows nothing about FastAPI / stdio; `routes.py` adapts it to HTTP,
-and the same core could later back a stdio control-protocol op. Its two
+and the same core could later back a stdio control-protocol op. Its
 collaborators are injected as Protocols so unit tests run without a live
-OnTheSpot: `OnTheSpotApi` (actions) and `AccountPool` (OnTheSpot's account list,
-read from its config).
+OnTheSpot: `OnTheSpotApi` (actions), `AccountPool` (OnTheSpot's account list,
+read from its config), and `YoutubeMusicSearch` (OnTheSpot's own YouTube Music
+search is plain YouTube search, talk-show clips and all).
 """
 from __future__ import annotations
 
@@ -37,6 +38,8 @@ from .models import (
 )
 from .onthespot_client import OnTheSpotApi
 from .spotify_oauth import SpotifyOAuth, SpotifyOAuthUnavailable
+from .youtube_music import SERVICE as YOUTUBE_MUSIC
+from .youtube_music import YoutubeMusicSearch
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +64,8 @@ _CATALOG_BY_ID: dict[str, ServiceInfo] = {s.id: s for s in SERVICE_CATALOG}
 # ends when the item reaches one of these; anything else is an in-progress stage.
 DONE_STATUSES = frozenset({"Downloaded", "Already Exists"})
 FAIL_STATUSES = frozenset({"Failed", "Cancelled", "Unavailable"})
+
+_UPLOADER_TITLED_SERVICES = frozenset({"soundcloud"})
 
 # Only whole tracks are fetchable song sources; albums / artists / playlists in
 # the raw results are dropped from what we hand the UI.
@@ -87,9 +92,16 @@ class AccountPool(Protocol):
 
 
 class MusicFacade:
-    def __init__(self, client: OnTheSpotApi, pool: AccountPool, state_path: Path) -> None:
+    def __init__(
+        self,
+        client: OnTheSpotApi,
+        pool: AccountPool,
+        state_path: Path,
+        youtube_music: YoutubeMusicSearch,
+    ) -> None:
         self._client = client
         self._pool = pool
+        self._youtube_music = youtube_music
         self._state_path = state_path
         self._state = self._load_state()
         self._spotify_oauth = SpotifyOAuth()
@@ -209,18 +221,22 @@ class MusicFacade:
         await self._ensure_anonymous_seeded(services)
         merged: list[TrackResult] = []
         for service in services:
-            index = self._index_for_service(service)
-            if index is None:
-                continue
             try:
-                async with self._active_lock:
-                    await self._client.set_active_account(index)
-                    raw = await self._client.search(query)
+                merged.extend(await self._search_service(service, query))
             except Exception as exc:  # noqa: BLE001 - one service failing must not sink the search
                 log.warning("search on %s failed: %s", service, exc)
-                continue
-            merged.extend(_normalize_results(raw, service))
         return merged
+
+    async def _search_service(self, service: str, query: str) -> list[TrackResult]:
+        if service == YOUTUBE_MUSIC:
+            return await self._youtube_music.search(query)
+        index = self._index_for_service(service)
+        if index is None:
+            return []
+        async with self._active_lock:
+            await self._client.set_active_account(index)
+            raw = await self._client.search(query)
+        return _normalize_results(raw, service)
 
     # --- fetch ------------------------------------------------------------
 
@@ -411,15 +427,17 @@ def _normalize_one(item: dict[str, Any], service_fallback: str) -> TrackResult |
     source_url = item.get("item_url")
     if not item_id or not source_url:
         return None
+    service = str(item.get("item_service") or service_fallback)
     return TrackResult(
         id=str(item_id),
-        service=str(item.get("item_service") or service_fallback),
+        service=service,
         title=str(item.get("item_name") or "(unknown title)"),
         artists=str(item.get("item_by") or ""),
         album=_opt_str(item.get("item_album")),
         durationSec=_opt_seconds(item.get("item_duration")),
         coverUrl=_opt_str(item.get("item_thumbnail_url") or item.get("item_thumbnail")),
         sourceUrl=str(source_url),
+        uploaderTitled=service in _UPLOADER_TITLED_SERVICES,
     )
 
 

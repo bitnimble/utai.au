@@ -99,6 +99,7 @@ const LADY_UPLOAD: TrackResult = {
   title: '米津玄師  Kenshi Yonezu - LADY',
   artists: 'Kenshi Yonezu  米津玄師',
   sourceUrl: 'https://youtu.be/DdF-u3fe5pg',
+  uploaderTitled: true,
 };
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
@@ -297,6 +298,7 @@ describe('QueuePresenter', () => {
         title: 'Daft Punk - Get Lucky (Official Audio)',
         artists: 'Daft Punk',
         sourceUrl: 'https://example.com',
+        uploaderTitled: true,
       },
     });
     expect(store.items.map((i) => [i.title, i.artist])).toEqual([

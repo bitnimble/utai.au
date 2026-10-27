@@ -59,6 +59,7 @@ const TRACK: TrackResult = {
   title: 'Get Lucky',
   artists: 'Daft Punk',
   sourceUrl: 'https://youtube_music/y1',
+  uploaderTitled: false,
 };
 
 describe('searchTracks', () => {
@@ -71,13 +72,15 @@ describe('searchTracks', () => {
           { id: '1', service: 'tidal', title: 'A', artists: 'X', sourceUrl: 'u1' },
           { id: '2', title: 'no sourceUrl' }, // dropped
           'garbage', // dropped
+          { id: '3', service: 'youtube_music', title: 'B (MV)', artists: 'Ch', sourceUrl: 'u3', uploaderTitled: true },
         ],
       });
     };
     const results = await searchTracks('daft punk');
-    expect(results.length).toBe(1);
-    expect(results[0].id).toBe('1');
-    expect(results[0].service).toBe('tidal');
+    expect(results.map((r) => [r.id, r.service, r.uploaderTitled])).toEqual([
+      ['1', 'tidal', false],
+      ['3', 'youtube_music', true],
+    ]);
   });
 
   test('tolerates a non-array results body', async () => {

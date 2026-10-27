@@ -39,6 +39,8 @@ export type TrackResult = {
   durationSec?: number | null;
   coverUrl?: string | null;
   sourceUrl: string;
+  /** `title` is an upload's own title and `artists` its uploader, not the song's catalogue metadata. */
+  uploaderTitled: boolean;
 };
 
 export type AddAccountRequest = {
@@ -311,6 +313,7 @@ function parseTrack(raw: unknown): TrackResult | undefined {
     durationSec: typeof r.durationSec === 'number' ? r.durationSec : null,
     coverUrl: typeof r.coverUrl === 'string' ? r.coverUrl : null,
     sourceUrl: r.sourceUrl,
+    uploaderTitled: r.uploaderTitled === true,
   };
 }
 

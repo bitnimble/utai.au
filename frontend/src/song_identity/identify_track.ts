@@ -5,15 +5,12 @@ import { itunesCatalogue, type Storefront } from './itunes';
 
 export type IdentifyTrack = (track: TrackResult, signal?: AbortSignal) => Promise<SongIdentity>;
 
-/** Services whose "title" is a video title and "artist" its uploader. */
-const UPLOADER_TITLED_SERVICES = new Set(['youtube_music', 'soundcloud']);
-
 const IDENTIFY_TIMEOUT_MS = 10_000;
 
 /** Never rejects: a miss keeps the source's own title, minus the usual video-title junk. */
 export const identifyTrack: IdentifyTrack = async (track, signal) => {
   const fallback = { title: cleanStreamingTitle(track.title, track.artists), artist: track.artists, isCover: false };
-  if (!UPLOADER_TITLED_SERVICES.has(track.service)) return fallback;
+  if (!track.uploaderTitled) return fallback;
   const timeout = AbortSignal.timeout(IDENTIFY_TIMEOUT_MS);
   const bounded = signal == null ? timeout : AbortSignal.any([signal, timeout]);
   try {
