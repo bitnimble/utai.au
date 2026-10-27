@@ -55,6 +55,7 @@ describe('identifySong', () => {
     expect(await identify('米津玄師  Kenshi Yonezu - LADY', 'Kenshi Yonezu  米津玄師')).toEqual({
       title: 'LADY',
       artist: '米津玄師',
+      isCover: false,
     });
   });
 
@@ -62,6 +63,7 @@ describe('identifySong', () => {
     expect(await identify('米津玄師 レデイ 歌詞 | Kenshi Yonezu Lady Lyrics (Rom/Kan/Eng)', 'Jay JP')).toEqual({
       title: 'LADY',
       artist: '米津玄師',
+      isCover: false,
     });
   });
 
@@ -69,24 +71,45 @@ describe('identifySong', () => {
     expect(await identify('LADY cover ∥米津玄師 (Kenshi Yonezu) 【CielA】', 'CielA')).toEqual({
       title: 'LADY',
       artist: '米津玄師',
+      isCover: true,
     });
   });
 
-  test('keeps "Cover" when it is part of the song title', async () => {
+  test('a cover marker glued into Japanese text', async () => {
+    expect(
+      await identify('【LADY/米津玄師】完全一致目指して全力ものまねしてみた。', '松浦航大 Kodai Matsuura'),
+    ).toEqual({ title: 'LADY', artist: '米津玄師', isCover: true });
+  });
+
+  test('keeps "Cover" when it is part of the song title, and is not then a cover', async () => {
     expect(await identify('Bruce Springsteen - Cover Me (Official Audio)', 'Bruce Springsteen')).toEqual({
       title: 'Cover Me',
       artist: 'Bruce Springsteen',
+      isCover: false,
+    });
+  });
+
+  test('a cover of a song with "Cover" in its title', async () => {
+    expect(await identify('Bruce Springsteen - Cover Me (acoustic cover)', 'Some Busker')).toEqual({
+      title: 'Cover Me',
+      artist: 'Bruce Springsteen',
+      isCover: true,
     });
   });
 
   test('a label channel and MV tag: artist and quoted title from the title', async () => {
-    expect(await identify("IVE 아이브 'LOVE DIVE' MV", 'STARSHIP')).toEqual({ title: 'LOVE DIVE', artist: 'IVE' });
+    expect(await identify("IVE 아이브 'LOVE DIVE' MV", 'STARSHIP')).toEqual({
+      title: 'LOVE DIVE',
+      artist: 'IVE',
+      isCover: false,
+    });
   });
 
   test('a title made of noise words still resolves', async () => {
     expect(await identify('Madonna - Music (Official Video)', 'Madonna')).toEqual({
       title: 'Music',
       artist: 'Madonna',
+      isCover: false,
     });
   });
 
@@ -94,6 +117,7 @@ describe('identifySong', () => {
     expect(await identify('Never Gonna Give You Up (Official Music Video)', 'RickAstleyVEVO')).toEqual({
       title: 'Never Gonna Give You Up',
       artist: 'Rick Astley',
+      isCover: false,
     });
   });
 
@@ -101,6 +125,7 @@ describe('identifySong', () => {
     expect(await identify('Calvin Harris - One Kiss (Official Video)', 'CalvinHarrisVEVO')).toEqual({
       title: 'One Kiss',
       artist: 'Calvin Harris & Dua Lipa',
+      isCover: false,
     });
   });
 
@@ -108,11 +133,16 @@ describe('identifySong', () => {
     expect(await identify('Radiohead - Karma Police', 'Radiohead')).toEqual({
       title: 'Karma Police',
       artist: 'Radiohead',
+      isCover: false,
     });
   });
 
   test('queries kana with its voicing marks intact', async () => {
-    expect(await identify('ハチ - ドーナツホール', 'ハチ')).toEqual({ title: 'ドーナツホール', artist: 'ハチ' });
+    expect(await identify('ハチ - ドーナツホール', 'ハチ')).toEqual({
+      title: 'ドーナツホール',
+      artist: 'ハチ',
+      isCover: false,
+    });
   });
 
   test('undefined when no catalogue song is accounted for by the raw text', async () => {

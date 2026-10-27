@@ -103,17 +103,19 @@ async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promi
   const music = {
     durationSec: musicDurationSec(segments, durationSec),
     startSec: musicStartSec(segments, durationSec),
-    durationSlackSec: musicDurationSlackSec(segments, durationSec),
+    durationSlackSec: musicDurationSlackSec(segments, durationSec) + (identity.isCover ? COVER_DURATION_SLACK_SEC : 0),
   };
   return prepareMix(mix, meta, music, opts);
 }
+
+const COVER_DURATION_SLACK_SEC = 30;
 
 /** Services whose "title" is a video title and "artist" its uploader. */
 const UPLOADER_TITLED_SERVICES = new Set(['youtube_music', 'soundcloud']);
 
 /** Best-effort: a miss keeps the source's own title, minus the usual video-title junk. */
 async function identifyTrack(track: TrackResult, signal: AbortSignal): Promise<SongIdentity> {
-  const fallback = { title: cleanStreamingTitle(track.title, track.artists), artist: track.artists };
+  const fallback = { title: cleanStreamingTitle(track.title, track.artists), artist: track.artists, isCover: false };
   if (!UPLOADER_TITLED_SERVICES.has(track.service)) return fallback;
   try {
     const search = (term: string, country: Storefront) => itunesCatalogue.search(term, country, signal);

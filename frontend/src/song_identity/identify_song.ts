@@ -14,26 +14,31 @@
 import { cleanStreamingTitle, normalizeTokens, wordsContained } from 'src/lyrics/auto_lyrics';
 import type { CatalogueTrack, Storefront } from './itunes';
 
-export type SongIdentity = { title: string; artist: string };
+/** `isCover`: the upload is someone else performing the catalogue song. */
+export type SongIdentity = { title: string; artist: string; isCover: boolean };
 
 export type SearchCatalogue = (term: string, country: Storefront) => Promise<CatalogueTrack[]>;
 
 /** Each query is a catalogue request, and the catalogue is rate-limited. */
 const MAX_QUERIES = 6;
 
+const COVER_WORDS = ['cover', 'covered', 'covers'];
+/** Matched inside words too, as Japanese titles glue them on ("全力ものまねしてみた"). */
+const COVER_SUBSTRINGS = ['カバー', '歌ってみた', '弾いてみた', 'ものまね'];
+
 const NOISE_WORDS = new Set(
   [
     'official', 'video', 'audio', 'music', 'mv', 'm', 'v', 'pv', 'lyric', 'lyrics', 'visualizer',
     'visualiser', 'hd', 'hq', 'uhd', 'hdr', '4k', '8k', 'explicit', 'rom', 'kan', 'eng', 'romanized',
     'romanised', 'romaji', 'sub', 'subs', 'subbed', 'subtitles', 'color', 'coded', 'vevo', 'topic',
-    'cover', 'covered', 'by', 'feat', 'ft', 'ver', 'version', 'full', 'live', 'performance', 'teaser',
-    'remaster', 'remastered', 'opening', 'ending', 'op', 'ed', 'ost', 'tv', 'size', 'channel',
-    '歌詞', '가사', 'カバー', '歌ってみた', '弾いてみた', 'ものまね', '中字', '字幕',
+    'by', 'feat', 'ft', 'ver', 'version', 'full', 'live', 'performance', 'teaser', 'remaster',
+    'remastered', 'opening', 'ending', 'op', 'ed', 'ost', 'tv', 'size', 'channel', '歌詞', '가사',
+    '中字', '字幕', ...COVER_WORDS, ...COVER_SUBSTRINGS,
   ].flatMap(normalizeTokens),
 );
 
 /** Noise glued onto a neighbouring word, as Japanese titles do ("LADY歌詞"). */
-const NOISE_SUBSTRINGS = ['歌詞', '가사', 'カバー', '歌ってみた', '弾いてみた', 'ものまね'];
+const NOISE_SUBSTRINGS = ['歌詞', '가사', ...COVER_SUBSTRINGS];
 
 /** Where a video title separates its pieces: " - ", "|", "/", brackets, and
  *  quotes ("IVE 'LOVE DIVE' MV"), but not an apostrophe inside a word. */
@@ -53,9 +58,20 @@ export async function identifySong(
   const country = storefrontFor(raw);
   for (const term of candidateQueries(rawTitle, uploader)) {
     const match = bestMatch(await search(term, country), raw);
-    if (match != null) return match;
+    if (match != null) return { ...match, isCover: hasUnexplainedCoverMarker(raw, `${match.title} ${match.artist}`) };
   }
   return undefined;
+}
+
+/** More cover markers in the raw text than the song's own name carries, so a
+ *  song called "Cover Me" isn't a cover until the upload says so again. */
+function hasUnexplainedCoverMarker(raw: string, song: string): boolean {
+  const coverWords = (text: string): number => normalizeTokens(text).filter((w) => COVER_WORDS.includes(w)).length;
+  const occurrences = (text: string, marker: string): number => text.split(marker).length - 1;
+  return (
+    coverWords(raw) > coverWords(song) ||
+    COVER_SUBSTRINGS.some((marker) => occurrences(raw, marker) > occurrences(song, marker))
+  );
 }
 
 function storefrontFor(text: string): Storefront {
@@ -98,8 +114,11 @@ function queryWords(text: string): string[] {
  * catalogue's own ranking. A title may drop its bracketed / " - " suffix
  * ("(Remastered)") and an artist credit its featured artists to be found.
  */
-function bestMatch(results: readonly CatalogueTrack[], raw: string): SongIdentity | undefined {
-  let best: { identity: SongIdentity; words: number } | undefined;
+function bestMatch(
+  results: readonly CatalogueTrack[],
+  raw: string,
+): Omit<SongIdentity, 'isCover'> | undefined {
+  let best: { identity: Omit<SongIdentity, 'isCover'>; words: number } | undefined;
   for (const { trackName, artistName } of results) {
     const title = [trackName, baseTitle(trackName)].find((t) => wordsContained(t, raw));
     if (title == null) continue;

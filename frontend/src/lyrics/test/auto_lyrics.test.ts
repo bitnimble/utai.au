@@ -55,6 +55,15 @@ describe('pickConfidentMatch', () => {
     expect(pickConfidentMatch([match({ duration: 265 })], 260, QUERY)).toBeUndefined();
   });
 
+  test('a wide durationSlackSec (a cover) still prefers the closest length', () => {
+    const m = pickConfidentMatch(
+      [match({ id: 1, duration: 240 }), match({ id: 2, duration: 214 }), match({ id: 3, duration: 190 })],
+      208,
+      { ...QUERY, durationSlackSec: 30 },
+    );
+    expect(m?.id).toBe(2);
+  });
+
   test('durationSlackSec widens the tolerance', () => {
     expect(pickConfidentMatch([match({ duration: 208 })], 205.8, QUERY)).toBeUndefined();
     expect(pickConfidentMatch([match({ duration: 208 })], 205.8, { ...QUERY, durationSlackSec: 2 })).toBeDefined();
