@@ -60,6 +60,29 @@ export function followingLineIdx(lines: readonly LyricLine[], idx: number): numb
   return gapSec <= LINE_HOLD_SEC + LINE_LEAD_IN_SEC ? next : undefined;
 }
 
+/** Whether the lyrics blank before `lines[idx]`: it opens the song or follows
+ *  a gap (see `followingLineIdx`). */
+export function followsGap(lines: readonly LyricLine[], idx: number): boolean {
+  for (let i = idx - 1; i >= 0; i--) {
+    if (!isBlankLyricLine(lines[i])) return followingLineIdx(lines, i) !== idx;
+  }
+  return true;
+}
+
+/** When each dot of the count-in to a line sung at `startSec` goes out: on the
+ *  bar's beats before it, the last as the line starts. A beat within half a
+ *  beat of `startSec` is the line's own. */
+export function countInTimes(
+  beats: readonly number[],
+  startSec: number,
+  beatSec: number,
+  beatsPerBar: number,
+): number[] {
+  const fromSec = startSec - (beatsPerBar - 0.5) * beatSec;
+  const toSec = startSec - beatSec / 2;
+  return [...beats.filter((b) => b >= fromSec && b < toSec), startSec];
+}
+
 /** First non-blank line after `idx` (or from the start when `idx` is undefined). */
 export function nextVocalLineIdx(lines: readonly LyricLine[], idx: number | undefined): number | undefined {
   for (let i = idx == null ? 0 : idx + 1; i < lines.length; i++) {

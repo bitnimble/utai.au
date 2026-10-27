@@ -86,6 +86,7 @@ export const LyricLineChip = observer(
     isActive,
     activeWordIdx,
     activeWordEnded,
+    firstWordDecoration,
   }: {
     lineIdx: number;
     startBeat: number;
@@ -101,6 +102,8 @@ export const LyricLineChip = observer(
     activeWordIdx: number | undefined;
     /** The active word's end has passed, so it reads as sung. */
     activeWordEnded?: boolean;
+    /** Rendered inside the first word's chip, for positioning against it. */
+    firstWordDecoration?: React.ReactNode;
   }) => {
     const wordAligned = wordPositions !== undefined;
     // Surfaces of this line's words, joined for context-aware furigana.
@@ -145,6 +148,7 @@ export const LyricLineChip = observer(
                   state={wordState(w.sourceIdx, activeWordIdx, activeWordEnded ?? false)}
                   lineWordTexts={lineWordTexts}
                   wordPosIndex={i}
+                  decoration={i === 0 ? firstWordDecoration : undefined}
                 />
               );
             })
@@ -166,6 +170,7 @@ const LyricWordChip = observer(
     state,
     lineWordTexts,
     wordPosIndex,
+    decoration,
   }: {
     lineIdx: number;
     wordIdx: number;
@@ -185,6 +190,7 @@ const LyricWordChip = observer(
     lineWordTexts: readonly string[];
     /** This word's position within {@link lineWordTexts}. */
     wordPosIndex: number;
+    decoration: React.ReactNode;
   }) => {
     const wordStyle: Record<string, string | number> = {
       '--lyric-word-beat-offset': word.beatOffset,
@@ -206,6 +212,7 @@ const LyricWordChip = observer(
         data-testid={`lyrics-word-${lineIdx}-${wordIdx}`}
         data-word-state={state}
       >
+        {decoration}
         {pitchPath != null && sustain && (
           <svg
             className={styles.lyricPitchLine}

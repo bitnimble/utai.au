@@ -2,6 +2,7 @@ import classNames from 'classnames';
 import { observer, useLocalObservable } from 'mobx-react-lite';
 import React from 'react';
 import { flushSync } from 'react-dom';
+import { BeatStoreContext } from 'src/editing/beats/beat_contexts';
 import { LyricLineChip, RubyText } from 'src/editing/lyrics/lyric_chips';
 import { PositionedLine, positionLyricLines } from 'src/editing/lyrics/lyric_layout';
 import {
@@ -19,7 +20,7 @@ import { activeLineIndexAt, activeWordIndexAt, lineSpanSec, LyricLine, wordState
 import { LyricsTrack, lyricsStore } from 'src/lyrics/store';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { StatusPill } from 'src/ui/status_pill/status_pill';
-import { followingLineIdx, lineSegments, shownLineIdx, vocalOrdinal } from './karaoke_lyrics';
+import { countInTimes, followingLineIdx, followsGap, lineSegments, shownLineIdx, vocalOrdinal } from './karaoke_lyrics';
 import styles from './karaoke_lyrics_overlay.module.css';
 
 const PITCH_BAND_EM = 2.5;
@@ -31,6 +32,7 @@ const FIT_STEPS = 8;
 /** The first lyrics track's current line (plus the next, top-left / bottom-right
  *  by alternating line, in two-line mode), karaoke style, over the video area. */
 export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
+  const beats = React.useContext(BeatStoreContext);
   const playhead = useLocalObservable(() => ({
     get track(): LyricsTrack | undefined {
       const id = lyricsStore.trackIds[0];
@@ -72,6 +74,18 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
       const end = t.lines[lineIdx].words?.[wordIdx]?.endSec;
       return end != null && this.audioTimeNow - t.offsetSec >= end;
     },
+    get countInTimes(): readonly number[] {
+      const t = this.track;
+      const shown = this.shownIdx;
+      const analysis = beats?.analysis;
+      if (!t || shown == null || !analysis?.beats.length || !followsGap(t.lines, shown)) return [];
+      const startSec = lineSpanSec(t.lines, shown).startSec + t.offsetSec;
+      return countInTimes(analysis.beats, startSec, 60 / analysis.bpm, analysis.timeSignature.numerator);
+    },
+    get countInLeft(): number {
+      const now = this.audioTimeNow;
+      return this.countInTimes.filter((sec) => sec > now).length;
+    },
   }));
   const ref = React.useRef<HTMLDivElement>(null);
   const [widthPx, setWidthPx] = React.useState(0);
@@ -92,6 +106,10 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     const isActive = playhead.activeLineIdx === idx;
     const activeWordIdx = isActive ? playhead.activeWordIdx : undefined;
     const activeWordEnded = isActive && playhead.activeWordEnded;
+    const countIn: CountIn | undefined =
+      idx === shownIdx && playhead.countInLeft > 0
+        ? { total: playhead.countInTimes.length, left: playhead.countInLeft }
+        : undefined;
     return isPitched(line, lineWidthPx) ? (
       <PitchedKaraokeLine
         key={idx}
@@ -102,6 +120,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
         oneRow={oneRowFontSizePx != null}
         activeWordIdx={activeWordIdx}
         activeWordEnded={activeWordEnded}
+        countIn={countIn}
       />
     ) : (
       <KaraokeLine
@@ -110,6 +129,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
         oneRowFontSizePx={oneRowFontSizePx}
         activeWordIdx={activeWordIdx}
         activeWordEnded={activeWordEnded}
+        countIn={countIn}
       />
     );
   };
@@ -147,6 +167,20 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
 });
 
 type LineView = (idx: number | undefined, lineWidthPx: number, oneRowFontSizePx?: number) => React.ReactNode;
+
+type CountIn = { total: number; left: number };
+
+/** The count-in's dots, spent from the left so the rest keep their place. */
+function CountInDots({ countIn, aboveRuby }: { countIn: CountIn; aboveRuby?: boolean }): React.ReactNode {
+  const spent = countIn.total - countIn.left;
+  return (
+    <span className={classNames(styles.countIn, aboveRuby && styles.countInAboveRuby)} data-testid="karaoke-count-in" aria-hidden>
+      {Array.from({ length: countIn.total }, (_, i) => (
+        <span key={i} className={styles.countInDot} data-spent={i < spent || undefined} />
+      ))}
+    </span>
+  );
+}
 
 type Slot = 'top' | 'bottom';
 
@@ -266,11 +300,13 @@ const KaraokeLine = observer(function KaraokeLine({
   oneRowFontSizePx,
   activeWordIdx,
   activeWordEnded,
+  countIn,
 }: {
   line: LyricLine;
   oneRowFontSizePx: number | undefined;
   activeWordIdx: number | undefined;
   activeWordEnded: boolean;
+  countIn: CountIn | undefined;
 }) {
   return (
     <p
@@ -278,7 +314,7 @@ const KaraokeLine = observer(function KaraokeLine({
       style={oneRowFontSizePx != null ? { fontSize: oneRowFontSizePx } : undefined}
       data-testid="karaoke-line"
     >
-      <LineGlyphs line={line} activeWordIdx={activeWordIdx} activeWordEnded={activeWordEnded} />
+      <LineGlyphs line={line} activeWordIdx={activeWordIdx} activeWordEnded={activeWordEnded} countIn={countIn} />
     </p>
   );
 });
@@ -288,20 +324,32 @@ const LineGlyphs = observer(function LineGlyphs({
   line,
   activeWordIdx,
   activeWordEnded,
+  countIn,
 }: {
   line: LyricLine;
   activeWordIdx: number | undefined;
   activeWordEnded: boolean;
+  countIn?: CountIn;
 }) {
   const segments = React.useMemo(() => lineSegments(line), [line]);
   const texts = segments.map((s) => s.text);
   const ruby = furiganaAnnotator.segmentsForWords(texts);
   const romaji = appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords(texts) : [];
-  return segments.map((s, i) => (
-    <span key={i} data-word-state={wordState(s.wordIdx, activeWordIdx, activeWordEnded)}>
-      <RubyText segments={ruby[i]} romaji={romaji[i]} />
-    </span>
-  ));
+  return segments.map((s, i) => {
+    const countInHere = i === 0 ? countIn : undefined;
+    return (
+      <span
+        key={i}
+        className={classNames(countInHere && styles.countInAnchor)}
+        data-word-state={wordState(s.wordIdx, activeWordIdx, activeWordEnded)}
+      >
+        {countInHere && (
+          <CountInDots countIn={countInHere} aboveRuby={ruby[i].some((seg) => seg.reading != null)} />
+        )}
+        <RubyText segments={ruby[i]} romaji={romaji[i]} />
+      </span>
+    );
+  });
 });
 
 /** The line through the track view's pitched renderer, its sung time scaled to
@@ -314,6 +362,7 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
   oneRow,
   activeWordIdx,
   activeWordEnded,
+  countIn,
 }: {
   lines: readonly LyricLine[];
   lineIdx: number;
@@ -322,6 +371,7 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
   oneRow: boolean;
   activeWordIdx: number | undefined;
   activeWordEnded: boolean;
+  countIn: CountIn | undefined;
 }) {
   const positioned = React.useMemo(() => positionKaraokeLine(lines, lineIdx), [lines, lineIdx]);
   const fontReady = lyricsMeasurer.fontReady;
@@ -354,6 +404,7 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
         oneRowFontSizePx={oneRow ? baseFontSizePx : undefined}
         activeWordIdx={activeWordIdx}
         activeWordEnded={activeWordEnded}
+        countIn={countIn}
       />
     );
   }
@@ -388,6 +439,7 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
         isActive={activeWordIdx != null}
         activeWordIdx={activeWordIdx}
         activeWordEnded={activeWordEnded}
+        firstWordDecoration={countIn && <CountInDots countIn={countIn} />}
       />
     </div>
   );

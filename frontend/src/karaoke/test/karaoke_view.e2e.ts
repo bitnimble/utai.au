@@ -228,6 +228,71 @@ test('karaoke "Show 2 lines" sizes both lines alike, small enough for the longer
     .toEqual({ oneRow: true, unclipped: true, insideSlot: true, fillsSlot: true, sameSize: true, shrunk: true });
 });
 
+test('karaoke counts a line in after a gap: a dot per beat of the bar above its first word, the last out on the line', async ({ page }) => {
+  await page.route('**/music/beats', async (route) => {
+    const beats = {
+      beats: Array.from({ length: 40 }, (_, i) => i * 0.5),
+      downbeats: Array.from({ length: 10 }, (_, i) => i * 2),
+      bpm: 120,
+      timeSignature: [4, 4],
+    };
+    const body = [JSON.stringify({ type: 'running' }), JSON.stringify({ type: 'result', data: { beats } })].join('\n') + '\n';
+    await route.fulfill({ status: 200, contentType: 'application/x-ndjson', body });
+  });
+  await page.goto('/');
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('beats-readout')).toHaveText('120 BPM · 4/4', { timeout: 15_000 });
+  await page.evaluate(() => {
+    const word = (startSec: number, endSec: number, text: string) => ({ startSec, endSec, text });
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add(
+      [
+        { startSec: 4, text: 'count me in', words: [word(4, 4.2, 'count'), word(4.2, 4.4, 'me'), word(4.4, 4.5, 'in')] },
+        { startSec: 5.5, text: 'no gap', words: [word(5.5, 5.8, 'no'), word(5.8, 6, 'gap')] },
+      ],
+      { source: 'plaintext', sourceLabel: 'probe' },
+    );
+  });
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.keyboard.press('Escape');
+
+  const seek = (sec: number) =>
+    page.evaluate((s) => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(s), sec);
+  const countIn = page.getByTestId('karaoke-count-in');
+  const dotsLeft = () => countIn.locator('> span:not([data-spent])').count();
+
+  await seek(2.2);
+  await expect(page.getByTestId('karaoke-line')).toHaveText('count me in');
+  await expect(countIn.locator('> span')).toHaveCount(4);
+  await expect.poll(dotsLeft).toBe(4);
+  const firstWord = page.getByTestId('karaoke-line').locator('[data-word-state]').first();
+  const [dotsBox, wordBox] = [await countIn.boundingBox(), await firstWord.boundingBox()];
+  expect(dotsBox!.y + dotsBox!.height).toBeLessThanOrEqual(wordBox!.y + 1);
+  expect(Math.abs(dotsBox!.x - wordBox!.x)).toBeLessThan(2);
+
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('karaoke-show-pitch').click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('lyrics-word-0-0').getByTestId('karaoke-count-in')).toHaveCount(1);
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('karaoke-show-pitch').click();
+  await page.keyboard.press('Escape');
+  await seek(3.2);
+  await expect.poll(dotsLeft).toBe(2);
+  await seek(3.8);
+  await expect.poll(dotsLeft).toBe(1);
+  await seek(4.05);
+  await expect(countIn).toHaveCount(0);
+
+  await seek(5.2);
+  await expect(page.getByTestId('karaoke-line')).toHaveText('no gap');
+  await expect(countIn).toHaveCount(0);
+});
+
 test('karaoke view flags a song with no lyrics', async ({ page }) => {
   await page.goto('/');
   await page.getByTestId('view-menu').click();

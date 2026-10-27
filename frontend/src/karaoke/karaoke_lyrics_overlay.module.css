@@ -43,6 +43,35 @@
     padding-top: 0.3em;
 }
 
+.countInAnchor {
+    position: relative;
+}
+
+.countIn {
+    position: absolute;
+    left: var(--lyric-word-pad-left, 0);
+    bottom: 100%;
+    display: flex;
+    gap: 0.3em;
+    padding-bottom: 0.15em;
+}
+
+.countInAboveRuby {
+    bottom: calc(100% + 0.5em);
+}
+
+.countInDot {
+    width: 0.35em;
+    height: 0.35em;
+    border-radius: 50%;
+    background: var(--color-karaoke-text);
+    box-shadow: 0 0 0 0.08em var(--color-karaoke-outline);
+}
+
+.countInDot[data-spent] {
+    visibility: hidden;
+}
+
 .twoLines {
     align-items: stretch;
 }

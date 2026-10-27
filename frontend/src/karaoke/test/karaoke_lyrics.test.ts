@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { followingLineIdx, lineSegments, nextVocalLineIdx, shownLineIdx, vocalOrdinal } from '../karaoke_lyrics';
+import {
+  countInTimes,
+  followingLineIdx,
+  followsGap,
+  lineSegments,
+  nextVocalLineIdx,
+  shownLineIdx,
+  vocalOrdinal,
+} from '../karaoke_lyrics';
 
 const word = (text: string) => ({ startSec: 0, endSec: 0, text });
 
@@ -79,6 +87,31 @@ describe('shownLineIdx', () => {
     expect(followingLineIdx(lines, 2)).toBe(undefined);
     expect(followingLineIdx([timed(20, 22, 'a'), timed(25.5, 26, 'b')], 0)).toBe(1);
     expect(followingLineIdx([timed(20, 22, 'a'), timed(25.6, 26, 'b')], 0)).toBe(undefined);
+  });
+
+  test('followsGap: the opening line and a line after a gap, past blank lines', () => {
+    expect(followsGap(lines, 0)).toBe(true);
+    expect(followsGap(lines, 1)).toBe(false);
+    expect(followsGap(lines, 2)).toBe(true);
+    expect(followsGap([timed(20, 22, 'a'), { startSec: 22.5, text: '' }, timed(23, 25, 'b')], 2)).toBe(false);
+  });
+});
+
+describe('countInTimes', () => {
+  const beats = Array.from({ length: 20 }, (_, i) => i * 0.5);
+
+  test('4/4 into a downbeat: out on the three beats before, the last on the line', () => {
+    expect(countInTimes(beats, 4, 0.5, 4)).toEqual([2.5, 3, 3.5, 4]);
+  });
+
+  test('a line sung just off its beat still counts in from the bar before', () => {
+    expect(countInTimes(beats, 4.1, 0.5, 4)).toEqual([2.5, 3, 3.5, 4.1]);
+    expect(countInTimes(beats, 3.9, 0.5, 4)).toEqual([2.5, 3, 3.5, 3.9]);
+  });
+
+  test('3/4 counts three; no beats before the song starts', () => {
+    expect(countInTimes(beats, 4, 0.5, 3)).toEqual([3, 3.5, 4]);
+    expect(countInTimes(beats, 0.5, 0.5, 4)).toEqual([0, 0.5]);
   });
 });
 
