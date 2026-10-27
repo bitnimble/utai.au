@@ -1,5 +1,6 @@
 import type * as Ort from 'onnxruntime-web';
 import { utaiPlayer } from 'src/editing/playback/player';
+import { fetchRetrying, PUBLIC_API_RETRY } from 'src/net/fetch_retrying';
 import { frameFromHz, type LivePitchListener, type LivePitchSource } from './live_pitch_source';
 
 /**
@@ -95,7 +96,7 @@ export class OnnxLivePitchSource implements LivePitchSource {
     // onnxruntime-web resolves its WASM from the Vite-emitted asset (via
     // import.meta.url), so no wasmPaths override, keeps it offline-capable.
     const ort = await import('onnxruntime-web');
-    const res = await fetch(this.modelUrl);
+    const res = await fetchRetrying(this.modelUrl, {}, PUBLIC_API_RETRY);
     if (!res.ok) throw new Error(`pitch model fetch failed (${res.status})`);
     const bytes = await res.arrayBuffer();
     this.session = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] });

@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 // A non-finite word time (the aligner can emit one for a long-held final note)

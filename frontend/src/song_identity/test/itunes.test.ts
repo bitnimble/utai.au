@@ -16,6 +16,7 @@ function stubFetch(respond: () => Response | Promise<Response>): URL[] {
 }
 
 const LADY = { trackName: 'LADY', artistName: '米津玄師' };
+const FAST_RETRY = { attempts: 2, baseDelayMs: 1 };
 
 describe('ItunesCatalogue', () => {
   test('searches songs in the storefront, keeping well-formed rows', async () => {
@@ -44,13 +45,19 @@ describe('ItunesCatalogue', () => {
     expect(urls).toHaveLength(1);
   });
 
-  test('a network error also backs off', async () => {
+  test('a network error, once retries run out, also backs off', async () => {
     const urls = stubFetch(() => {
       throw new TypeError('Failed to fetch');
     });
-    const catalogue = new ItunesCatalogue();
+    const catalogue = new ItunesCatalogue(FAST_RETRY);
     await expect(catalogue.search('lady', 'jp')).rejects.toThrow('Failed to fetch');
     await expect(catalogue.search('lemon', 'jp')).rejects.toThrow('iTunes search rate-limited');
-    expect(urls).toHaveLength(1);
+    expect(urls).toHaveLength(2);
+  });
+
+  test('a passing 503 is retried', async () => {
+    let calls = 0;
+    stubFetch(() => (++calls === 1 ? new Response('', { status: 503 }) : Response.json({ results: [LADY] })));
+    expect(await new ItunesCatalogue(FAST_RETRY).search('lady', 'jp')).toEqual([LADY]);
   });
 });

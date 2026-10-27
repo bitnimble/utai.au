@@ -4,6 +4,8 @@
  * intro/outro skits of a music video). Public, no API key, CORS `*`.
  */
 
+import { fetchRetrying, PUBLIC_API_RETRY } from 'src/net/fetch_retrying';
+
 export const SKIP_CATEGORIES = [
   'music_offtopic',
   'intro',
@@ -76,7 +78,7 @@ function nonMusicSpans(segments: readonly SkipSegment[], durationSec: number): {
 
 export async function fetchSkipSegments(videoId: string, signal?: AbortSignal): Promise<SkipSegment[]> {
   const params = new URLSearchParams({ videoID: videoId, categories: JSON.stringify(SKIP_CATEGORIES) });
-  const res = await fetch(`${API_URL}?${params.toString()}`, { signal });
+  const res = await fetchRetrying(`${API_URL}?${params.toString()}`, { signal }, PUBLIC_API_RETRY);
   // SponsorBlock answers 404 for "no segments", not an empty list.
   if (res.status === 404) return [];
   if (!res.ok) throw new Error(`SponsorBlock lookup failed (${res.status} ${res.statusText})`);

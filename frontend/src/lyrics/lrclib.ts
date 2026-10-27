@@ -16,6 +16,7 @@
  * local dump never means fewer results than today.
  */
 
+import { fetchRetrying, PUBLIC_API_RETRY, type RetryPolicy } from 'src/net/fetch_retrying';
 import { BoundedCache } from 'src/utils/bounded_cache';
 
 export type LrclibMatch = {
@@ -76,7 +77,7 @@ export async function searchLrclib(opts: SearchOptions): Promise<LrclibMatch[]> 
   let out: LrclibMatch[] = [];
   if (LOCAL_BASE_URL) {
     try {
-      out = await searchOne(LOCAL_BASE_URL, opts);
+      out = await searchOne(LOCAL_BASE_URL, opts, NO_RETRY);
     } catch (err) {
       // A superseded search aborts; propagate that (don't waste the fallback on
       // a request the caller already cancelled). Any other failure (the mirror
@@ -87,15 +88,18 @@ export async function searchLrclib(opts: SearchOptions): Promise<LrclibMatch[]> 
   // Public instance: the sole source when no mirror is configured, and the
   // fallback when the mirror returned no match or was unreachable. Its errors
   // propagate (the caller stays silent on them).
-  if (out.length === 0) out = await searchOne(PUBLIC_BASE_URL, opts);
+  if (out.length === 0) out = await searchOne(PUBLIC_BASE_URL, opts, PUBLIC_API_RETRY);
 
   searchCache.set(key, out);
   return out;
 }
 
-/** One `/api/search` request against `baseUrl`, parsed to synced-only matches.
+// A failing mirror falls straight through to the public instance instead.
+const NO_RETRY: RetryPolicy = { attempts: 1, baseDelayMs: 0 };
+
+/** One `/api/search` against `baseUrl`, parsed to synced-only matches.
  *  Throws on transport / HTTP failure. */
-async function searchOne(baseUrl: string, opts: SearchOptions): Promise<LrclibMatch[]> {
+async function searchOne(baseUrl: string, opts: SearchOptions, retry: RetryPolicy): Promise<LrclibMatch[]> {
   const params = new URLSearchParams();
   if (opts.trackName.trim().length > 0) params.set('track_name', opts.trackName.trim());
   if (opts.artistName.trim().length > 0) params.set('artist_name', opts.artistName.trim());
@@ -109,10 +113,7 @@ async function searchOne(baseUrl: string, opts: SearchOptions): Promise<LrclibMa
   // doesn't set `Access-Control-Max-Age` so the spec-default 5 s TTL
   // means the preflight refires for almost every search (~2 s tax).
   // Keeping only safelisted headers makes this a "simple" CORS request.
-  const res = await fetch(url, {
-    method: 'GET',
-    signal: opts.signal,
-  });
+  const res = await fetchRetrying(url, { method: 'GET', signal: opts.signal }, retry);
   if (!res.ok) {
     throw new Error(`LRCLIB search failed (${res.status} ${res.statusText})`);
   }

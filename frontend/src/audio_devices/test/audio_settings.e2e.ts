@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from 'src/testing/e2e_test';
 
 // Audio settings + the shared home-transport controls. Chromium runs with fake
 // media devices (see playwright.config.ts launch args), so getUserMedia /

@@ -1,6 +1,7 @@
 /** iTunes Search API as a song catalogue. Apple documents ~20 requests/minute
  *  per IP and answers 403 once a client goes over. */
 
+import { fetchRetrying, PUBLIC_API_RETRY, type RetryPolicy } from 'src/net/fetch_retrying';
 import { BoundedCache } from 'src/utils/bounded_cache';
 
 export type CatalogueTrack = { trackName: string; artistName: string };
@@ -16,6 +17,8 @@ export class ItunesCatalogue {
   private readonly cache = new BoundedCache<string, CatalogueTrack[]>(CACHE_LIMIT);
   private rateLimitedUntil = 0;
 
+  constructor(private readonly retry: RetryPolicy = PUBLIC_API_RETRY) {}
+
   /** Throws on transport / HTTP failure, and without a request while backing off after a rate-limit. */
   readonly search = async (term: string, country: Storefront, signal?: AbortSignal): Promise<CatalogueTrack[]> => {
     const key = `${country} ${term}`;
@@ -26,7 +29,7 @@ export class ItunesCatalogue {
     const params = new URLSearchParams({ term, country, entity: 'song', limit: String(RESULT_LIMIT) });
     let res: Response;
     try {
-      res = await fetch(`${API_URL}?${params.toString()}`, { signal });
+      res = await fetchRetrying(`${API_URL}?${params.toString()}`, { signal }, this.retry);
     } catch (err) {
       // A 403 without CORS headers surfaces as a network error, not a status.
       if (!signal?.aborted) this.backOff();

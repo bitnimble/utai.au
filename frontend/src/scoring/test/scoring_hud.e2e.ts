@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from 'src/testing/e2e_test';
 
 // Scoring HUD integration on the transport bar. Runs against the real app
 // (Chromium with fake media devices); the live-pitch DSP + scoring loop are

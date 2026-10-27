@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from 'src/testing/e2e_test';
 import { makeSongBundle } from 'src/testing/song_bundle';
 
 test('dropdown: a menu opened near the bottom edge stays inside the viewport', async ({ page }) => {

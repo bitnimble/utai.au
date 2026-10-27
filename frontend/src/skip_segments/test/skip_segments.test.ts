@@ -151,8 +151,8 @@ describe('fetchSkipSegments', () => {
       () => 'resolved',
       (err: Error) => err.message,
     );
-    await net.respond('R03cqGg40GU', 500, []);
-    expect(await outcome).toBe('SponsorBlock lookup failed (500 )');
+    await net.respond('R03cqGg40GU', 400, []);
+    expect(await outcome).toBe('SponsorBlock lookup failed (400 )');
   });
 });
 

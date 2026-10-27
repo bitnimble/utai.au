@@ -1,5 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import { GUTTER_PX } from 'src/editing/score/autoscroll';
+import { test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type UtaiWindow = {

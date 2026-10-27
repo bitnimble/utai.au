@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from 'src/testing/e2e_test';
 
 /** The whole page must never scroll vertically; only the score scrolls
  *  (horizontally). Regression guard for the transport footer being shoved
