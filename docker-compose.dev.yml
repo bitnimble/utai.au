@@ -87,6 +87,9 @@ services:
       ONTHESPOT_BASE_URL: http://onthespot:5000
       ONTHESPOT_CONFIG_PATH: /config/otsconfig.json
       MUSIC_CONFIG_PATH: /config/music_config.json
+      # Origin phones open to join a session as a remote (the join QR), e.g.
+      # https://karaoke.lan:5175. Unset = the host's own page origin.
+      PUBLIC_URL: ${PUBLIC_URL:-}
     # GPU for separation + CTC (modern Compose; older Compose uses
     # deploy.resources.reservations.devices with the nvidia driver).
     gpus: all

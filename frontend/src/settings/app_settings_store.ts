@@ -41,6 +41,9 @@ export class AppSettingsStore {
    */
   alignerUrl: string = DEFAULT_ALIGNER_URL;
 
+  /** Origin phones open to join this device's session as a remote; empty = what the session server advertises. */
+  remoteBaseUrl: string = '';
+
   /**
    * Lyrics-track pitch rendering, applied to every lyrics row. `showLyricsPitch`
    * lifts each word to its sung pitch + draws the pitch line (off => a flat

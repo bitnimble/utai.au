@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { test } from 'src/testing/e2e_test';
+import { HOST_PATH, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type UtaiWindow = {
@@ -9,7 +9,7 @@ type UtaiWindow = {
 test('playback: a queued track auto-plays, and stop then play advances the playhead again', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
 
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',

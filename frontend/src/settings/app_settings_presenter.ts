@@ -27,6 +27,7 @@ export class AppSettingsPresenter {
     autorun(() => {
       const snapshot = JSON.stringify({
         alignerUrl: this.settings.alignerUrl,
+        remoteBaseUrl: this.settings.remoteBaseUrl,
         showLyricsPitch: this.settings.showLyricsPitch,
         showLyricsVibrato: this.settings.showLyricsVibrato,
         autoscrollMode: this.settings.autoscrollMode,
@@ -46,6 +47,10 @@ export class AppSettingsPresenter {
 
   setAlignerUrl(url: string): void {
     this.settings.alignerUrl = url;
+  }
+
+  setRemoteBaseUrl(url: string): void {
+    this.settings.remoteBaseUrl = url;
   }
 
   setShowLyricsPitch(on: boolean): void {
@@ -97,6 +102,9 @@ export class AppSettingsPresenter {
       const obj = parsed as Record<string, unknown>;
       if (typeof obj.alignerUrl === 'string') {
         this.settings.alignerUrl = obj.alignerUrl;
+      }
+      if (typeof obj.remoteBaseUrl === 'string') {
+        this.settings.remoteBaseUrl = obj.remoteBaseUrl;
       }
       if (typeof obj.showLyricsPitch === 'boolean') {
         this.settings.showLyricsPitch = obj.showLyricsPitch;

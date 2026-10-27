@@ -36,6 +36,24 @@ the same shell + frontend but has **no sidecar** (no on-device Python/ML):
 it aligns over the HTTP backend, same as the web build. Desktop-only Rust
 (sidecar, capability install, portable paths) is `#[cfg(desktop)]`-gated.
 
+### Sessions
+
+The website's `/` offers Create a session or Join one as a remote. `/session/<ID>`
+is the playback host (the full player); `/session/<ID>/remote` is a phone
+remote (queue, search, transport, volume). `/session/<ID>` stays the host page
+until synced multi-device playback exists. The desktop and Android apps skip
+the landing page and host their own session at launch. The host owns the queue
+and playback and does all backend work (search included); the session server
+(`aligner/app/sessions.py`, in-memory, 1h idle expiry) is a dumb relay
+between host and remotes. The desktop app serves the same protocol, plus the
+remote page itself, from an in-process Rust server
+(`src-tauri/src/session_server.rs`, `0.0.0.0:7337`, `UTAI_SESSION_PORT`), so a
+desktop HTPC needs no container. Keep the two relays behaviour-identical.
+Advertised join URLs come from the backend's `PUBLIC_URL` (desktop: its LAN
+IP), overridable per host in the join dialog. The backend's GPU lock serves
+waiting jobs round-robin across sessions, keyed by the `X-Utai-Session`
+header `backendFetch` attaches.
+
 ## Critical rules (apply to every request)
 
 - **Use `bun`, never npm/yarn. Use `bunx`, never npx.**

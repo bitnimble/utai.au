@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { test } from 'src/testing/e2e_test';
+import { HOST_PATH, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type Utai = {
@@ -8,7 +8,7 @@ type Utai = {
 };
 
 test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',
@@ -67,7 +67,7 @@ test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', as
 });
 
 test('karaoke "Show lyric pitch" renders the line through the pitched lyric chips', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',
@@ -125,7 +125,7 @@ test('karaoke "Show lyric pitch" renders the line through the pitched lyric chip
 });
 
 test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating slots', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',
@@ -180,7 +180,7 @@ test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating sl
 });
 
 test('karaoke "Show 2 lines" sizes both lines alike, small enough for the longer to fit unwrapped', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',
@@ -240,7 +240,7 @@ test('karaoke counts a line in after a gap: a dot per beat of the bar above its 
     const body = [JSON.stringify({ type: 'running' }), JSON.stringify({ type: 'result', data: { beats } })].join('\n') + '\n';
     await route.fulfill({ status: 200, contentType: 'application/x-ndjson', body });
   });
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',
@@ -296,7 +296,7 @@ test('karaoke counts a line in after a gap: a dot per beat of the bar above its 
 });
 
 test('karaoke view flags a song with no lyrics', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.getByTestId('view-menu').click();
   await page.getByTestId('view-mode-karaoke').click();
   await page.keyboard.press('Escape');
@@ -320,7 +320,7 @@ test('karaoke view flags a song with no lyrics', async ({ page }) => {
 });
 
 test('karaoke seek bar: flush above the footer, follows and moves the playhead, keyboard leaves Space for play/pause', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',
@@ -360,7 +360,7 @@ test('karaoke seek bar: flush above the footer, follows and moves the playhead, 
 });
 
 test('karaoke "Show lyric pitch" fits a long line inside the overlay', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',

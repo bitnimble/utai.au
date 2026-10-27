@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { test } from 'src/testing/e2e_test';
+import { HOST_PATH, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 // Word-timed lyrics whose word cells are far narrower than the glyphs (short
@@ -7,7 +7,7 @@ import { makeWav } from 'src/testing/wav';
 // run. Guards the canvas measurement (a bad font string measured widths too
 // narrow) + the shift resolver.
 test('word chips never overlap even when their time cells are tiny', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',
@@ -61,7 +61,7 @@ test('word chips never overlap even when their time cells are tiny', async ({ pa
 // ellipsis before the next line rather than drift, and a pitch line only shows
 // in the room after its own word's text, never across any word.
 test('zoomed out, a crowded line ellipsises before the next and pitch lines never cross text', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',
@@ -134,7 +134,7 @@ test('zoomed out, a crowded line ellipsises before the next and pitch lines neve
 });
 
 test('a held word shows its pitch line after its text, moving with it', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',

@@ -16,6 +16,8 @@ mod paths;
 #[cfg(desktop)]
 mod pitch;
 #[cfg(desktop)]
+mod session_server;
+#[cfg(desktop)]
 mod sidecar;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -98,6 +100,7 @@ pub fn run() {
             let _ = std::fs::create_dir_all(&outputs);
             let _ = app.fs_scope().allow_directory(&outputs, true);
             let _ = app.asset_protocol_scope().allow_directory(&outputs, true);
+            app.manage(session_server::start(app.handle()));
             // Model provisioning (incl. the dev cross-build's first-launch uv sync)
             // is driven by the frontend startup gate via `capability::ensure_models`,
             // so it streams progress into a blocking dialog rather than running as a
@@ -130,6 +133,7 @@ pub fn run() {
             audio::audio_subscribe,
             pitch::audio_pitch_subscribe,
             pitch::audio_pitch_unsubscribe,
+            session_server::session_server_api_base,
         ]);
 
     let app = builder

@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { test } from 'src/testing/e2e_test';
+import { HOST_PATH, test } from 'src/testing/e2e_test';
 
 /** The whole page must never scroll vertically; only the score scrolls
  *  (horizontally). Regression guard for the transport footer being shoved
@@ -12,7 +12,7 @@ async function pageVerticalOverflow(page: import('@playwright/test').Page): Prom
 }
 
 test('layout: no page vertical scroll, transport pinned in view (desktop)', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   expect(await pageVerticalOverflow(page)).toBeLessThanOrEqual(1);
 
   const play = page.getByTestId('transport-play');
@@ -24,7 +24,7 @@ test('layout: no page vertical scroll, transport pinned in view (desktop)', asyn
 
 test('layout: transport stays in view at a narrow mobile viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   expect(await pageVerticalOverflow(page)).toBeLessThanOrEqual(1);
 
   const play = page.getByTestId('transport-play');

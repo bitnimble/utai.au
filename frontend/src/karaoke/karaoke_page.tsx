@@ -88,6 +88,12 @@ import { QueueStore } from 'src/queue/queue_store';
 import { QueuePresenter } from 'src/queue/queue_presenter';
 import { QueuePresenterContext, QueueStoreContext } from 'src/queue/queue_contexts';
 import { QueueButtons, QueueLoadingScreen, QueueSidebar } from 'src/queue/queue_view';
+import { searchTracks } from 'src/net/music_source_client';
+import type { HostSession } from 'src/session/session_client';
+import { SessionHostPresenterContext, SessionHostStoreContext } from 'src/session/session_host_contexts';
+import { SessionHostPresenter } from 'src/session/session_host_presenter';
+import { SessionHostStore } from 'src/session/session_host_store';
+import { SessionHostButton, SessionJoinModal } from 'src/session/session_host_view';
 import { KaraokePresenter } from './karaoke_presenter';
 import {
   KaraokePresenterContext,
@@ -123,9 +129,11 @@ type Session = {
   videoPresenter: VideoPresenter;
   skipSegments: SkipSegmentsStore;
   skipSegmentsPresenter: SkipSegmentsPresenter;
+  sessionHost: SessionHostStore | undefined;
+  sessionHostPresenter: SessionHostPresenter | undefined;
 };
 
-function buildSession(): Session {
+function buildSession(hostSession: HostSession | undefined): Session {
   const song = new SongStore();
   const viewport = new ViewportStore();
   const viewConfig = new ViewConfig();
@@ -167,6 +175,24 @@ function buildSession(): Session {
   const videoPresenter = new VideoPresenter(videoStore);
   const skipSegments = new SkipSegmentsStore(song, playbackEngine);
   const skipSegmentsPresenter = new SkipSegmentsPresenter(skipSegments, videoStore, playbackEngine);
+  const sessionHost = hostSession && new SessionHostStore(hostSession.info, appSettingsStore, window.location.origin);
+  const sessionHostPresenter =
+    hostSession &&
+    sessionHost &&
+    new SessionHostPresenter(
+      sessionHost,
+      {
+        queue,
+        queuePresenter,
+        song,
+        karaoke: presenter,
+        transport: playbackEngine,
+        audioDevice,
+        audioDevicePresenter,
+        searchTracks,
+      },
+      hostSession.apiBase,
+    );
   return {
     song,
     viewport,
@@ -188,11 +214,13 @@ function buildSession(): Session {
     videoPresenter,
     skipSegments,
     skipSegmentsPresenter,
+    sessionHost,
+    sessionHostPresenter,
   };
 }
 
-export const KaraokePage = observer(function KaraokePage() {
-  const [session] = React.useState(buildSession);
+export const KaraokePage = observer(function KaraokePage({ hostSession }: { hostSession?: HostSession }) {
+  const [session] = React.useState(() => buildSession(hostSession));
   const {
     song,
     viewport,
@@ -214,6 +242,8 @@ export const KaraokePage = observer(function KaraokePage() {
     videoPresenter,
     skipSegments,
     skipSegmentsPresenter,
+    sessionHost,
+    sessionHostPresenter,
   } = session;
 
   // Open the native engine's telemetry stream on desktop (no-op on web).
@@ -238,6 +268,11 @@ export const KaraokePage = observer(function KaraokePage() {
     queuePresenter.init();
     return () => queuePresenter.dispose();
   }, [queuePresenter]);
+
+  React.useEffect(() => {
+    sessionHostPresenter?.start();
+    return () => sessionHostPresenter?.dispose();
+  }, [sessionHostPresenter]);
 
   // Global spacebar transport toggle. Ignored while typing into a form field
   // or contenteditable so the space still types a character there.
@@ -278,10 +313,14 @@ export const KaraokePage = observer(function KaraokePage() {
       videoPresenter,
       skipSegments,
       skipSegmentsPresenter,
+      sessionHost,
+      sessionHostPresenter,
       lyricsStore,
       playbackEngine,
     };
   }, [
+    sessionHost,
+    sessionHostPresenter,
     song,
     viewport,
     structural,
@@ -306,6 +345,8 @@ export const KaraokePage = observer(function KaraokePage() {
 
   const karaokeView = appSettingsStore.viewMode === 'karaoke';
   return (
+    <SessionHostStoreContext.Provider value={sessionHost ?? null}>
+    <SessionHostPresenterContext.Provider value={sessionHostPresenter ?? null}>
     <KaraokePresenterContext.Provider value={presenter}>
       <MusicSourceStoreContext.Provider value={musicSource}>
       <MusicSourcePresenterContext.Provider value={musicPresenter}>
@@ -364,6 +405,8 @@ export const KaraokePage = observer(function KaraokePage() {
       </MusicSourcePresenterContext.Provider>
       </MusicSourceStoreContext.Provider>
     </KaraokePresenterContext.Provider>
+    </SessionHostPresenterContext.Provider>
+    </SessionHostStoreContext.Provider>
   );
 });
 
@@ -527,6 +570,7 @@ const Toolbar = observer(function Toolbar() {
       >
         <Settings size={14} aria-hidden="true" />
       </button>
+      <SessionHostButton className={styles.toolButton} />
       <QueueButtons className={styles.toolButton} />
     </header>
   );
@@ -901,6 +945,7 @@ const Modals = observer(function Modals() {
       />
       <SettingsModal />
       <SongDetailsModal />
+      <SessionJoinModal />
     </>
   );
 });

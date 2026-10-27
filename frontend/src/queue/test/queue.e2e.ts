@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test';
 import { strToU8, zipSync } from 'fflate';
-import { test } from 'src/testing/e2e_test';
+import { HOST_PATH, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type UtaiWindow = {
@@ -48,7 +48,7 @@ const queueTitles = (page: Page) => page.getByTestId('queue-item-title');
 test('queue: first song plays at once, the rest queue up, and play next / remove / skip work', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await queueBundles(page, bundle('Alpha'), bundle('Bravo'), bundle('Charlie'));
   await expectPlaying(page, 'Alpha');
 
@@ -81,7 +81,7 @@ test('queue: first song plays at once, the rest queue up, and play next / remove
 });
 
 test('queue: the sidebar docks beside the stage, and covers it when too narrow to share', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   const stage = page.getByTestId('score-area');
   const openWidth = (await stage.boundingBox())!.width;
   await page.getByTestId('queue-open').click();
@@ -96,7 +96,7 @@ test('queue: the sidebar docks beside the stage, and covers it when too narrow t
 });
 
 test('queue: the next song plays when the current one ends', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await queueBundles(page, bundle('Short', 3), bundle('Next'));
   await expectPlaying(page, 'Short');
   // Still on Short a beat later: Next waits for the end rather than taking over.
@@ -115,7 +115,7 @@ test('queue: skipping to a song still preparing shows a loading screen until it 
     await route.fulfill({ status: 404, body: '' });
   });
 
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await queueBundles(page, bundle('Alpha'));
   await expectPlaying(page, 'Alpha');
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
@@ -137,7 +137,7 @@ test('queue: skipping to a song still preparing shows a loading screen until it 
 });
 
 test('queue: dragging an item reorders the queue', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await queueBundles(page, bundle('Alpha'), bundle('Bravo'), bundle('Charlie'), bundle('Delta'));
   await expectPlaying(page, 'Alpha');
   await page.getByTestId('queue-open').click();

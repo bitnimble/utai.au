@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { test } from 'src/testing/e2e_test';
+import { HOST_PATH, test } from 'src/testing/e2e_test';
 
 const PNG_1PX = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
@@ -25,7 +25,7 @@ test('music search: result rows show the cover thumbnail, or a placeholder witho
       : route.fulfill({ status: 404 }),
   );
 
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.getByTestId('queue-open').click();
   await page.getByTestId('queue-tab-search').click();
   await page.getByTestId('music-search-input').fill('anything');
@@ -56,7 +56,7 @@ test('music settings: YouTube Music opts in to regular YouTube results, off by d
     return route.fulfill({ json: config });
   });
 
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.getByTestId('settings-open').click();
   await page.getByTestId('settings-tab-sources').click();
   const option = page.getByTestId('music-include-youtube-search');

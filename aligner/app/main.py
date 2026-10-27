@@ -4,8 +4,8 @@ Endpoints:
     GET  /health         - readiness + GPU info
     POST /music/align   - word-level lyrics alignment (CTC forced alignment)
 
-The service is intentionally stateless. All temp files live in per-request
-tempdirs. At startup a background task provisions the configured model set
+The pipeline endpoints are stateless; only /sessions (app/sessions.py) keeps
+in-memory state. All temp files live in per-request tempdirs. At startup a background task provisions the configured model set
 (with update-detection) and warms the separation model; uvicorn accepts
 connections immediately so GET /provision/status can report progress while it
 runs. /health is a liveness probe (process + GPU); /provision/status is the
@@ -47,6 +47,8 @@ from app.request_context import (
     new_request_id,
     set_request_id,
 )
+from app.round_robin_lock import RoundRobinLock
+from app.sessions import router as sessions_router
 
 # How long the streaming endpoint will sit silent (no real progress event)
 # before emitting a `{"type": "heartbeat"}` NDJSON line. The heavy stages
@@ -63,8 +65,14 @@ HEARTBEAT_INTERVAL_SECONDS = 10.0
 # doing any model work so a second request can't move a model to CPU while
 # the first is mid-forward through it. A queued second request waits; the GPU
 # is a single resource, so concurrency wouldn't make either request faster
-# anyway.
-_gpu_lock = asyncio.Lock()
+# anyway. Waiters are served round-robin across sessions.
+_gpu_lock = RoundRobinLock()
+
+SESSION_HEADER = "x-utai-session"
+
+
+def _session_lane(request: Request) -> str:
+    return request.headers.get(SESSION_HEADER, "")
 
 
 def _require_pipeline_role() -> None:
@@ -243,6 +251,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(music_router)
+app.include_router(sessions_router)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -441,6 +450,7 @@ async def lyrics_align(
     return StreamingResponse(
         _stream_lyrics_align(
             request_id=request_id,
+            lane=_session_lane(request),
             separator=separator,
             aligner=aligner,
             input_lines=input_lines,
@@ -472,6 +482,7 @@ async def _emit_cached_alignment(
 async def _stream_lyrics_align(
     *,
     request_id: str,
+    lane: str,
     separator: Separator,
     aligner: Any,
     input_lines: list[InputLine],
@@ -587,7 +598,7 @@ async def _stream_lyrics_align(
             log.exception("lyrics_align failed")
             yield {"type": "error", "status_code": 500, "message": str(exc)}
 
-    envelopes = _serialized_gpu_stream(_gpu_lock, job).__aiter__()
+    envelopes = _serialized_gpu_stream(_gpu_lock, job, lane).__aiter__()
     try:
         async for chunk in _pump_with_heartbeat(envelopes.__anext__, _encode_envelope):
             yield chunk
@@ -726,6 +737,7 @@ async def lyrics_separate(
     return StreamingResponse(
         _stream_lyrics_separate(
             request_id=request_id,
+            lane=_session_lane(request),
             separator=separator,
             mix_path=mix_path,
             stem_id=stem_id,
@@ -806,6 +818,7 @@ async def _emit_stems_result(request_id: str, stem_id: str) -> AsyncIterator[byt
 async def _stream_lyrics_separate(
     *,
     request_id: str,
+    lane: str,
     separator: Separator,
     mix_path: Path,
     stem_id: str,
@@ -835,7 +848,7 @@ async def _stream_lyrics_separate(
             log.exception("lyrics_separate failed")
             yield {"type": "error", "status_code": 500, "message": str(exc)}
 
-    envelopes = _serialized_gpu_stream(_gpu_lock, job).__aiter__()
+    envelopes = _serialized_gpu_stream(_gpu_lock, job, lane).__aiter__()
     try:
         async for chunk in _pump_with_heartbeat(envelopes.__anext__, _encode_envelope):
             yield chunk
@@ -928,6 +941,7 @@ async def music_beats(request: Request, mix: UploadFile = File(...)) -> Streamin
     return StreamingResponse(
         _stream_music_beats(
             request_id=request_id,
+            lane=_session_lane(request),
             mix_path=mix_path,
             mix_hash=mix_hash,
             cleanup_dir=cleanup_dir,
@@ -946,6 +960,7 @@ async def _emit_beats_result(request_id: str, beats: Any) -> AsyncIterator[bytes
 async def _stream_music_beats(
     *,
     request_id: str,
+    lane: str,
     mix_path: Path,
     mix_hash: str,
     cleanup_dir: Path,
@@ -968,7 +983,7 @@ async def _stream_music_beats(
             log.exception("music_beats failed")
             yield {"type": "error", "status_code": 500, "message": str(exc)}
 
-    envelopes = _serialized_gpu_stream(_gpu_lock, job).__aiter__()
+    envelopes = _serialized_gpu_stream(_gpu_lock, job, lane).__aiter__()
     try:
         async for chunk in _pump_with_heartbeat(envelopes.__anext__, _encode_envelope):
             yield chunk
@@ -1220,8 +1235,9 @@ def _encode_envelope(envelope: dict[str, Any]) -> bytes:
 
 
 async def _serialized_gpu_stream(
-    lock: asyncio.Lock,
+    lock: RoundRobinLock,
     job: Callable[[], AsyncIterator[dict[str, Any]]],
+    lane: str = "",
 ) -> AsyncIterator[dict[str, Any]]:
     """Serialise `job` behind the process-wide GPU `lock`, yielding NDJSON
     envelope dicts.
@@ -1240,7 +1256,7 @@ async def _serialized_gpu_stream(
     """
     if lock.locked():
         yield {"type": "queued"}
-    await lock.acquire()
+    await lock.acquire(lane)
     try:
         yield {"type": "running"}
         async for envelope in job():

@@ -1,0 +1,97 @@
+import classNames from 'classnames';
+import { QrCode } from 'lucide-react';
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_settings_presenter';
+import { Modal, ModalBody, ModalHeader } from 'src/ui/modal/modal';
+import { renderSVG } from 'uqr';
+import { SessionHostPresenterContext, SessionHostStoreContext } from './session_host_contexts';
+import styles from './session_host_view.module.css';
+
+/** Header chip showing the session code; opens the join QR. */
+export const SessionHostButton = observer(function SessionHostButton({ className }: { className: string }) {
+  const store = React.useContext(SessionHostStoreContext);
+  const presenter = React.useContext(SessionHostPresenterContext);
+  if (store == null || presenter == null) return null;
+  const { status } = store;
+  if (status === 'replaced') {
+    return (
+      <button
+        type="button"
+        className={classNames(className, styles.warning)}
+        onClick={() => presenter.reclaim()}
+        title="Another device took over this session. Host it here again."
+        data-testid="session-reclaim"
+      >
+        Hosted elsewhere
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={() => presenter.openJoin()}
+      title="Show how phones join as a remote"
+      data-testid="session-join-open"
+    >
+      <QrCode size={14} aria-hidden="true" />
+      <span className={classNames(styles.code, status !== 'open' && styles.offline)} data-testid="session-code">
+        {store.session.id}
+      </span>
+    </button>
+  );
+});
+
+export const SessionJoinModal = observer(function SessionJoinModal() {
+  const store = React.useContext(SessionHostStoreContext);
+  const presenter = React.useContext(SessionHostPresenterContext);
+  if (store == null || presenter == null) return null;
+  const joinUrl = store.joinUrl;
+  const close = (): void => presenter.closeJoin();
+  return (
+    <Modal open={store.joinOpen} onClose={close} ariaLabel="Join as a remote" width={380} testId="session-join-modal">
+      <ModalHeader title="Join as a remote" onClose={close} />
+      <ModalBody className={styles.body}>
+        {joinUrl != null ? (
+          <>
+            <QrImage text={joinUrl} />
+            <a className={styles.url} href={joinUrl} target="_blank" rel="noreferrer" data-testid="session-join-url">
+              {joinUrl}
+            </a>
+          </>
+        ) : (
+          <p className={styles.hint}>Set the address phones should open below.</p>
+        )}
+        <p className={styles.hint}>
+          Or open the app on a phone, choose Join, and enter
+          <span className={styles.bigCode}>{store.session.id}</span>
+        </p>
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Address phones open</span>
+          <input
+            type="url"
+            className={styles.input}
+            value={appSettingsStore.remoteBaseUrl}
+            placeholder={store.session.publicUrl ?? 'https://karaoke.lan'}
+            onChange={(e) => appSettingsPresenter.setRemoteBaseUrl(e.target.value)}
+            data-testid="session-remote-url"
+          />
+        </label>
+      </ModalBody>
+    </Modal>
+  );
+});
+
+const QrImage = ({ text }: { text: string }): React.ReactElement => {
+  const svg = React.useMemo(() => renderSVG(text, { ecc: 'M', border: 2 }), [text]);
+  return (
+    <div
+      className={styles.qr}
+      role="img"
+      aria-label={`QR code for ${text}`}
+      dangerouslySetInnerHTML={{ __html: svg }}
+      data-testid="session-join-qr"
+    />
+  );
+};

@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { test } from 'src/testing/e2e_test';
+import { HOST_PATH, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type UtaiWindow = {
@@ -21,7 +21,7 @@ test('skip segments: offers to skip a SponsorBlock non-music section and seeks p
   );
   await page.route('**/video/R03cqGg40GU', (route) => route.abort());
   await page.route('https://www.youtube.com/**', (route) => route.abort());
-  await page.goto('/');
+  await page.goto(HOST_PATH);
 
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',

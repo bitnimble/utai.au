@@ -20,6 +20,16 @@ export function isBackendUnreachable(err: unknown): err is BackendUnreachableErr
   return err instanceof BackendUnreachableError;
 }
 
+/** Tags backend requests with the hosted session, so the backend's GPU queue
+ *  can take turns between sessions. */
+class SessionLane {
+  id: string | undefined = undefined;
+}
+
+export const sessionLane = new SessionLane();
+
+const SESSION_HEADER = 'X-Utai-Session';
+
 /** `data-testid` on the generic outage toast; also the dedupe key. */
 export const SERVER_DOWN_TOAST_TEST_ID = 'server-down-toast';
 
@@ -56,11 +66,18 @@ export async function backendFetch(
   opts: { silent?: boolean } = {}
 ): Promise<Response> {
   try {
-    return await fetch(input, init);
+    return await fetch(input, withSessionLane(init));
   } catch (err) {
     // A user/programmatic cancel isn't "the server is down".
     if (err instanceof DOMException && err.name === 'AbortError') throw err;
     if (!opts.silent) reportServerDown();
     throw new BackendUnreachableError();
   }
+}
+
+function withSessionLane(init: RequestInit | undefined): RequestInit | undefined {
+  if (sessionLane.id == null) return init;
+  const headers = new Headers(init?.headers);
+  headers.set(SESSION_HEADER, sessionLane.id);
+  return { ...init, headers };
 }

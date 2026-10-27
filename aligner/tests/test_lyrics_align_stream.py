@@ -23,6 +23,7 @@ import contextlib
 import json
 
 import app.main as main
+from app.round_robin_lock import RoundRobinLock
 
 
 def test_uncontended_emits_running_then_job_without_queued() -> None:
@@ -31,12 +32,12 @@ def test_uncontended_emits_running_then_job_without_queued() -> None:
     envelopes. The lock is released once the stream completes."""
 
     async def scenario():
-        lock = asyncio.Lock()
+        lock = RoundRobinLock()
 
         async def job():
             yield {"type": "result", "data": {"lines": []}}
 
-        out = [env async for env in main._serialized_gpu_stream(lock, job)]
+        out =[env async for env in main._serialized_gpu_stream(lock, job)]
         return out, lock.locked()
 
     out, still_locked = asyncio.run(scenario())
@@ -54,7 +55,7 @@ def test_contended_emits_queued_before_running() -> None:
     `running` + the job's output, and releases the lock at the end."""
 
     async def scenario():
-        lock = asyncio.Lock()
+        lock = RoundRobinLock()
         await lock.acquire()  # stand in for another in-flight GPU request
 
         async def job():
@@ -82,7 +83,7 @@ def test_releases_lock_when_job_raises() -> None:
     propagates so the caller's error handling still runs."""
 
     async def scenario():
-        lock = asyncio.Lock()
+        lock = RoundRobinLock()
 
         async def job():
             if True:

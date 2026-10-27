@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { test } from 'src/testing/e2e_test';
+import { HOST_PATH, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type Utai = {
@@ -8,7 +8,7 @@ type Utai = {
 };
 
 async function loadJapaneseSong(page: Page): Promise<void> {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',

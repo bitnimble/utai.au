@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { test } from 'src/testing/e2e_test';
+import { HOST_PATH, test } from 'src/testing/e2e_test';
 
 // Audio settings + the shared home-transport controls. Chromium runs with fake
 // media devices (see playwright.config.ts launch args), so getUserMedia /
@@ -7,7 +7,7 @@ import { test } from 'src/testing/e2e_test';
 // mic auto-monitors on load).
 
 test('audio: None options, per-channel mute/volume, Settings ↔ home in sync', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
 
   // The home transport carries the shared mic + output controls.
   await expect(page.getByTestId('home-audio-controls')).toBeVisible();

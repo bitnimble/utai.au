@@ -109,7 +109,7 @@ const ResultsView = observer(function ResultsView({
   );
 });
 
-const ResultRow = observer(function ResultRow({
+export const ResultRow = observer(function ResultRow({
   result,
   selected,
   onPick,
@@ -192,7 +192,7 @@ function serviceLabel(id: string): string {
   return SERVICE_LABELS[id] ?? id;
 }
 
-function formatDuration(seconds: number): string {
+export function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.round(seconds));
   const min = Math.floor(total / 60);
   const sec = total % 60;

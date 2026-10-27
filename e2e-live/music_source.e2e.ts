@@ -9,6 +9,7 @@ test('music-source: enable YouTube Music, search, queue', async ({ page }) => {
   page.on('requestfailed', (r) => console.log(`[reqfail] ${r.method()} ${r.url()} ${r.failure()?.errorText}`));
 
   await page.goto('/');
+  await page.getByTestId('landing-create').click();
   await expect(page.getByTestId('settings-open')).toBeVisible({ timeout: 30_000 });
 
   // settings: confirm the service catalog loaded (browser -> caddy -> backend

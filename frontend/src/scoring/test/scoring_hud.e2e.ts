@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { test } from 'src/testing/e2e_test';
+import { HOST_PATH, test } from 'src/testing/e2e_test';
 
 // Scoring HUD integration on the transport bar. Runs against the real app
 // (Chromium with fake media devices); the live-pitch DSP + scoring loop are
@@ -7,7 +7,7 @@ import { test } from 'src/testing/e2e_test';
 // running transport clock without a loaded track.
 
 test('scoring: HUD present, difficulty switchable, start gated on content', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(HOST_PATH);
 
   const hud = page.getByTestId('scoring-hud');
   await expect(hud).toBeVisible();

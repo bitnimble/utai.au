@@ -3,6 +3,7 @@ import { EllipsisVertical, GripVertical, ListMusic, ListStart, SkipForward, Tras
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { MusicSearchPanel } from 'src/music_source/music_search_panel';
+import type { RemoteQueueStatus } from 'src/session/session_protocol';
 import { ActionMenuItem, DropdownButton } from 'src/ui/dropdown/dropdown';
 import { Spinner } from 'src/ui/spinner/spinner';
 import { Tabs, type TabOption } from 'src/ui/tabs/tabs';
@@ -212,7 +213,7 @@ const ItemStatus = ({ status }: { status: QueueItemStatus }): React.ReactElement
   );
 };
 
-function statusLabel(status: QueueItemStatus): string {
+export function statusLabel(status: QueueItemStatus | RemoteQueueStatus): string {
   switch (status.kind) {
     case 'waiting':
       return 'Waiting';

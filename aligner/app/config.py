@@ -126,6 +126,11 @@ class Settings(BaseSettings):
         "tauri://localhost",
     ]
 
+    # Origin phones open to join a session as a remote (e.g.
+    # `https://karaoke.lan:5175`), advertised in the host's join QR code. Empty
+    # = the host falls back to its own page origin.
+    public_url: str = ""
+
     # Which role this process is playing inside a multi-process deployment:
     # - `pipeline` (default) = eager-loads the separation model and serves
     #                          `/music/align`. Single-process local runs
