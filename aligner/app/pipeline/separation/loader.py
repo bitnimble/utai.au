@@ -85,7 +85,7 @@ def _load_mel_band_roformer(
     kwargs = {k: v for k, v in cfg.items() if k in accepted}
 
     model = MelBandRoformer(**kwargs)
-    state = _unwrap_state_dict(torch.load(str(ckpt_path), map_location="cpu"))
+    state = _unwrap_state_dict(torch.load(str(ckpt_path), map_location="cpu", weights_only=True))
     model.load_state_dict(state, strict=True)
     model.to(device).eval()
 
