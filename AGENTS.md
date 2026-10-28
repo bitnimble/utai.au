@@ -144,10 +144,11 @@ header `backendFetch` attaches.
   separation-only install must never pull the aligner weights. Model URLs / HF
   ids are `settings.*` build fields (config.py), not hardcoded. fp16 is
   GPU-only. Shipped weights live on HF (`settings.onnx_repo`,
-  `bitnimble/utai-onnx`). At startup the app **eagerly provisions**
+  `bitnimble/utai-onnx`). At startup the backend **eagerly provisions**
   `settings.startup_capabilities` (default `lyrics,pitch` = every model) and
   **update-checks** each present asset via its ETag (re-downloading a pushed
-  model), fronted by a blocking startup dialog; see
+  model); the desktop app only checks, and downloads missing/outdated models
+  when the user accepts the toast's prompt; see
   [docs/lyrics-alignment.md](docs/lyrics-alignment.md).
 - **The timeline is linear time**, "beat" collapses onto "second"; there
   is no musical bar/tempo grid (that was Drumjot-specific). The lyrics
@@ -202,9 +203,8 @@ One-time host prereqs: `rustup target add x86_64-pc-windows-msvc`, `cargo instal
 dir. Unlike `win:build` it DOES ship the sidecar, but as a **dev bundle**: the
 pure-Python aligner source + a downloaded macOS `uv`, and NO vendored
 wheels/models. A `devbuild` marker resource makes the runtime `uv sync` the deps
-from git (`paths.rs::is_dev_build`) and provision/update the models on launch,
-driven by the frontend startup gate via `capability::ensure_models` (streams
-progress into the blocking dialog; runs every launch, update-checking cheaply).
+from git (`paths.rs::is_dev_build`) on launch, before the startup model check
+(`capability::check_models`); the models then download when accepted from the toast.
 So the **test Mac needs Xcode Command Line Tools** (git + a compiler) and a
 network on first run. `prepare-desktop-resources.ts` produces this variant
 when `UTAI_RESOURCE_DEV=1` (skips wheel vendoring, keeps the torch-null override,

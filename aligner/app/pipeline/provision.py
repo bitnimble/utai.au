@@ -27,6 +27,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import httpx
 
@@ -196,6 +197,36 @@ def _remote_meta(url: str) -> tuple[str, int | None] | None:
     return etag, (int(size) if size is not None and size.isdigit() else None)
 
 
+Freshness = Literal["missing", "outdated", "current"]
+
+
+def _present(dest: Path) -> bool:
+    return dest.exists() and dest.stat().st_size > 0
+
+
+def _freshness(url: str, dest: Path, *, update_check: bool) -> tuple[Freshness, int | None]:
+    """Whether the asset at `dest` needs fetching, plus the remote size when the remote
+    was asked. An unreachable remote leaves a present file `current`."""
+    if not _present(dest):
+        return "missing", None
+    if not update_check:
+        return "current", None
+    meta = _remote_meta(url)
+    if meta is None:
+        log.info("provision: %s present, remote unreachable to verify; keeping", dest.name)
+        return "current", None
+    remote_etag, remote_size = meta
+    local_etag = _read_etag(dest)
+    if local_etag is not None and local_etag == remote_etag:
+        return "current", remote_size
+    if local_etag is None and remote_size is not None and dest.stat().st_size == remote_size:
+        # Present but never tracked (pre-mounted volume, pre-etag download):
+        # adopt the remote etag by size match rather than re-fetch a good file.
+        _write_etag(dest, remote_etag)
+        return "current", remote_size
+    return "outdated", remote_size
+
+
 def _download(
     url: str,
     dest: Path,
@@ -214,27 +245,13 @@ def _download(
     followed; writes to a `.part` sidecar and renames on success so an
     interrupted download is never mistaken for a completed one."""
     name = dest.name
-    if dest.exists() and dest.stat().st_size > 0:
-        if not update_check:
-            _emit(on_progress, ProvisionEvent(name, "skipped"))
-            return
+    if update_check and _present(dest):
         _emit(on_progress, ProvisionEvent(name, "checking"))
-        meta = _remote_meta(url)
-        if meta is None:
-            log.info("provision: %s present, remote unreachable to verify; keeping", name)
-            _emit(on_progress, ProvisionEvent(name, "skipped"))
-            return
-        remote_etag, remote_size = meta
-        local_etag = _read_etag(dest)
-        if local_etag is not None and local_etag == remote_etag:
-            _emit(on_progress, ProvisionEvent(name, "skipped"))
-            return
-        if local_etag is None and remote_size is not None and dest.stat().st_size == remote_size:
-            # Present but never tracked (pre-mounted volume, pre-etag download):
-            # adopt the remote etag by size match rather than re-fetch a good file.
-            _write_etag(dest, remote_etag)
-            _emit(on_progress, ProvisionEvent(name, "skipped"))
-            return
+    freshness, _ = _freshness(url, dest, update_check=update_check)
+    if freshness == "current":
+        _emit(on_progress, ProvisionEvent(name, "skipped"))
+        return
+    if freshness == "outdated":
         log.info("provision: %s changed upstream, re-downloading", name)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -279,15 +296,41 @@ def _download(
     _emit(on_progress, ProvisionEvent(name, "done", size, size))
 
 
+def _assets(capabilities: tuple[str, ...]) -> list[_Asset]:
+    """The assets the capabilities need, deduped by filename, in a stable order."""
+    assets: dict[str, _Asset] = {}
+    for capability in capabilities:
+        for asset in _capability_assets(capability):
+            assets[asset.filename] = asset
+    return list(assets.values())
+
+
 def planned_assets(*capabilities: str) -> list[str]:
     """Deduped local filenames the given capabilities will provision, in a stable
     order. Lets a caller (the startup status) seed its per-asset progress before
     the download loop runs."""
-    seen: dict[str, None] = {}
-    for capability in capabilities:
-        for asset in _capability_assets(capability):
-            seen[asset.filename] = None
-    return list(seen)
+    return [asset.filename for asset in _assets(capabilities)]
+
+
+@dataclass(frozen=True)
+class AssetCheck:
+    asset: str
+    freshness: Freshness
+    bytes_total: int | None
+
+
+def check(*capabilities: str) -> list[AssetCheck]:
+    """Each asset the capabilities need and whether it's missing, outdated or current,
+    without downloading anything, so the user can choose whether to fetch."""
+    models_dir = Path(settings.models_dir)
+    results = []
+    for asset in _assets(capabilities):
+        freshness, size = _freshness(asset.url, models_dir / asset.filename, update_check=True)
+        if freshness == "missing":
+            meta = _remote_meta(asset.url)
+            size = meta[1] if meta is not None else None
+        results.append(AssetCheck(asset.filename, freshness, size))
+    return results
 
 
 def provision(
@@ -310,11 +353,8 @@ def provision(
         update_check = settings.provision_update_check
     models_dir = Path(settings.models_dir)
     models_dir.mkdir(parents=True, exist_ok=True)
-    assets: dict[str, _Asset] = {}
-    for capability in capabilities:
-        for asset in _capability_assets(capability):
-            assets[asset.filename] = asset
-    for asset in assets.values():
+    assets = _assets(capabilities)
+    for asset in assets:
         try:
             _download(
                 asset.url,
@@ -427,15 +467,25 @@ def main(argv: list[str]) -> int:
     `python -m app.pipeline.provision --prune <keep-capability>...` -- the
     uninstall counterpart: delete model files not needed by the capabilities that
     remain installed (the desktop uninstaller runs this before syncing the venv
-    down)."""
+    down).
+
+    `python -m app.pipeline.provision --check <capability>...` -- download nothing;
+    print one `{"asset", "phase": missing|outdated|current, "bytesTotal"}` line per
+    asset, for the desktop shell to offer the download."""
     logging.basicConfig(level=logging.INFO)
-    args = [a for a in argv if a != "--progress-json"]
+    args = [a for a in argv if a not in ("--progress-json", "--check")]
     on_progress = _json_line_emitter() if "--progress-json" in argv else None
     if args and args[0] == "--prune":
         deprovision([g for g in args[1:] if g in _KNOWN_CAPABILITIES])
         return 0
+    capabilities = [g for g in args if g in _KNOWN_CAPABILITIES]
+    if "--check" in argv:
+        for result in check(*capabilities):
+            event = {"asset": result.asset, "phase": result.freshness, "bytesTotal": result.bytes_total}
+            print(json.dumps(event), flush=True)
+        return 0
     try:
-        provision(*[g for g in args if g in _KNOWN_CAPABILITIES], on_progress=on_progress)
+        provision(*capabilities, on_progress=on_progress)
     except Exception as exc:
         log.exception("provision failed")
         if on_progress is not None:

@@ -200,19 +200,21 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   one capability that uses it. Model URLs / HF ids are `settings.*`
   build fields (config.py), never hardcoded. Shipped ONNX set lives on the
   live `bitnimble/utai-onnx` HF repo (`settings.onnx_repo`).
-- **Eager provisioning + update-detection at startup.** All three surfaces
-  (docker/HTTP backend, Tauri desktop sidecar, web) provision
+- **Update-detection at startup.** The docker/HTTP backend provisions
   `settings.startup_capabilities` (default `lyrics,pitch` = every model) on
-  launch, behind a **blocking startup dialog** that only shows if there's
-  work. Each present asset is ETag-verified against the remote (HF sets the
-  `resolve/` ETag to the LFS content hash, stored in a `<name>.etag` sidecar)
+  launch; the desktop app checks the same set and offers the download in a
+  toast, fetching only if the user accepts (declining is safe: each pipeline
+  fetches a missing model on first use). A toast shows progress, only when the
+  check is slow or there's work. Each present asset is ETag-verified against
+  the remote (HF sets the `resolve/` ETag to the LFS content hash, stored in a `<name>.etag` sidecar)
   and re-downloaded only on change, so a pushed model update lands next launch;
   an unreachable remote or an untracked-but-size-matching file is left alone.
   `provision_update_check=false` reverts to presence-only (prod, baked models).
   Backend: a lifespan background task provisions + warms the separator and
   reports progress at `GET /provision/status` (`/music/*` 503 until ready);
-  desktop: the frontend gate drives `capability::ensure_models`
-  (`--progress-json`); web polls the status endpoint. See
+  desktop: the frontend runs `capability::check_models` (`provision --check`)
+  and, on the user's say-so, `capability::download_models` (`--progress-json`);
+  web polls the status endpoint. See
   `frontend/src/provisioning/`.
 
 Dep groups mirror capabilities (`aligner/pyproject.toml`, PEP 735):

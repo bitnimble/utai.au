@@ -6,13 +6,16 @@ import { SidecarProvisioningSource } from './sidecar_provisioning_source';
 /**
  * A watcher over the aligner's provisioning progress. `watch` starts observing
  * and invokes `onStatus` on each update; an unreachable backend yields no calls
- * (the presenter then stays optimistic and never gates). Returns a disposer.
+ * (the presenter then stays quiet). Returns a disposer.
  *
  * Two implementations mirror the align/separate transport split: the web/HTTP
- * build polls `/provision/status`; the desktop build streams from the sidecar.
+ * build polls `/provision/status` of a backend that provisions itself; the
+ * desktop build checks via the sidecar and downloads only when asked.
  */
 export interface ProvisioningSource {
   watch(onStatus: (status: ProvisionStatus) => void): () => void;
+  /** Fetch what `watch` reported as `available`. Only sources that report it implement this. */
+  download?(onStatus: (status: ProvisionStatus) => void): () => void;
 }
 
 const POLL_INTERVAL_MS = 700;
@@ -62,7 +65,7 @@ async function fetchStatus(signal: AbortSignal): Promise<ProvisionStatus | null>
   }
 }
 
-const STATES: readonly ProvisionState[] = ['checking', 'downloading', 'loading', 'ready', 'error'];
+const STATES: readonly ProvisionState[] = ['checking', 'available', 'downloading', 'loading', 'ready', 'error'];
 
 function parseStatus(raw: unknown): ProvisionStatus | null {
   if (raw == null || typeof raw !== 'object') return null;

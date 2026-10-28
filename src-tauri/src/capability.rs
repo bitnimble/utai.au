@@ -527,14 +527,14 @@ async fn provision_models(
     }
 }
 
-/// Run `python -m app.pipeline.provision --progress-json <caps>` and forward its
-/// per-asset JSON progress lines (stdout) to the webview as {@link ProvisionEvent}s.
-/// stderr carries logs, which we log rather than surface. Errors if the process
-/// can't start or exits non-zero.
+/// Run `python -m app.pipeline.provision <mode> <startup caps>` (`--progress-json`
+/// downloads, `--check` only reports) and forward its per-asset JSON lines (stdout)
+/// to the webview as {@link ProvisionEvent}s. stderr carries logs, which we log
+/// rather than surface. Errors if the process can't start or exits non-zero.
 async fn provision_models_streaming(
     venv: &Path,
     dir: &Path,
-    caps: &[String],
+    mode: &str,
     on_event: &Channel<ProvisionEvent>,
 ) -> Result<(), String> {
     let python = venv_python(venv);
@@ -542,10 +542,7 @@ async fn provision_models_streaming(
         return Err("model provisioning skipped: venv python missing".to_string());
     }
     let mut cmd = Command::new(&python);
-    cmd.arg("-m").arg("app.pipeline.provision").arg("--progress-json");
-    for cap in caps {
-        cmd.arg(cap);
-    }
+    cmd.arg("-m").arg("app.pipeline.provision").arg(mode).args(STARTUP_PROVISION_CAPS);
     let mut child = cmd
         .current_dir(dir)
         .stdout(Stdio::piped())
@@ -689,43 +686,48 @@ async fn prune_models(
 // no vendored wheels). `pitch` needs nothing beyond `separation` (transitive via
 // `lyrics-ja`), so no pitch group. See scripts/mac-build.ts.
 const STARTUP_SYNC_GROUPS: &[&str] = &["lyrics-ja", "onthespot"];
-// Capabilities eagerly provisioned at startup. `lyrics` + `pitch` each compose
-// `separation`, so this downloads every model (separator + both aligners + f0).
+// Capabilities whose models the startup check covers. `lyrics` + `pitch` each
+// compose `separation`, so this is every model (separator + both aligners + f0).
 const STARTUP_PROVISION_CAPS: &[&str] = &["lyrics", "pitch"];
 
-/// Ensure every model is present + up to date at app launch, streaming progress
-/// to the webview's blocking startup gate. Syncs the app venv first when it needs
-/// building (a dev cross-build ships no vendored wheels; installed builds only on
-/// a missing venv), then runs `provision --progress-json` for the startup
-/// capability set, which update-checks each asset against the remote and
-/// re-downloads only changes. Idempotent + safe every launch: an already-current
-/// install returns after a few HEAD checks, so the gate barely flashes. Driven by
-/// the frontend gate on startup, so a failure surfaces there (with Retry) rather
-/// than being a silent background job.
+/// At app launch: sync the app venv when it needs building (a dev cross-build
+/// ships no vendored wheels; installed builds only on a missing or stale venv),
+/// then report each startup model as missing, outdated or current as progress
+/// events with those phases. Downloads nothing; the user chooses whether to run
+/// {@link download_models}.
 #[tauri::command]
-pub async fn ensure_models(app: AppHandle, on_event: Channel<ProvisionEvent>) -> Result<(), String> {
-    let venv = match app_venv(&app) {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = on_event.send(ProvisionEvent::Error { message: e.clone() });
-            return Err(e);
+pub async fn check_models(app: AppHandle, on_event: Channel<ProvisionEvent>) -> Result<(), String> {
+    report(&on_event, check_models_inner(&app, &on_event).await)
+}
+
+/// Download the startup models that are missing or outdated, streaming progress.
+#[tauri::command]
+pub async fn download_models(app: AppHandle, on_event: Channel<ProvisionEvent>) -> Result<(), String> {
+    let result = match app_venv(&app) {
+        Ok(venv) => {
+            provision_models_streaming(&venv, &resolve_aligner_dir(&app), "--progress-json", &on_event).await
         }
+        Err(e) => Err(e),
     };
-    let dir = resolve_aligner_dir(&app);
+    report(&on_event, result)
+}
+
+fn report(on_event: &Channel<ProvisionEvent>, result: Result<(), String>) -> Result<(), String> {
+    let _ = on_event.send(match &result {
+        Ok(()) => ProvisionEvent::Done,
+        Err(message) => ProvisionEvent::Error { message: message.clone() },
+    });
+    result
+}
+
+async fn check_models_inner(app: &AppHandle, on_event: &Channel<ProvisionEvent>) -> Result<(), String> {
+    let venv = app_venv(app)?;
+    let dir = resolve_aligner_dir(app);
     let groups: Vec<String> = STARTUP_SYNC_GROUPS.iter().map(|s| s.to_string()).collect();
     let stale = std::fs::read_to_string(sync_stamp_path(&venv)).ok() != Some(sync_stamp(&dir, &groups));
-    let ffmpeg = match crate::paths::data_root(&app) {
-        Ok(root) => crate::paths::bundled_ffmpeg(&root),
-        Err(e) => {
-            let _ = on_event.send(ProvisionEvent::Error { message: e.clone() });
-            return Err(e);
-        }
-    };
-    if crate::paths::is_dev_build(&app) || !venv_python(&venv).is_file() || stale {
-        if let Err(message) = sync_venv(&app, "startup", &groups, None).await {
-            let _ = on_event.send(ProvisionEvent::Error { message: message.clone() });
-            return Err(message);
-        }
+    let ffmpeg = crate::paths::bundled_ffmpeg(&crate::paths::data_root(app)?);
+    if crate::paths::is_dev_build(app) || !venv_python(&venv).is_file() || stale {
+        sync_venv(app, "startup", &groups, None).await?;
         let _ = tokio::fs::remove_file(&ffmpeg).await;
     }
     if !ffmpeg.is_file() {
@@ -733,13 +735,7 @@ pub async fn ensure_models(app: AppHandle, on_event: Channel<ProvisionEvent>) ->
             log::warn!("couldn't link the bundled ffmpeg: {message}");
         }
     }
-    let caps: Vec<String> = STARTUP_PROVISION_CAPS.iter().map(|s| s.to_string()).collect();
-    if let Err(message) = provision_models_streaming(&venv, &dir, &caps, &on_event).await {
-        let _ = on_event.send(ProvisionEvent::Error { message: message.clone() });
-        return Err(message);
-    }
-    let _ = on_event.send(ProvisionEvent::Done);
-    Ok(())
+    provision_models_streaming(&venv, &dir, "--check", on_event).await
 }
 
 #[cfg(test)]

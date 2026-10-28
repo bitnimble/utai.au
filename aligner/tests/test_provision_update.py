@@ -136,6 +136,30 @@ def test_emits_progress_events(tmp_path, monkeypatch) -> None:
     assert [e.phase for e in events] == ["checking", "skipped"]
 
 
+def test_check_reports_freshness_without_downloading(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(provision.settings, "models_dir", tmp_path)
+    monkeypatch.setattr(
+        provision,
+        "_capability_assets",
+        lambda _cap: [provision._Asset(n, f"http://x/{n}") for n in ("absent.onnx", "stale.onnx", "fresh.onnx")],
+    )
+    (tmp_path / "stale.onnx").write_bytes(b"OLD")
+    provision._write_etag(tmp_path / "stale.onnx", "v0")
+    (tmp_path / "fresh.onnx").write_bytes(b"HELLO")
+    provision._write_etag(tmp_path / "fresh.onnx", "v1")
+    c = _install_remote(monkeypatch, etag="v1", body=b"HELLO")
+
+    results = provision.check("lyrics")
+
+    assert results == [
+        provision.AssetCheck("absent.onnx", "missing", 5),
+        provision.AssetCheck("stale.onnx", "outdated", 5),
+        provision.AssetCheck("fresh.onnx", "current", 5),
+    ]
+    assert c["stream"] == 0
+    assert (tmp_path / "stale.onnx").read_bytes() == b"OLD"
+
+
 def test_startup_capabilities_parses_comma_env(monkeypatch) -> None:
     # Regression: a `list[str]` field made pydantic-settings JSON-decode the env
     # string and crash on `STARTUP_CAPABILITIES=lyrics,pitch`. A plain str + parser

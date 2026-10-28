@@ -32,7 +32,7 @@ struct Process {
     child: Child,
 }
 
-/// Needs the app venv synced (after `ensure_models`). Starts the backend, or
+/// Needs the app venv synced (after `check_models`). Starts the backend, or
 /// restarts it if it died, and returns its API base, e.g. `http://127.0.0.1:53211`.
 #[tauri::command]
 pub async fn local_backend_api_base<R: Runtime>(

@@ -1,7 +1,7 @@
 import { makeAutoObservable, runInAction } from 'mobx';
 import type { ReactNode } from 'react';
 
-export type ToastKind = 'success' | 'error' | 'warning';
+export type ToastKind = 'success' | 'error' | 'warning' | 'info';
 
 export type Toast = {
   id: string;
@@ -42,7 +42,16 @@ class ToastStore {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor() {
-    makeAutoObservable(this, { showSuccess: false, showError: false, showWarning: false });
+    makeAutoObservable(this, { showSuccess: false, showError: false, showWarning: false, showInfo: false, isShown: false });
+  }
+
+  /** Sticky and neutral: a notice the user acts on or dismisses, e.g. one carrying buttons. */
+  showInfo(message: ReactNode, opts: ShowToastOpts = {}): string {
+    return this.show('info', message, opts);
+  }
+
+  isShown(id: string): boolean {
+    return this.toasts.some((t) => t.id === id);
   }
 
   showSuccess(message: ReactNode, opts: ShowToastOpts = {}): string {

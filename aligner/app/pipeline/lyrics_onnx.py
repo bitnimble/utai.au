@@ -283,9 +283,16 @@ def load_onnx_aligner(model_path: str, models_dir, *, providers=None) -> OnnxCtc
     (cached in `models_dir`). The tokenizer loads via HF (torch-free)."""
     from transformers import AutoTokenizer
 
-    from app.pipeline.provision import allow_local_export, missing_shipped_onnx, shipped_onnx
+    from app.pipeline.provision import (
+        allow_local_export,
+        missing_shipped_onnx,
+        provision,
+        shipped_onnx,
+    )
 
     name = f"ctc_align__{_sanitize(model_path)}"
+    if shipped_onnx(name) is None:
+        provision("lyrics", update_check=False)
     onnx_path = shipped_onnx(name)  # provisioned fp16
     if onnx_path is None:
         if not allow_local_export():

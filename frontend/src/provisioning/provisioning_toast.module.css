@@ -1,0 +1,34 @@
+.body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.detail {
+    composes: readoutSm from '../typography.module.css';
+    color: var(--color-text-muted-alt);
+}
+
+.progress {
+    width: 240px;
+}
+
+.actions {
+    display: flex;
+    gap: 8px;
+}
+
+.primary {
+    composes: primary from '../ui/button/button.module.css';
+}
+
+.secondary {
+    composes: ghost from '../ui/button/button.module.css';
+}

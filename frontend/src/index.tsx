@@ -7,7 +7,6 @@ import { pageLog } from 'src/log_viewer/page_log';
 import { ProvisioningPresenter } from 'src/provisioning/provisioning_presenter';
 import { createProvisioningSource } from 'src/provisioning/provisioning_source';
 import { ProvisioningStore } from 'src/provisioning/provisioning_store';
-import { StartupGate } from 'src/provisioning/startup_gate';
 import { parseRoute } from 'src/session/app_route';
 import { HostPage } from 'src/session/host_page';
 import { HostPagePresenter, type HostTarget } from 'src/session/host_page_presenter';
@@ -55,12 +54,12 @@ function renderHost(target: HostTarget): React.ReactElement {
   const provisioningStore = new ProvisioningStore();
   const provisioningPresenter = new ProvisioningPresenter(provisioningStore, createProvisioningSource());
   // Start once at boot (not in a component effect) so a StrictMode re-mount can't
-  // trigger a second provisioning run; the presenter stops itself on ready/error.
+  // trigger a second provisioning run.
   provisioningPresenter.start();
   const hostPageStore = new HostPageStore();
   void new HostPagePresenter(hostPageStore, target).start();
-  // Provisioning syncs the venv the local backend runs from.
-  if (isSidecarAvailable()) when(() => provisioningStore.state === 'ready', connectLocalBackend);
+  // The model check syncs the venv the local backend runs from.
+  if (isSidecarAvailable()) when(() => provisioningStore.checked, connectLocalBackend);
   const updatesStore = new UpdatesStore();
   const updatesPresenter = new UpdatesPresenter(updatesStore);
   if (isTauri()) void updatesPresenter.start();
@@ -68,9 +67,7 @@ function renderHost(target: HostTarget): React.ReactElement {
     <SettingsModalProvider>
       <UpdatesStoreContext.Provider value={updatesStore}>
         <UpdatesPresenterContext.Provider value={updatesPresenter}>
-          <StartupGate store={provisioningStore} presenter={provisioningPresenter}>
-            <HostPage store={hostPageStore} />
-          </StartupGate>
+          <HostPage store={hostPageStore} />
         </UpdatesPresenterContext.Provider>
       </UpdatesStoreContext.Provider>
     </SettingsModalProvider>

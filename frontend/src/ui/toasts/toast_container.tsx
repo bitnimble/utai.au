@@ -30,16 +30,15 @@ export const ToastContainer = observer(() => {
             toast.kind === 'success' && styles.toastSuccess,
             toast.kind === 'error' && styles.toastError,
             toast.kind === 'warning' && styles.toastWarning,
+            toast.kind === 'info' && styles.toastInfo,
           )}
           role="status"
           title={toast.title}
           data-testid={toast.testId}
           onClick={(e) => {
-            // The transcribe-done toast embeds a `[debug.zip]` <a>; let
-            // its native click through so the download fires instead of
-            // dismissing on the same click that started the download.
-            const tag = (e.target as HTMLElement | null)?.tagName;
-            if (tag === 'A') return;
+            // A link or button inside the toast does its own thing; dismissing on the
+            // same click would e.g. hide a prompt before its button's action shows.
+            if ((e.target as HTMLElement | null)?.closest('a, button')) return;
             toastStore.dismiss(toast.id);
           }}
         >
