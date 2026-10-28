@@ -74,9 +74,10 @@ header `backendFetch` attaches.
 - **CI** (`release.yml`) builds the backend + OnTheSpot images
   (`ghcr.io/bitnimble/utai.au-{backend,onthespot}`), macOS arm64 (`.dmg`),
   Windows (NSIS + portable zip) and a debug-key-signed Android APK, then
-  publishes one GitHub release whose body is the changelog plus a `latest.json`
-  (`scripts/write-update-manifest.ts`). No Linux, no Play. A manual run builds
-  without publishing (`only` input narrows it). Secrets:
+  uploads one GitHub release whose body is the changelog plus a `latest.json`
+  (`scripts/write-update-manifest.ts`), as a draft that is published only once
+  every build succeeded and both desktop bundles are signed. No Linux, no Play.
+  A manual run builds without publishing or pushing images (`only` narrows it). Secrets:
   `TAURI_SIGNING_PRIVATE_KEY` signs updater bundles (`_PASSWORD` stays unset:
   the key has none, and a missing secret reaches the build as empty); the
   public key is in `tauri.conf.json`; `ANDROID_DEBUG_KEYSTORE_BASE64` keeps one
