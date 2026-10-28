@@ -28,6 +28,8 @@ const TWO_LINE_WIDTH_FRAC = 0.75;
 const MIN_LINE_SPAN_SEC = 0.5;
 const ZOOM_FIT_STEPS = 3;
 const FIT_STEPS = 8;
+// Aligned word onsets land late of the audible attack; on exact time the highlight reads as lagging.
+const HIGHLIGHT_LEAD_SEC = 0.08;
 
 /** The first lyrics track's current line (plus the next, top-left / bottom-right
  *  by alternating line, in two-line mode), karaoke style, over the video area. */
@@ -41,13 +43,16 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     get audioTimeNow(): number {
       return playbackEngine.currentTime - playbackEngine.songLeadInSec;
     },
+    get lyricsTimeNow(): number {
+      return this.audioTimeNow + HIGHLIGHT_LEAD_SEC;
+    },
     get activeLineIdx(): number | undefined {
       const t = this.track;
-      return t ? activeLineIndexAt(t.lines, this.audioTimeNow, t.offsetSec) : undefined;
+      return t ? activeLineIndexAt(t.lines, this.lyricsTimeNow, t.offsetSec) : undefined;
     },
     get shownIdx(): number | undefined {
       const t = this.track;
-      return t ? shownLineIdx(t.lines, this.audioTimeNow, t.offsetSec) : undefined;
+      return t ? shownLineIdx(t.lines, this.lyricsTimeNow, t.offsetSec) : undefined;
     },
     get nextIdx(): number | undefined {
       const t = this.track;
@@ -64,7 +69,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
       const lineIdx = this.activeLineIdx;
       if (!t || lineIdx == null) return undefined;
       if (!t.lines[lineIdx].words?.length) return 0;
-      return activeWordIndexAt(t.lines, lineIdx, this.audioTimeNow, t.offsetSec);
+      return activeWordIndexAt(t.lines, lineIdx, this.lyricsTimeNow, t.offsetSec);
     },
     get activeWordEnded(): boolean {
       const t = this.track;
@@ -72,7 +77,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
       const wordIdx = this.activeWordIdx;
       if (!t || lineIdx == null || wordIdx == null) return false;
       const end = t.lines[lineIdx].words?.[wordIdx]?.endSec;
-      return end != null && this.audioTimeNow - t.offsetSec >= end;
+      return end != null && this.lyricsTimeNow - t.offsetSec >= end;
     },
     get countInTimes(): readonly number[] {
       const t = this.track;

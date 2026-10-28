@@ -131,6 +131,7 @@
 
 .overlay [data-word-state='current'] {
     -webkit-text-stroke-color: var(--color-karaoke-outline-current);
+    transition: none;
 }
 
 /* A word's pitch line (pitch mode) follows its word's state. */
@@ -146,6 +147,7 @@
 .overlay [data-word-state='current'] path {
     stroke: var(--color-karaoke-outline-current);
     stroke-width: 4;
+    transition: none;
 }
 
 /* The track view's chips opt back into pointer events; over the video they'd eat its clicks. */
