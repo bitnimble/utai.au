@@ -70,7 +70,8 @@ def _to_mixed_fp16(out_path: Path) -> None:
     constant-fold turns the rotary cos/sin into fp16 constants so no fp16xfp32 Mul remains."""
     import onnx
     import onnxruntime as ort
-    from onnxconverter_common import float16
+    from onnxruntime.transformers.float16 import convert_float_to_float16
+    from onnxruntime.transformers.onnx_model import OnnxModel
 
     folded = str(out_path.with_suffix(".folded.onnx"))
     so = ort.SessionOptions()
@@ -78,7 +79,9 @@ def _to_mixed_fp16(out_path: Path) -> None:
     so.optimized_model_filepath = folded
     ort.InferenceSession(str(out_path), so, providers=["CPUExecutionProvider"])
     m = onnx.load(folded)
-    m16 = float16.convert_float_to_float16(m, keep_io_types=True, op_block_list=["Pow", "ReduceMean"])
+    m16 = convert_float_to_float16(m, keep_io_types=True, op_block_list=["Pow", "ReduceMean"])
+    # The converter appends its graph-input Casts after their consumers.
+    OnnxModel(m16).topological_sort(is_deterministic=True)
     del m16.graph.value_info[:]  # stale type annotations conflict with strongly-typed TensorRT-RTX
     onnx.save(m16, str(out_path))
     os.remove(folded)

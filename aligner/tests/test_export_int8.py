@@ -6,7 +6,7 @@ import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper
 
-from app.pipeline.separation.export import _to_mixed_int8
+from app.pipeline.separation.export import _to_mixed_fp16, _to_mixed_int8
 
 K, N = 128, 64  # weight sizes >= the 4096-element quantization floor
 
@@ -67,6 +67,34 @@ def test_int8_quantizes_matmul_and_gemm_weights_not_constants(tmp_path):
         deq = q * sc
         rel = np.abs(deq - orig[base]).max() / np.abs(orig[base]).max()
         assert rel < 0.02, f"{base} dequant rel err {rel}"
+
+
+def test_mixed_fp16_keeps_rmsnorm_reductions_fp32(tmp_path):
+    path = tmp_path / "n.onnx"
+    w = numpy_helper.from_array((np.random.default_rng(0).standard_normal((K, N)) * 0.1).astype(np.float32), "w")
+    two = numpy_helper.from_array(np.array(2.0, np.float32), "two")
+    g = helper.make_graph(
+        [
+            helper.make_node("MatMul", ["x", "w"], ["h"]),
+            helper.make_node("Pow", ["h", "two"], ["sq"]),
+            helper.make_node("ReduceMean", ["sq"], ["y"], axes=[-1]),
+        ],
+        "g",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [K, K])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [K, 1])],
+        initializer=[w, two],
+    )
+    onnx.save(helper.make_model(g, opset_imports=[helper.make_opsetid("", 17)]), str(path))
+    _to_mixed_fp16(path)
+
+    m = onnx.load(str(path))
+    onnx.checker.check_model(m)
+    inits = {i.name: i.data_type for i in m.graph.initializer}
+    assert inits["w"] == TensorProto.FLOAT16
+    casts_into = {n.output[0]: n.attribute[0].i for n in m.graph.node if n.op_type == "Cast"}
+    pow_node = next(n for n in m.graph.node if n.op_type == "Pow")
+    assert casts_into[pow_node.input[0]] == TensorProto.FLOAT
+    assert m.graph.input[0].type.tensor_type.elem_type == TensorProto.FLOAT
 
 
 def test_int8_skips_small_weights(tmp_path):
