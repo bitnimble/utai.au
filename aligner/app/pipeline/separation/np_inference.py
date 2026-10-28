@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -135,21 +136,30 @@ def _ort_session(onnx_path, providers):
         return sess
 
 
-def _coreml_cache_dir() -> str | None:
-    """Persistent dir for CoreML's compiled `.mlmodelc` (keyed by model hash),
-    so an 8k-node graph isn't recompiled every launch. Under the redirected
-    cache root; None if it can't be created (CoreML then compiles each launch)."""
+def _coreml_cache_dir(onnx_path) -> str | None:
+    """Persistent dir for CoreML's compiled `.mlmodelc`, so an 8k-node graph isn't
+    recompiled every launch: one per version of the model file, dropping older
+    versions' compiles. Under the redirected cache root; None if it can't be
+    created (CoreML then compiles each launch)."""
     try:
         from app.config import settings
 
-        p = Path(settings.cache_dir) / "coreml"
+        model = Path(onnx_path)
+        st = model.stat()
+        version = f"{st.st_size}-{st.st_mtime_ns}"
+        root = Path(settings.cache_dir) / "coreml" / model.name
+        if root.is_dir():
+            for old in root.iterdir():
+                if old.name != version:
+                    shutil.rmtree(old, ignore_errors=True)
+        p = root / version
         p.mkdir(parents=True, exist_ok=True)
         return str(p)
     except Exception:
         return None
 
 
-def _separation_providers():
+def _separation_providers(onnx_path):
     """Provider list for the separation sessions. On macOS (CoreML EP present),
     the ONLY path is the CoreML EP configured for AOT compilation: MLProgram
     format (REQUIRED -- the legacy NeuralNetwork format rejects the fp16 bodies
@@ -173,7 +183,9 @@ def _separation_providers():
         "RequireStaticInputShapes": "1",
         "AllowLowPrecisionAccumulationOnGPU": "0",
     }
-    cache = _coreml_cache_dir()
+    # Per model version: onnxruntime keys its compile cache by the model's path, not its
+    # contents, so a model updated in place would otherwise run the old file's compile.
+    cache = _coreml_cache_dir(onnx_path)
     if cache:
         opts["ModelCacheDirectory"] = cache
     if _profiling():
@@ -416,7 +428,7 @@ class NumpySeparator:
         self.instruments = list(cfg["training"]["instruments"])
         self.target = cfg["training"].get("target_instrument")
         self._onnx_path = str(onnx_path)
-        self._providers = list(providers) if providers is not None else _separation_providers()
+        self._providers = list(providers) if providers is not None else _separation_providers(onnx_path)
         self._providers = _with_tensorrt(self._providers)
         self.session = _ort_session(onnx_path, self._providers)
         self._in = self.session.get_inputs()[0].name
