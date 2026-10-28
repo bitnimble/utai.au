@@ -170,4 +170,5 @@ pub fn run() {
 fn shutdown_children<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
     app.state::<sidecar::SidecarState>().kill_all_children();
+    app.state::<pitch::PitchState>().stop();
 }

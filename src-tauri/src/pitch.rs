@@ -40,6 +40,16 @@ struct PitchSession {
 #[derive(Default)]
 pub struct PitchState(Mutex<Option<PitchSession>>);
 
+impl PitchState {
+    pub fn stop(&self) {
+        if let Some(mut session) = self.0.lock().unwrap().take() {
+            session.stop.store(true, Ordering::Relaxed);
+            let _ = session.child.kill();
+            let _ = session.child.wait();
+        }
+    }
+}
+
 /// Start streaming mic pitch on `channel`: spawn the sidecar, pump the capture
 /// tap into it, relay its pitch out. Replaces any running session.
 #[tauri::command]
@@ -49,7 +59,7 @@ pub fn audio_pitch_subscribe<R: Runtime>(
     audio: State<'_, AudioState>,
     pitch: State<'_, PitchState>,
 ) -> Result<(), String> {
-    stop_session(&pitch);
+    pitch.stop();
 
     let python = resolve_python(&app);
     let mut child = Command::new(&python)
@@ -133,15 +143,7 @@ pub fn audio_pitch_subscribe<R: Runtime>(
 /// Stop the pitch stream (kills the sidecar).
 #[tauri::command]
 pub fn audio_pitch_unsubscribe(pitch: State<'_, PitchState>) {
-    stop_session(&pitch);
-}
-
-fn stop_session(pitch: &State<'_, PitchState>) {
-    if let Some(mut session) = pitch.0.lock().unwrap().take() {
-        session.stop.store(true, Ordering::Relaxed);
-        let _ = session.child.kill();
-        let _ = session.child.wait();
-    }
+    pitch.stop();
 }
 
 /// Frame the window as a little-endian u32 sample count + f32le samples.

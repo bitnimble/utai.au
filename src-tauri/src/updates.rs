@@ -6,7 +6,7 @@ use tauri::{AppHandle, Runtime};
 use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
-pub fn open_external<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), String> {
+pub async fn open_external<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), String> {
     if !url.starts_with("https://") {
         return Err(format!("refusing to open {url}: only https links open outside the app"));
     }
@@ -44,8 +44,12 @@ pub async fn update_install<R: Runtime>(
     let exiting = app.clone();
     let update = app
         .updater_builder()
-        // Windows exits the process to run the installer, skipping RunEvent::Exit.
-        .on_before_exit(move || crate::shutdown_children(&exiting))
+        // Windows exits the process to run the installer, skipping RunEvent::Exit. Replaces the
+        // plugin's default hook, so its cleanup_before_exit has to be called here too.
+        .on_before_exit(move || {
+            exiting.cleanup_before_exit();
+            crate::shutdown_children(&exiting);
+        })
         .build()
         .map_err(|e| e.to_string())?
         .check()
