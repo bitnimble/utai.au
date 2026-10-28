@@ -1,5 +1,12 @@
 import { expect, test } from 'bun:test';
-import { patchManifest } from '../android-tv';
+import { mainActivity, patchManifest } from '../android-tv';
+
+test('MainActivity tags the user agent and hands Back to the page', () => {
+  const activity = mainActivity('au.utai.app');
+  expect(activity).toStartWith('package au.utai.app\n');
+  expect(activity).toContain('userAgentString + " UtaiTV"');
+  expect(activity).toContain('webView.evaluateJavascript("window.utaiBack?.() === true")');
+});
 
 const TEMPLATE = `<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />

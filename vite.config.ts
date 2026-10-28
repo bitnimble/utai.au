@@ -53,7 +53,7 @@ const noHmrPushPlugin: Plugin = {
 // Note: the dev server has NO `/api` proxy, and there's no bundled dev
 // proxy in this repo yet. The browser bundle talks to `/api` on its own
 // origin, so local web dev needs the aligner backend reachable there --
-// point the frontend at the backend URL (Settings -> Advanced) or stand up
+// point the frontend at the backend URL (`VITE_ALIGNER_URL`) or stand up
 // a proxy (Caddy/nginx) in front of this dev server. Vite's own
 // `server.proxy` is NOT an option: the dev server runs under Bun, whose
 // node:http layer can't relay the backend's chunked NDJSON streaming

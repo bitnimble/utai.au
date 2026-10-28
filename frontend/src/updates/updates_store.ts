@@ -1,7 +1,7 @@
 import { makeAutoObservable } from 'mobx';
 import type { ReleaseNote } from './releases';
 
-export type InstallPhase = 'idle' | 'downloading' | 'restarting';
+type InstallPhase = 'idle' | 'downloading' | 'restarting';
 
 export class UpdatesStore {
   /** null until the shell answers; stays null outside the app (the website is always current). */

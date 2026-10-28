@@ -1,10 +1,9 @@
-# utai.au dev backend image (the aligner service in docker-compose.dev.yml).
+# utai.au backend image (the aligner service in docker-compose.dev.yml).
 #
 # The SHIPPED runtime is torch-free (onnxruntime only), so this image installs the
 # aligner's torch-free runtime capability groups and NOTHING torch -- unlike
 # sandbox/Dockerfile, which deliberately carries the full torch stack for the
-# export toolchain + parity tests. The two used to share one image; they diverged
-# once the runtime dropped its torch A-B fallback.
+# export toolchain + parity tests.
 #
 # Consequences of being torch-free: the backend runs ONLY provisioned/pre-exported
 # `.onnx` bodies -- it cannot export a model locally (that needs torch). The compose

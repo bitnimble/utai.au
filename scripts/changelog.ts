@@ -1,6 +1,3 @@
-// Writes a release's user-facing changelog from its commits with `claude -p`, or a fixed line
-// when claude is missing or fails. `bun run release` calls it; run it alone to try the prompt:
-//
 //   bun scripts/changelog.ts v0.1.8 v0.1.9    the changelog for the commits in v0.1.8..v0.1.9
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -177,8 +174,9 @@ export function markdown(lists: Record<Section, string[]>): string | null {
 }
 
 function commitsByBranch(from: string, to: string): string | null {
-  const range = from === '' ? to : `${from}..${to}`;
-  const mainline = git('log', '--first-parent', '--format=%x00%h %p%n%B', range);
+  // No earlier release: the recent history, not all of it, which would overflow the prompt.
+  const range = from === '' ? ['--max-count=150', to] : [`${from}..${to}`];
+  const mainline = git('log', '--first-parent', '--format=%x00%h %p%n%B', ...range);
   if (mainline == null) return null;
   const entries: string[] = [];
   for (const record of mainline.split('\0').slice(1)) {
@@ -200,7 +198,7 @@ function commitsByBranch(from: string, to: string): string | null {
 }
 
 function git(...args: string[]): string | null {
-  const result = spawnSync('git', args, { cwd: ROOT, encoding: 'utf8' });
+  const result = spawnSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   return result.status === 0 ? result.stdout : null;
 }
 

@@ -46,8 +46,8 @@ pub fn run() {
     let log_builder = tauri_plugin_log::Builder::default()
         .level(log::LevelFilter::Info)
         // Default cap is 40 KB, which truncates the log almost immediately; a few
-        // MB keeps enough history to diagnose an alignment from the Advanced-tab
-        // viewer. KeepOne bounds disk to at most two files.
+        // MB keeps enough history to diagnose an alignment from the Logs viewer.
+        // KeepOne bounds disk to at most two files.
         .max_file_size(5_000_000)
         .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne);
     // Point the log file under <data-root>/logs (portable) or the OS log dir

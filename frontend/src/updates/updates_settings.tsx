@@ -6,7 +6,6 @@ import { UpdatesPresenterContext, UpdatesStoreContext } from './updates_contexts
 import type { UpdatesStore } from './updates_store';
 import styles from './updates_settings.module.css';
 
-/** The Updates settings tab: this version, the releases since it with their notes, and the install. */
 export const UpdatesSettings = observer(function UpdatesSettings() {
   const store = React.useContext(UpdatesStoreContext);
   const presenter = React.useContext(UpdatesPresenterContext);
@@ -17,7 +16,7 @@ export const UpdatesSettings = observer(function UpdatesSettings() {
     <div className={styles.body} data-testid="updates-settings">
       <div className={styles.row}>
         <div className={styles.status}>
-          <span className={styles.version}>utai.au {store.current ?? ''}</span>
+          <span className={styles.version}>utai.au {store.current}</span>
           <span className={styles.hint} data-testid="updates-status">
             {statusText(store)}
           </span>
@@ -60,10 +59,10 @@ export const UpdatesSettings = observer(function UpdatesSettings() {
           </div>
           {store.newer.map((note) => (
             <section key={note.version} className={styles.release}>
-              <button type="button" className={styles.releaseTitle} onClick={() => void presenter.openReleasePage(note)}>
+              <button type="button" className={styles.releaseTitle} onClick={() => void presenter.openUrl(note.url)}>
                 What&rsquo;s new in {note.version}
               </button>
-              <ReleaseNotes markdown={note.notes} />
+              <ReleaseNotes markdown={note.notes} onOpen={(url) => void presenter.openUrl(url)} />
             </section>
           ))}
         </>

@@ -1,4 +1,4 @@
-//! Expose the app log file to the webview's Settings → Advanced log viewer.
+//! Expose the app log file to the webview's Settings → Logs viewer.
 //!
 //! The broker + piped sidecar stderr + capability-install output all land in the
 //! log file via `log::` (see `lib.rs` logger setup); this returns its tail so the
@@ -25,7 +25,7 @@ pub async fn read_log_tail<R: Runtime>(
 }
 
 /// Reveal the writable data root (venv, models, outputs, logs, caches) in the OS
-/// file manager, for the Settings → Advanced "Open app data folder" button. Uses
+/// file manager, for the Settings → Logs "Open data folder" button. Uses
 /// the platform opener (no dependency): a fire-and-forget spawn -- the file
 /// manager is detached and outlives the child handle (no `kill_on_drop`).
 #[tauri::command]

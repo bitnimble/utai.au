@@ -1,10 +1,5 @@
-// Writes the next version into `package.json` and its changelog into `changelog.json`, commits
-// both, and tags the commit `v<version>`.
-//
 //   bun run release            the patch after the current version
 //   bun run release 1.2.0      that version
-//
-// Pushing the tag (`git push --follow-tags`) is what starts the release workflow.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -70,7 +65,15 @@ if (import.meta.main) {
   const changelogs = JSON.parse(readFileSync(CHANGELOG_JSON, 'utf8'));
   writeFileSync(CHANGELOG_JSON, `${JSON.stringify({ ...changelogs, [tag]: notes }, null, 2)}\n`);
   writeFileSync(PACKAGE_JSON, withVersion(packageJson, version));
-  git('commit', '--quiet', '-m', `chore(release): ${version}`, '--', 'package.json', 'changelog.json');
+  const commit = spawnSync('git', ['commit', '--quiet', '-m', `chore(release): ${version}`, '--', 'package.json', 'changelog.json'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  });
+  if (commit.status !== 0) {
+    // Else the next run refuses the dirty tree this leaves.
+    git('checkout', '--', 'package.json', 'changelog.json');
+    fail(`git commit failed:\n${commit.stderr}`);
+  }
   // Annotated, because `git push --follow-tags` pushes only annotated tags.
   git('tag', '--annotate', tag, '-m', tag);
 

@@ -11,7 +11,6 @@ const SOURCE_OPTIONS: ReadonlyArray<RadioOption<LogSource>> = [
   { value: 'backend', label: 'Backend', testId: 'logs-source-backend' },
 ];
 
-/** The Logs settings tab: a snapshot of one log source, newest line at the bottom. */
 export const LogsSettings = observer(function LogsSettings() {
   const [{ store, presenter }] = React.useState(() => {
     const store = new LogsStore(isSidecarAvailable() ? ['interface', 'backend'] : ['interface']);
@@ -48,7 +47,7 @@ export const LogsSettings = observer(function LogsSettings() {
         >
           Copy
         </button>
-        {isSidecarAvailable() && (
+        {store.sources.includes('backend') && (
           <button type="button" className={styles.button} onClick={() => void presenter.openDataFolder()}>
             Open data folder
           </button>

@@ -1,7 +1,5 @@
 name: release
 
-# A `v*` tag (`bun run release` then `git push --follow-tags`) builds everything and publishes a
-# GitHub release. A manual run builds without publishing, its outputs left as run artifacts.
 on:
   push:
     tags: ['v*']
@@ -70,8 +68,6 @@ jobs:
             <<<"$DESKTOP")
           echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
 
-  # The aligner backend (the music facade + ML pipeline the website and Android app talk to) and
-  # the OnTheSpot service it fronts, as docker-compose.dev.yml runs them.
   docker:
     needs: plan
     if: needs.plan.outputs.docker == 'true'
@@ -111,14 +107,13 @@ jobs:
           context: .
           file: docker/${{ matrix.image }}.Dockerfile
           platforms: linux/amd64
-          push: true
+          push: ${{ needs.plan.outputs.tag != '' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # The registry, not `type=gha`: the repository's 10GB of Actions cache is mostly Rust.
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}-${{ matrix.image }}:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository }}-${{ matrix.image }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
 
-  # Each platform on its own OS: a Tauri app with a staged Python sidecar doesn't cross-build.
   desktop:
     needs: plan
     if: needs.plan.outputs.desktop != '[]'
@@ -144,8 +139,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: bun install --frozen-lockfile
 
-      # Runs beforeBuildCommand (frontend build + desktop:resources), then bundles. Signed updater
-      # bundles only with the key: without it Tauri refuses to build them at all.
+      # Updater bundles only with the key: without it Tauri refuses to build them at all.
       - name: Build the app
         shell: bash
         run: |
@@ -186,7 +180,6 @@ jobs:
           name: dist-${{ matrix.platform }}
           path: dist/
 
-  # A dev build: release-optimised, signed with a debug key, no Play upload.
   android:
     needs: plan
     if: needs.plan.outputs.android == 'true'
@@ -244,12 +237,9 @@ jobs:
           name: dist-android-arm64
           path: dist/
 
-  # One release, made once every build has finished. A platform that failed is left out rather
-  # than holding the others back; `latest.json` is written from the files actually uploaded, so
-  # it can't point an install at a file that isn't there.
   publish:
-    needs: [plan, docker, desktop, android]
-    if: ${{ always() && needs.plan.outputs.tag != '' }}
+    needs: [plan, desktop, android]
+    if: ${{ !cancelled() && needs.plan.outputs.tag != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -263,19 +253,39 @@ jobs:
           path: dist
           pattern: dist-*
           merge-multiple: true
-      - run: bun scripts/write-update-manifest.ts --dist dist --tag "$TAG" --repo "$REPO"
+      - id: manifest
+        run: bun scripts/write-update-manifest.ts --dist dist --tag "$TAG" --repo "$REPO"
         env:
           TAG: ${{ needs.plan.outputs.tag }}
           REPO: ${{ github.repository }}
       - run: jq -r --arg tag "$TAG" '.[$tag] // "Bug fixes and performance improvements"' changelog.json > "$RUNNER_TEMP/changelog.md"
         env:
           TAG: ${{ needs.plan.outputs.tag }}
-      - uses: softprops/action-gh-release@v3
+      # A draft until every file is up: a published release is `latest` at once, and the app
+      # would offer it while latest.json still points at files mid-upload.
+      - id: release
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.plan.outputs.tag }}
+          draft: true
           # The release's description is the changelog the app shows.
           body_path: ${{ runner.temp }}/changelog.md
           prerelease: ${{ contains(needs.plan.outputs.tag, '-') }}
           files: |
             dist/latest.json
             dist/*/*
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ID: ${{ steps.release.outputs.id }}
+          DESKTOP: ${{ needs.desktop.result }}
+          ANDROID: ${{ needs.android.result }}
+          SIGNED: ${{ steps.manifest.outputs.signed }}
+        run: |
+          set -eu
+          if [ "$DESKTOP" != success ] || [ "$ANDROID" != success ] || [ "$SIGNED" != true ]; then
+            echo "::warning::left as a draft (desktop: $DESKTOP, android: $ANDROID, signed updater bundles: $SIGNED): fix the build and rerun all jobs, or publish the draft by hand"
+            exit 0
+          fi
+          gh api -X PATCH "repos/$REPO/releases/$ID" -F draft=false > /dev/null

@@ -22,8 +22,12 @@ export class PageLog {
       const name = method as keyof typeof CONSOLE_LEVELS;
       const original = console[name].bind(console);
       console[name] = (...args: unknown[]) => {
-        this.record(level, args);
         original(...args);
+        try {
+          this.record(level, args);
+        } catch {
+          // A value that can't be rendered mustn't throw into the code that logged it.
+        }
       };
     }
     window.addEventListener('error', (event) => this.record('ERROR', ['uncaught', event.error ?? event.message]));

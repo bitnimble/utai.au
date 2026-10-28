@@ -1,6 +1,21 @@
 import { expect, test } from 'bun:test';
 import { manifest } from '../write-update-manifest';
 
+test('lists both desktop platforms when both are signed', () => {
+  const files = [
+    'dist/windows-x86_64/utai.au_0.2.0_windows-x86_64-setup.exe',
+    'dist/windows-x86_64/utai.au_0.2.0_windows-x86_64-setup.exe.sig',
+    'dist/macos-arm64/utai.au_0.2.0_macos-arm64.app.tar.gz',
+    'dist/macos-arm64/utai.au_0.2.0_macos-arm64.app.tar.gz.sig',
+  ];
+  const result = manifest(files, (f) => `sig of ${f}`, 'v0.2.0', 'bitnimble/utai.au', '', new Date(0));
+  expect(result.platforms['darwin-aarch64']).toEqual({
+    signature: 'sig of dist/macos-arm64/utai.au_0.2.0_macos-arm64.app.tar.gz.sig',
+    url: 'https://github.com/bitnimble/utai.au/releases/download/v0.2.0/utai.au_0.2.0_macos-arm64.app.tar.gz',
+  });
+  expect(Object.keys(result.platforms).sort()).toEqual(['darwin-aarch64', 'windows-x86_64']);
+});
+
 test('lists each signed updater bundle under its platform, skipping unsigned ones', () => {
   const files = [
     'dist/windows-x86_64/utai.au_0.2.0_windows-x86_64-setup.exe',

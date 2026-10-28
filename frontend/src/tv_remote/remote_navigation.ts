@@ -1,6 +1,6 @@
 import { TV_BACK } from './tv';
 
-export type Direction = 'up' | 'down' | 'left' | 'right';
+type Direction = 'up' | 'down' | 'left' | 'right';
 
 export type Box = Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>;
 
@@ -14,8 +14,10 @@ const DIRECTIONS: Partial<Record<string, Direction>> = {
 const FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex]';
 const OWNS_HORIZONTAL =
   'input:not([type="checkbox"]), textarea, [role="slider"], [role="tablist"], [role="radiogroup"]';
-const OWNS_ALL = 'select, [role="menu"], [role="listbox"]';
-const LAYER = '[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"]';
+// No listbox in either: the only one, the colour picker's swatches, has no arrow handling and
+// sits inside its dialog, so the D-pad has to move through it and out to the dialog's controls.
+const OWNS_ALL = 'select, [role="menu"]';
+const LAYER = '[role="menu"], [role="dialog"], [role="alertdialog"]';
 const DIALOG = '[role="dialog"], [role="alertdialog"]';
 
 const TOGGLES = new Set(['checkbox', 'radio']);
@@ -79,8 +81,7 @@ export function followRemote(): () => void {
   };
 }
 
-/** Focuses the nearest control in `direction`; false where nothing lies that way. */
-export function focusToward(from: HTMLElement, direction: Direction): boolean {
+function focusToward(from: HTMLElement, direction: Direction): void {
   const candidates = focusables(from.closest(LAYER) ?? document.body).filter(
     (each) => !each.contains(from) && !from.contains(each),
   );
@@ -89,9 +90,7 @@ export function focusToward(from: HTMLElement, direction: Direction): boolean {
     candidates.map((each) => each.getBoundingClientRect()),
     direction,
   );
-  if (best == null) return false;
-  focusFromRemote(candidates[best]);
-  return true;
+  if (best != null) focusFromRemote(candidates[best]);
 }
 
 /** Index of the box nearest `from` in `direction`, or null where none lies that way. */
@@ -134,7 +133,8 @@ function isTyped(element: Element | null): element is HTMLInputElement | HTMLTex
 /** The remote's Back: whatever is open closes on it. False when nothing used it, which leaves the app. */
 function goBack(): boolean {
   const active = document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
-  const inLayer = active.closest(`${LAYER}, [aria-haspopup][aria-expanded="true"]`) != null;
+  const inLayer =
+    active.closest(`${LAYER}, [aria-haspopup][aria-expanded="true"]`) != null || openLayers().length > 0;
   const escape = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true });
   // Popups close on Escape without preventing its default.
   return !active.dispatchEvent(escape) || inLayer;

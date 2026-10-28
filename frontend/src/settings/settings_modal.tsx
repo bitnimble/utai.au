@@ -1,3 +1,4 @@
+import { isTauri } from '@tauri-apps/api/core';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { AudioSettings } from 'src/audio_devices/audio_settings';
@@ -7,7 +8,6 @@ import { MusicSourcesSettings } from 'src/music_source/music_sources_settings';
 import { MusicSourcePresenterContext } from 'src/music_source/music_source_contexts';
 import { Modal, ModalHeader } from 'src/ui/modal/modal';
 import { Tabs } from 'src/ui/tabs/tabs';
-import { UpdatesStoreContext } from 'src/updates/updates_contexts';
 import { UpdatesSettings } from 'src/updates/updates_settings';
 import { useSettingsModal, type SettingsTab } from './settings_modal_context';
 
@@ -20,19 +20,17 @@ const TAB_OPTIONS: ReadonlyArray<{ value: SettingsTab; label: string; testId: st
 const UPDATES_TAB = { value: 'updates', label: 'Updates', testId: 'settings-tab-updates' } as const;
 
 /**
- * The app's Settings dialog: a tabbed <Modal> hosting the music-source
- * ("Music sources"), audio-device ("Audio"), log ("Logs") and, in the app,
- * update ("Updates") panels. Open/tab state comes
- * from the global {@link useSettingsModal} context; each panel reads its own
- * domain via context. Opening it lazily loads the service catalog + enumerates
- * audio devices.
+ * The app's Settings dialog. Open/tab state comes from the global
+ * {@link useSettingsModal} context; each panel reads its own domain via
+ * context. Opening it lazily loads the service catalog + enumerates audio
+ * devices.
  */
 export const SettingsModal = observer(function SettingsModal() {
   const { open, tab, close, setTab } = useSettingsModal();
   const musicPresenter = React.useContext(MusicSourcePresenterContext);
   const audioPresenter = React.useContext(AudioDevicePresenterContext);
-  const updates = React.useContext(UpdatesStoreContext);
-  const tabs = updates?.current != null ? [...TAB_OPTIONS, UPDATES_TAB] : TAB_OPTIONS;
+  // The website is always current; only the apps update.
+  const tabs = isTauri() ? [...TAB_OPTIONS, UPDATES_TAB] : TAB_OPTIONS;
 
   React.useEffect(() => {
     if (!open) return;

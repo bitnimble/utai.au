@@ -6,7 +6,7 @@ import type { UpdatesStore } from './updates_store';
 
 const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
-type Progress = { downloaded: number; total: number | null };
+type Progress = { downloaded: number; total: number | null; done: boolean };
 
 export type UpdateShell = {
   isAndroid: boolean;
@@ -17,7 +17,7 @@ export type UpdateShell = {
   open(url: string): Promise<void>;
 };
 
-export const tauriUpdateShell = (): UpdateShell => ({
+const tauriUpdateShell = (): UpdateShell => ({
   isAndroid: __IS_MOBILE__,
   version: getVersion,
   canInstall: () => invoke<boolean>('update_can_install'),
@@ -104,21 +104,7 @@ export class UpdatesPresenter {
     }
   }
 
-  async openReleasePage(note: ReleaseNote): Promise<void> {
-    await this.open(note.url);
-  }
-
-  private setProgress({ downloaded, total }: Progress): void {
-    this.store.downloaded = downloaded;
-    this.store.total = total;
-    if (total != null && downloaded >= total) this.store.install = 'restarting';
-  }
-
-  private async openDownload(note: ReleaseNote): Promise<void> {
-    await this.open(this.shell.isAndroid ? (note.apkUrl ?? note.url) : note.url);
-  }
-
-  private async open(url: string): Promise<void> {
+  async openUrl(url: string): Promise<void> {
     try {
       await this.shell.open(url);
     } catch (err) {
@@ -126,6 +112,16 @@ export class UpdatesPresenter {
         this.store.error = `Couldn't open ${url}: ${message(err)}`;
       });
     }
+  }
+
+  private setProgress({ downloaded, total, done }: Progress): void {
+    this.store.downloaded = downloaded;
+    this.store.total = total;
+    if (done) this.store.install = 'restarting';
+  }
+
+  private async openDownload(note: ReleaseNote): Promise<void> {
+    await this.openUrl(this.shell.isAndroid ? (note.apkUrl ?? note.url) : note.url);
   }
 }
 

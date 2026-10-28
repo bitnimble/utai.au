@@ -1,5 +1,3 @@
-//! Installing an app update, for the frontend's update presenter, which finds them.
-
 #[cfg(desktop)]
 use serde::Serialize;
 use tauri::{AppHandle, Runtime};
@@ -30,15 +28,16 @@ pub fn update_can_install() -> bool {
 pub struct UpdateProgress {
     downloaded: u64,
     total: Option<u64>,
+    done: bool,
 }
 
-/// Downloads and installs the newest release, then relaunches into it.
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn update_install<R: Runtime>(
     app: AppHandle<R>,
     on_progress: tauri::ipc::Channel<UpdateProgress>,
 ) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use tauri_plugin_updater::UpdaterExt;
 
     let exiting = app.clone();
@@ -57,14 +56,17 @@ pub async fn update_install<R: Runtime>(
         .map_err(|e| e.to_string())?
         .ok_or("the newest release has no update for this platform")?;
     log::info!("installing update {}", update.version);
-    let mut downloaded = 0u64;
+    let downloaded = AtomicU64::new(0);
     update
         .download_and_install(
             |chunk, total| {
-                downloaded += chunk as u64;
-                let _ = on_progress.send(UpdateProgress { downloaded, total });
+                let downloaded = downloaded.fetch_add(chunk as u64, Ordering::Relaxed) + chunk as u64;
+                let _ = on_progress.send(UpdateProgress { downloaded, total, done: false });
             },
-            || {},
+            || {
+                let downloaded = downloaded.load(Ordering::Relaxed);
+                let _ = on_progress.send(UpdateProgress { downloaded, total: Some(downloaded), done: true });
+            },
         )
         .await
         .map_err(|e| e.to_string())?;
