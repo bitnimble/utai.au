@@ -3,11 +3,15 @@
 //! selection, volumes, and a telemetry `Channel` streaming playhead + input
 //! level for the frontend to dead-reckon against. Desktop-only.
 
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{AppHandle, State};
+
+use crate::no_console::NoConsole;
 use utai_audio::decode;
 use utai_audio::device::{AudioEngine, DeviceSelection};
 
@@ -51,12 +55,48 @@ pub fn audio_list_devices() -> DeviceList {
 pub fn audio_load_track(
     id: String,
     path: String,
+    app: AppHandle,
     state: State<'_, AudioState>,
 ) -> Result<f64, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("read {path}: {e}"))?;
-    let decoded = decode::decode_bytes(bytes)?;
+    let decoded = match decode::decode_bytes(bytes) {
+        Ok(track) => track,
+        // symphonia has no Opus decoder, and YouTube downloads are Opus.
+        Err(err) => decode_with_ffmpeg(&ffmpeg(&app), &path).map_err(|e| format!("{err}; ffmpeg: {e}"))?,
+    };
     state.0.load_track(id, decoded);
     Ok(state.0.duration_secs())
+}
+
+const FFMPEG_SAMPLE_RATE: u32 = 48_000;
+
+fn ffmpeg(app: &AppHandle) -> PathBuf {
+    crate::paths::data_root(app)
+        .map(|root| crate::paths::bundled_ffmpeg(&root))
+        .ok()
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from("ffmpeg"))
+}
+
+fn decode_with_ffmpeg(ffmpeg: &Path, path: &str) -> Result<decode::DecodedTrack, String> {
+    let rate = FFMPEG_SAMPLE_RATE.to_string();
+    let out = Command::new(ffmpeg)
+        .args(["-v", "error", "-i", path, "-f", "f32le", "-ac", "2", "-ar", &rate, "-"])
+        .no_console()
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let samples: Vec<f32> = out
+        .stdout
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    if samples.is_empty() {
+        return Err("decoded to zero samples".to_string());
+    }
+    Ok(decode::DecodedTrack { samples, sample_rate: FFMPEG_SAMPLE_RATE })
 }
 
 /// Drop a track from the mix (e.g. the full mix once its stems replace it).
@@ -115,6 +155,37 @@ pub fn audio_set_devices(
         output,
         capture,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ffmpeg_decodes_opus_webm_symphonia_cannot() {
+        let ffmpeg = PathBuf::from(std::env::var("UTAI_TEST_FFMPEG").unwrap_or_else(|_| "ffmpeg".into()));
+        if Command::new(&ffmpeg).arg("-version").output().is_err() {
+            eprintln!("no ffmpeg; skipping");
+            return;
+        }
+        let path = std::env::temp_dir().join(format!("utai-opus-{}.webm", std::process::id()));
+        let made = Command::new(&ffmpeg)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-ac", "2"])
+            .args(["-c:a", "libopus"])
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        assert!(decode::decode_bytes(std::fs::read(&path).unwrap()).is_err());
+
+        let track = decode_with_ffmpeg(&ffmpeg, path.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(track.sample_rate, FFMPEG_SAMPLE_RATE);
+        let secs = track.frames() as f64 / FFMPEG_SAMPLE_RATE as f64;
+        assert!((secs - 1.0).abs() < 0.05, "{secs}s");
+        assert!(track.samples.iter().any(|s| s.abs() > 0.05));
+    }
 }
 
 /// Start streaming playhead + level on `channel` (~33 Hz). The thread ends on
