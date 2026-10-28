@@ -81,7 +81,9 @@ header `backendFetch` attaches.
   `TAURI_SIGNING_PRIVATE_KEY` signs updater bundles (`_PASSWORD` stays unset:
   the key has none, and a missing secret reaches the build as empty); the
   public key is in `tauri.conf.json`; `ANDROID_DEBUG_KEYSTORE_BASE64` keeps one
-  debug key so APKs install over each other.
+  debug key so APKs install over each other. No Apple Developer ID: the macOS
+  app is ad-hoc signed (`bundle.macOS.signingIdentity: "-"`), so a downloaded
+  copy opens via System Settings > Privacy & Security > Open Anyway.
 - **Updates** (`frontend/src/updates/`): the app checks the GitHub releases API
   at launch and hourly; Settings > Updates lists newer releases' notes. Desktop
   installs via `tauri-plugin-updater` (`src-tauri/src/updates.rs`); the portable
