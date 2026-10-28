@@ -11,12 +11,15 @@ CPU. This pass eliminates all of them:
   1. onnx-simplifier (with the input shape pinned) folds the static-shape-derived
      ops -- rotary tables, `Where`/`Equal`/`ConstantOfShape`, most `Cos`/`Sin` --
      into constants.
-  2. Four structural rewrites replace the activation-dependent unsupported ops
-     with CoreML-native equivalents (all exact identities):
+  2. Structural rewrites replace the remaining unsupported ops with CoreML-native
+     equivalents (all exact identities):
        ReduceL2(x, axes) -> Sqrt(ReduceSum(Mul(x, x), axes))
        Einsum('...,f->...f', A, B) -> Mul(Unsqueeze(A, -1), B)
        Neg(x) -> Mul(x, -1)
        Expand(x, shape) -> dropped (consumers broadcast x themselves)
+       ScatterElements(0, idx, upd, add) -> MatMul(upd, one-hot(idx)) (mel-band merge)
+       Flatten(x, axis) -> Reshape(x, static 2-D shape) (no MLProgram builder)
+       Pow(x, 2) -> Mul(x, x) (Pow is CoreML-native only at fp32)
   3. A second onnx-simplifier pass cleans up now-dead Shape nodes.
 
 Verified numerically identical to the original on CPU (max|Δ| ~2e-6). Build-time
@@ -25,10 +28,12 @@ only (needs onnx-simplifier, a dev dep); the shipped runtime never imports this.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
+import numpy as np
 import onnx
-from onnx import TensorProto, helper
+from onnx import TensorProto, helper, numpy_helper
 
 
 def _axes_init(name: str, axes: list[int]) -> onnx.TensorProto:
@@ -126,6 +131,85 @@ def rewrite_expand_drop(graph: onnx.GraphProto) -> int:
     return len(rename)
 
 
+def rewrite_pow_square(graph: onnx.GraphProto) -> int:
+    """Pow(x, 2) -> Mul(x, x). The CoreML EP takes Pow only with fp32 inputs, so in the
+    fp16 body every norm's square would otherwise fall to the CPU."""
+    inits = {i.name: i for i in graph.initializer}
+    n = 0
+    for node in graph.node:
+        if node.op_type != "Pow" or node.input[1] not in inits:
+            continue
+        exponent = numpy_helper.to_array(inits[node.input[1]])
+        if exponent.size != 1 or float(exponent) != 2.0:
+            continue
+        node.op_type = "Mul"
+        node.input[1] = node.input[0]
+        n += 1
+    return n
+
+
+def rewrite_flatten(graph: onnx.GraphProto) -> int:
+    """Flatten(x, axis) -> Reshape(x, [prod(dims[:axis]), prod(dims[axis:])]), from x's
+    static shape. The CoreML EP builds Flatten only for the NeuralNetwork format."""
+    flattens = [node for node in graph.node if node.op_type == "Flatten"]
+    if not flattens:
+        return 0
+    inferred = onnx.shape_inference.infer_shapes(_wrap(graph)).graph
+    static: dict[str, list[int]] = {
+        vi.name: [d.dim_value for d in vi.type.tensor_type.shape.dim]
+        for vi in list(inferred.value_info) + list(inferred.input)
+        if all(d.HasField("dim_value") for d in vi.type.tensor_type.shape.dim)
+    }
+    for i, node in enumerate(flattens):
+        shape = static.get(node.input[0])
+        if not shape:
+            raise ValueError(f"coreml_optimize: Flatten {node.name!r} input has no static shape")
+        axis = next((a.i for a in node.attribute if a.name == "axis"), 1) % len(shape)
+        b = node.name or f"flatten_{i}"
+        target = [math.prod(shape[:axis]), math.prod(shape[axis:])]
+        graph.initializer.append(helper.make_tensor(f"{b}/shape", TensorProto.INT64, [2], target))
+        node.op_type = "Reshape"
+        node.input.append(f"{b}/shape")
+        del node.attribute[:]
+    return len(flattens)
+
+
+def rewrite_scatter_add(graph: onnx.GraphProto) -> int:
+    """ScatterElements(zeros, idx, upd, axis=a, reduction='add') with constant indices
+    that vary only along `a` (the mel-band overlap merge) -> Transpose `a` last, MatMul
+    with the constant one-hot [J, F] matrix, Transpose back."""
+    inits = {i.name: i for i in graph.initializer}
+    out, n = [], 0
+    for node in graph.node:
+        if node.op_type != "ScatterElements":
+            out.append(node)
+            continue
+        data_name, idx_name, upd_name = node.input
+        attrs = {a.name: helper.get_attribute_value(a) for a in node.attribute}
+        if attrs.get("reduction") != b"add" or data_name not in inits or idx_name not in inits:
+            raise ValueError(f"coreml_optimize: unhandled ScatterElements {node.name!r} (needs constant add-scatter)")
+        data = numpy_helper.to_array(inits[data_name])
+        idx = numpy_helper.to_array(inits[idx_name])
+        axis = attrs.get("axis", 0) % idx.ndim
+        rows = np.moveaxis(idx, axis, -1).reshape(-1, idx.shape[axis])
+        same_off_axis = np.delete(idx.shape, axis).tolist() == np.delete(data.shape, axis).tolist()
+        if np.any(data) or not same_off_axis or np.any(rows != rows[0]):
+            raise ValueError(f"coreml_optimize: unhandled ScatterElements {node.name!r} (indices must vary only along axis {axis} into zeros)")
+        width = data.shape[axis]
+        onehot = np.zeros((idx.shape[axis], width), np.float32)
+        onehot[np.arange(idx.shape[axis]), rows[0] % width] = 1.0
+        fwd = [d for d in range(idx.ndim) if d != axis] + [axis]
+        b = node.name or f"scatter_add_{n}"
+        graph.initializer.append(numpy_helper.from_array(onehot, f"{b}/onehot"))
+        out.append(helper.make_node("Transpose", [upd_name], [f"{b}/t"], name=f"{b}/Transpose", perm=fwd))
+        out.append(helper.make_node("MatMul", [f"{b}/t", f"{b}/onehot"], [f"{b}/sum"], name=f"{b}/MatMul"))
+        out.append(helper.make_node("Transpose", [f"{b}/sum"], [node.output[0]], name=f"{b}/TransposeBack", perm=np.argsort(fwd).tolist()))
+        n += 1
+    del graph.node[:]
+    graph.node.extend(out)
+    return n
+
+
 def _empty_tensors(model: onnx.ModelProto) -> set[str]:
     """Names of tensors with a statically-0 dimension (empty), from shape
     inference. CoreML rejects 0-dim shapes outright -- they come from the Roformer's
@@ -181,6 +265,9 @@ def coreml_optimize(onnx_path: str | Path, input_shapes: dict[str, list[int]]) -
     rewrite_einsum(model.graph)
     rewrite_neg(model.graph)
     rewrite_expand_drop(model.graph)
+    rewrite_scatter_add(model.graph)
+    rewrite_flatten(model.graph)
+    rewrite_pow_square(model.graph)
     # Second pass: prune the now-dead Shape nodes the dropped Expands fed, and
     # concretise shapes so the empty-tensor pass below can see the 0-dim slices.
     model, ok = onnxsim.simplify(model, overwrite_input_shapes=input_shapes)

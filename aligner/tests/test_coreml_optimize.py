@@ -14,8 +14,11 @@ from app.pipeline.separation.coreml_optimize import (
     prune_empty_concat_inputs,
     rewrite_einsum,
     rewrite_expand_drop,
+    rewrite_flatten,
     rewrite_neg,
+    rewrite_pow_square,
     rewrite_reducel2,
+    rewrite_scatter_add,
 )
 
 
@@ -94,6 +97,59 @@ def test_expand_feeding_graph_output_is_kept():
     model = _model([expand], [_vi("x", [2, 1])], [_vi("out", [2, 3])], inits=[shape])
     assert rewrite_expand_drop(model.graph) == 0
     assert any(node.op_type == "Expand" for node in model.graph.node)
+
+
+def test_pow_square_rewrite_is_exact():
+    two = helper.make_tensor("two", TensorProto.FLOAT, [], [2.0])
+    node = helper.make_node("Pow", ["x", "two"], ["y"])
+    model = _model([node], [_vi("x", [2, 3])], [_vi("y", [2, 3])], inits=[two])
+    x = np.random.default_rng(7).standard_normal((2, 3)).astype(np.float32)
+    _assert_equivalent(model, rewrite_pow_square, {"x": x}, "Pow")
+
+
+def test_pow_other_exponent_is_kept():
+    three = helper.make_tensor("three", TensorProto.FLOAT, [], [3.0])
+    node = helper.make_node("Pow", ["x", "three"], ["y"])
+    model = _model([node], [_vi("x", [2, 3])], [_vi("y", [2, 3])], inits=[three])
+    assert rewrite_pow_square(model.graph) == 0
+
+
+def test_flatten_rewrite_is_exact():
+    node = helper.make_node("Flatten", ["x"], ["y"], axis=2)
+    model = _model([node], [_vi("x", [1, 5, 4, 2])], [_vi("y", [5, 8])])
+    x = np.random.default_rng(6).standard_normal((1, 5, 4, 2)).astype(np.float32)
+    _assert_equivalent(model, rewrite_flatten, {"x": x}, "Flatten")
+
+
+def _scatter_add_model(line: list[int], data: np.ndarray, idx: np.ndarray | None = None) -> onnx.ModelProto:
+    # Mel-band overlap merge: band bins (axis 1) summed onto the frequency bins they map to.
+    j = len(line)
+    if idx is None:
+        idx = np.broadcast_to(np.array(line)[None, :, None], (2, j, 3)).copy()
+    inits = [onnx.numpy_helper.from_array(data, "data"), onnx.numpy_helper.from_array(idx.astype(np.int64), "idx")]
+    node = helper.make_node("ScatterElements", ["data", "idx", "upd"], ["y"], axis=1, reduction="add")
+    return _model([node], [_vi("upd", [2, j, 3])], [_vi("y", list(data.shape))], inits=inits)
+
+
+def test_scatter_add_rewrite_is_exact():
+    line = [0, 1, 1, 2, 3, 3, 3]  # overlapping bands, as the mel band split produces
+    model = _scatter_add_model(line, np.zeros((2, 4, 3), np.float32))
+    upd = np.random.default_rng(5).standard_normal((2, len(line), 3)).astype(np.float32)
+    _assert_equivalent(model, rewrite_scatter_add, {"upd": upd}, "ScatterElements")
+
+
+def test_scatter_add_refuses_nonzero_data():
+    model = _scatter_add_model([0, 1], np.ones((2, 2, 3), np.float32))
+    with pytest.raises(ValueError, match="ScatterElements"):
+        rewrite_scatter_add(model.graph)
+
+
+def test_scatter_add_refuses_indices_varying_off_axis():
+    idx = np.zeros((2, 2, 3), np.int64)
+    idx[1, 0, 0] = 1
+    model = _scatter_add_model([0, 1], np.zeros((2, 2, 3), np.float32), idx=idx)
+    with pytest.raises(ValueError, match="ScatterElements"):
+        rewrite_scatter_add(model.graph)
 
 
 def test_prune_empty_concat_input_is_exact():
