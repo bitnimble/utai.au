@@ -1,5 +1,6 @@
 # Test layout: every test for a feature lives in that feature's `test/`
-# subfolder, i.e. `src/<feature>/test/`. Unit tests keep the `.test.ts`
+# subfolder, i.e. `src/<feature>/test/` (or `scripts/test/` for the build
+# scripts). Unit tests keep the `.test.ts`
 # suffix; Playwright e2e specs use `.e2e.ts` and sit in the same `test/`
 # folder.
 #
@@ -13,4 +14,4 @@
 # only matches `*.e2e.ts`, so the two runners never overlap even though they
 # now share the `test/` folder.
 [test]
-root = "frontend/src"
+root = "."

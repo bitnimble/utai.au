@@ -169,6 +169,7 @@ if (!existsSync(binary)) {
 const repoRoot = resolve(import.meta.dir, '..');
 const resourcesDir = join(repoRoot, 'src-tauri', 'resources');
 const conf = JSON.parse(readFileSync(join(repoRoot, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+const { version } = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
 const EXE = 'app'; // CFBundleExecutable = the file in Contents/MacOS
 
 function assembleApp(appDir: string): void {
@@ -208,8 +209,8 @@ function infoPlist(): string {
 	<key>CFBundleName</key><string>${conf.productName}</string>
 	<key>CFBundleDisplayName</key><string>${conf.productName}</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleShortVersionString</key><string>${conf.version}</string>
-	<key>CFBundleVersion</key><string>${conf.version}</string>
+	<key>CFBundleShortVersionString</key><string>${version}</string>
+	<key>CFBundleVersion</key><string>${version}</string>
 	<key>CFBundleIconFile</key><string>icon.icns</string>
 	<key>LSMinimumSystemVersion</key><string>${MAC_MIN_VERSION}</string>
 	<key>NSHighResolutionCapable</key><true/>
