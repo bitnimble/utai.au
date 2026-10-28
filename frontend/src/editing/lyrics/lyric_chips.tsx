@@ -272,14 +272,17 @@ export const RubyText = ({
   const text = !segments.some((s) => s.reading != null) ? (
     segments.map((s) => s.base).join('')
   ) : (
-    <ruby className={styles.ruby}>
-      {segments.map((seg, i) => (
-        <React.Fragment key={i}>
+    // One <ruby> per reading: an <rt> annotates all base text since the previous one.
+    segments.map((seg, i) =>
+      seg.reading == null ? (
+        <React.Fragment key={i}>{seg.base}</React.Fragment>
+      ) : (
+        <ruby key={i} className={styles.ruby}>
           {seg.base}
-          {seg.reading != null && <rt>{seg.reading}</rt>}
-        </React.Fragment>
-      ))}
-    </ruby>
+          <rt>{seg.reading}</rt>
+        </ruby>
+      ),
+    )
   );
   if (!romaji) return text;
   return (

@@ -52,6 +52,11 @@ test('furigana: tracks view annotates word-aligned and line-level lyrics', async
   await loadJapaneseSong(page);
   await expect(page.getByTestId('lyrics-line-0').locator('rt')).toHaveText(['ほんとう'], DICT_TIMEOUT);
   await expect(page.getByTestId('lyrics-line-1').locator('rt')).toHaveText(['か', 'ち'], DICT_TIMEOUT);
+  const annotatedBases = await page
+    .getByTestId('lyrics-line-1')
+    .locator('ruby:has(> rt)')
+    .evaluateAll((els) => els.map((e) => e.firstChild?.textContent));
+  expect(annotatedBases).toEqual(['書', '散']);
 });
 
 test('romaji: View option adds romaji under the lyrics in both views, and stays on', async ({ page }) => {
