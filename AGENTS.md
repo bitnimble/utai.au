@@ -77,7 +77,8 @@ header `backendFetch` attaches.
   publishes one GitHub release whose body is the changelog plus a `latest.json`
   (`scripts/write-update-manifest.ts`). No Linux, no Play. A manual run builds
   without publishing (`only` input narrows it). Secrets:
-  `TAURI_SIGNING_PRIVATE_KEY` (+ `_PASSWORD`, empty) signs updater bundles; the
+  `TAURI_SIGNING_PRIVATE_KEY` signs updater bundles (`_PASSWORD` stays unset:
+  the key has none, and a missing secret reaches the build as empty); the
   public key is in `tauri.conf.json`; `ANDROID_DEBUG_KEYSTORE_BASE64` keeps one
   debug key so APKs install over each other.
 - **Updates** (`frontend/src/updates/`): the app checks the GitHub releases API
