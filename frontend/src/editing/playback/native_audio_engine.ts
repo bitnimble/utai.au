@@ -349,7 +349,8 @@ export class NativeAudioEngine implements PlaybackEngine {
       runInAction(() => {
         this.currentTime = Math.min(Math.max(0, t), this.durationSec);
       });
-      this.rafId = a.playing ? window.requestAnimationFrame(tick) : undefined;
+      // `state`, not `anchor.playing`: right after play() the anchor is still the paused frame, and nothing restarts the loop.
+      this.rafId = this.state === 'playing' ? window.requestAnimationFrame(tick) : undefined;
     };
     this.rafId = window.requestAnimationFrame(tick);
   }
