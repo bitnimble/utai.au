@@ -44,11 +44,18 @@ export class UpdatesPresenter {
 
   /** Checks now and then hourly. */
   async start(): Promise<void> {
-    const [current, canInstall] = await Promise.all([this.shell.version(), this.shell.canInstall()]);
-    runInAction(() => {
-      this.store.current = current;
-      this.store.canInstall = canInstall;
-    });
+    try {
+      const [current, canInstall] = await Promise.all([this.shell.version(), this.shell.canInstall()]);
+      runInAction(() => {
+        this.store.current = current;
+        this.store.canInstall = canInstall;
+      });
+    } catch (err) {
+      runInAction(() => {
+        this.store.error = `Couldn't read this app's version: ${message(err)}`;
+      });
+      return;
+    }
     await this.check();
     setInterval(() => void this.check(), CHECK_INTERVAL_MS);
   }
