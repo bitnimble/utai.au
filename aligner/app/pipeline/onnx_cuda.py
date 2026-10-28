@@ -49,9 +49,12 @@ def default_providers() -> list[str]:
     stays last as a fallback (the loaders also catch a failed GPU session)."""
     import onnxruntime as ort
 
-    avail = [p for p in ort.get_available_providers() if p != "TensorrtExecutionProvider"]
-    # CUDA to the front, CPU to the back; stable-sort keeps any other EP (e.g.
-    # CoreML on macOS) in ORT's own order between them.
+    # CoreML only for separation, whose graph is rewritten to run whole on it
+    # (`_separation_providers`): other models split into many CPU<->CoreML
+    # partitions and run slower than on the CPU alone.
+    skip = {"TensorrtExecutionProvider", "CoreMLExecutionProvider"}
+    avail = [p for p in ort.get_available_providers() if p not in skip]
+    # CUDA to the front, CPU to the back.
     avail.sort(key=lambda p: (p != "CUDAExecutionProvider", p == "CPUExecutionProvider"))
     return avail
 
