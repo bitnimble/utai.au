@@ -15,6 +15,7 @@ from .core import CancelToken, EmitProgress, Registry, RunnerResult
 from .fetch_video_runner import FetchVideoRunner
 from .protocol import Artifact, PathRef, RequestMessage
 from .separate_stems_runner import SeparateStemsRunner
+from .shared_separator import SharedSeparator
 
 
 class EchoRunner:
@@ -39,9 +40,10 @@ class EchoRunner:
 
 
 def build_registry() -> Registry:
+    separator = SharedSeparator()
     return {
-        "alignLyrics": AlignLyricsRunner(),
-        "separateStems": SeparateStemsRunner(),
+        "alignLyrics": AlignLyricsRunner(separator),
+        "separateStems": SeparateStemsRunner(separator),
         "analyzeBeats": AnalyzeBeatsRunner(),
         "fetchVideo": FetchVideoRunner(),
     }

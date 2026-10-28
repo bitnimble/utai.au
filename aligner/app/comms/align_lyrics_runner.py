@@ -16,13 +16,12 @@ from typing import Any
 
 from .core import CancelToken, EmitProgress, RunnerResult
 from .protocol import PathRef, RequestMessage
+from .shared_separator import SharedSeparator
 
 
 class AlignLyricsRunner:
-    def __init__(self) -> None:
-        # Lazily-built Separator for the mix flow, cached so repeat aligns don't
-        # reload the vocals model. `Any` to avoid importing the torch stack here.
-        self._separator: Any | None = None
+    def __init__(self, separator: SharedSeparator | None = None) -> None:
+        self._separator = separator or SharedSeparator()
 
     async def run(
         self,
@@ -45,7 +44,7 @@ class AlignLyricsRunner:
 
         await emit("aligning", 0.1, kind)
         lines_json = await asyncio.to_thread(
-            self._run_align, Path(source.path), kind, raw_lines, language
+            self._run_align, Path(source.path), kind, raw_lines, language, cancel
         )
         cancel.check()
         await emit("done", 1.0, None)
@@ -57,6 +56,7 @@ class AlignLyricsRunner:
         kind: str,
         raw_lines: list[Any],
         language: str | None,
+        cancel: CancelToken,
     ) -> list[dict[str, Any]]:
         from app.pipeline.lyrics_align import InputLine, get_aligner, lines_to_json
 
@@ -67,18 +67,14 @@ class AlignLyricsRunner:
         ]
         vocals_path = audio_path
         work: Path | None = None
-        if kind == "mix":
-            from app.pipeline.separate import Separator
-
-            if self._separator is None:
-                self._separator = Separator()
-            work = Path(tempfile.mkdtemp(prefix="utai_lyrics_"))
-            vocals = self._separator.run_vocals(audio_path, work)
-            if vocals is None:
-                shutil.rmtree(work, ignore_errors=True)
-                raise RuntimeError("vocals separator produced no vocals stem")
-            vocals_path = vocals
         try:
+            if kind == "mix":
+                work = Path(tempfile.mkdtemp(prefix="utai_lyrics_"))
+                vocals = self._separator.use(lambda sep: sep.run_vocals(audio_path, work), cancel)
+                if vocals is None:
+                    raise RuntimeError("vocals separator produced no vocals stem")
+                vocals_path = vocals
+                cancel.check()
             # Pitch is not attached here: it's extracted once at separation time
             # (a property of the vocal stem) and mapped onto these words by the
             # frontend, so alignment never re-runs the f0 model.

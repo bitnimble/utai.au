@@ -32,7 +32,9 @@ the repo root**, and the **`src/…` import alias maps to `frontend/src/…`**
 
 The desktop app is Tauri + a Python sidecar broker (`src-tauri/` +
 `frontend/src/net/sidecar_transport.ts` + `aligner/app/comms/`). It is standalone: everything
-the backend container provides runs locally. ML runs on per-job stdio sidecars;
+the backend container provides runs locally. ML runs on a long-lived stdio
+sidecar that `src-tauri/src/sidecar.rs` multiplexes jobs over by request id
+(models stay loaded between jobs; a venv sync or model download retires it);
 the music stack (OnTheSpot via `aligner/app/music/onthespot_server.py`, plus the
 aligner HTTP API in `api` role) runs as long-lived loopback processes started by
 `src-tauri/src/local_backend.rs` once startup provisioning has synced the venv,

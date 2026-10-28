@@ -17,6 +17,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::no_console::NoConsole;
+use crate::sidecar::SidecarState;
 
 /// Lowest NVIDIA driver major version the cu128 wheels run on (see the
 /// aligner pyproject note: cu128 needs driver 570+).
@@ -366,6 +367,7 @@ async fn sync_venv(
         return Err(format!("uv sync failed ({status})"));
     }
     let _ = std::fs::write(sync_stamp_path(&venv), sync_stamp(&dir, groups));
+    app.state::<SidecarState>().retire_worker().await;
     Ok(())
 }
 
@@ -709,6 +711,8 @@ pub async fn download_models(app: AppHandle, on_event: Channel<ProvisionEvent>) 
         }
         Err(e) => Err(e),
     };
+    // A running sidecar holds the replaced models in memory.
+    app.state::<SidecarState>().retire_worker().await;
     report(&on_event, result)
 }
 

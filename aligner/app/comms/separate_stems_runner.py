@@ -11,19 +11,17 @@ import asyncio
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
 
 from .core import CancelToken, EmitProgress, RunnerResult
 from .protocol import Artifact, PathRef, RequestMessage
+from .shared_separator import SharedSeparator
 
 _STEM_ROLES = ("vocals", "accompaniment")
 
 
 class SeparateStemsRunner:
-    def __init__(self) -> None:
-        # Lazily-built Separator, cached so repeat separations don't reload the
-        # vocals model. `Any` to avoid importing the torch stack here.
-        self._separator: Any | None = None
+    def __init__(self, separator: SharedSeparator | None = None) -> None:
+        self._separator = separator or SharedSeparator()
 
     async def run(
         self,
@@ -36,7 +34,7 @@ class SeparateStemsRunner:
             raise ValueError("separateStems needs a local file path (remote upload unsupported here)")
 
         await emit("separating", 0.1, None)
-        paths = await asyncio.to_thread(self._run_stems, Path(source.path))
+        paths = await asyncio.to_thread(self._run_stems, Path(source.path), cancel)
         cancel.check()
         # Pitch is a property of the vocal stem: extract the contour now (over the
         # vocals we just made) so the frontend can render/align pitch without a
@@ -52,14 +50,10 @@ class SeparateStemsRunner:
             data={"pitch": pitch} if pitch is not None else None,
         )
 
-    def _run_stems(self, audio_path: Path) -> dict[str, Path]:
-        from app.pipeline.separate import Separator
-
-        if self._separator is None:
-            self._separator = Separator()
+    def _run_stems(self, audio_path: Path, cancel: CancelToken) -> dict[str, Path]:
         out_dir = Path(os.environ.get("UTAI_OUTPUTS_DIR") or tempfile.mkdtemp(prefix="utai_stems_"))
         out_dir.mkdir(parents=True, exist_ok=True)
-        return self._separator.run_stems(audio_path, out_dir)
+        return self._separator.use(lambda sep: sep.run_stems(audio_path, out_dir), cancel)
 
     def _run_pitch(self, vocals_path: Path) -> dict | None:
         """Best-effort vocal pitch contour over the separated vocals. A failure
