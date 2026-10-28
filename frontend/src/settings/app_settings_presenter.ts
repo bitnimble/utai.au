@@ -57,6 +57,10 @@ export class AppSettingsPresenter {
     this.settings.localApiBase = base;
   }
 
+  setLocalBackend(state: 'starting' | 'failed'): void {
+    this.settings.localBackend = state;
+  }
+
   setShowLyricsPitch(on: boolean): void {
     this.settings.showLyricsPitch = on;
   }

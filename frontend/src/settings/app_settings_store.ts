@@ -46,6 +46,9 @@ export class AppSettingsStore {
 
   /** Desktop app: the API base of the backend it runs itself. Not persisted. */
   localApiBase: string | undefined = undefined;
+  /** Desktop app: whether its own backend is on the way (until `localApiBase` is
+   *  set) or failed to start; `none` where there is no local backend. Not persisted. */
+  localBackend: 'none' | 'starting' | 'failed' = 'none';
 
   /**
    * Lyrics-track pitch rendering, applied to every lyrics row. `showLyricsPitch`

@@ -1,3 +1,5 @@
+import { when } from 'mobx';
+import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { toastStore } from 'src/ui/toasts/toasts';
 
 /**
@@ -55,6 +57,9 @@ function reportServerDown(): void {
  * caller can bail without double-reporting. A user-initiated cancel
  * (`AbortError`) is rethrown untouched; that isn't the server being down.
  *
+ * In the desktop app a relative `/api/...` URL waits for the app's own backend
+ * to start and goes there.
+ *
  * Pass `{ silent: true }` for background / fire-and-forget probes (liveness
  * checks, the recent-runs list) that should fail quietly without a toast; they
  * still get the typed `BackendUnreachableError`.
@@ -65,13 +70,34 @@ export async function backendFetch(
   opts: { silent?: boolean } = {}
 ): Promise<Response> {
   try {
-    return await fetch(input, withSessionLane(init));
+    return await fetch(await toLocalBackend(input, init?.signal), withSessionLane(init));
   } catch (err) {
     // A user/programmatic cancel isn't "the server is down".
     if (err instanceof DOMException && err.name === 'AbortError') throw err;
     if (!opts.silent) reportServerDown();
     throw new BackendUnreachableError();
   }
+}
+
+const RELATIVE_API = '/api';
+
+/** A relative `/api/...` URL composed before the desktop app's own backend was up
+ *  would hit the webview's origin, which answers anything with index.html: wait for
+ *  the backend and send it there instead. */
+async function toLocalBackend(input: RequestInfo | URL, signal?: AbortSignal | null): Promise<RequestInfo | URL> {
+  if (appSettingsStore.localBackend === 'none') return input;
+  if (typeof input !== 'string' || !input.startsWith(`${RELATIVE_API}/`)) return input;
+  try {
+    await when(() => appSettingsStore.localApiBase != null || appSettingsStore.localBackend === 'failed', {
+      signal: signal ?? undefined,
+    });
+  } catch (err) {
+    signal?.throwIfAborted();
+    throw err;
+  }
+  const base = appSettingsStore.localApiBase;
+  if (base == null) throw new BackendUnreachableError();
+  return base + input.slice(RELATIVE_API.length);
 }
 
 function withSessionLane(init: RequestInit | undefined): RequestInit | undefined {

@@ -56,10 +56,14 @@ function renderHost(target: HostTarget): React.ReactElement {
   // Start once at boot (not in a component effect) so a StrictMode re-mount can't
   // trigger a second provisioning run.
   provisioningPresenter.start();
+  if (isSidecarAvailable()) {
+    appSettingsPresenter.setLocalBackend('starting');
+    // The model check syncs the venv the local backend runs from.
+    when(() => provisioningStore.checked, connectLocalBackend);
+    when(() => provisioningStore.state === 'error', () => appSettingsPresenter.setLocalBackend('failed'));
+  }
   const hostPageStore = new HostPageStore();
   void new HostPagePresenter(hostPageStore, target).start();
-  // The model check syncs the venv the local backend runs from.
-  if (isSidecarAvailable()) when(() => provisioningStore.checked, connectLocalBackend);
   const updatesStore = new UpdatesStore();
   const updatesPresenter = new UpdatesPresenter(updatesStore);
   if (isTauri()) void updatesPresenter.start();
@@ -82,6 +86,7 @@ async function connectLocalBackend(): Promise<void> {
   try {
     appSettingsPresenter.setLocalApiBase(await invoke<string>('local_backend_api_base'));
   } catch (err) {
+    appSettingsPresenter.setLocalBackend('failed');
     toastStore.showError(`Music search and downloads are unavailable: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
