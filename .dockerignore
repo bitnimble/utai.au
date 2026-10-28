@@ -1,0 +1,6 @@
+# Every image builds from the repo root and copies only these.
+*
+!aligner/pyproject.toml
+!aligner/app
+!docker
+**/__pycache__

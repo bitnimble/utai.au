@@ -14,13 +14,15 @@
 #
 # Deps go into a uv-managed venv at /opt/venv (on PATH), matching the path the
 # compose `backend` command runs (`/opt/venv/bin/python -m uvicorn ...`). The app
-# source is NOT copied in: compose bind-mounts the repo and runs uvicorn from
-# /repo/aligner with PYTHONPATH, so the image only needs the installed deps.
+# source is baked in at /repo/aligner so the published image runs on its own;
+# the dev compose bind-mounts the repo over /repo, so edits there still apply.
 #
-# Build (from the repo root -- the context needs aligner/pyproject.toml and the
-# override file under docker/):
+# Build (from the repo root -- the context needs aligner/ and the override file
+# under docker/):
 #
 #   docker build -f docker/backend.Dockerfile -t utai-backend .
+#
+# CI publishes it as ghcr.io/bitnimble/utai.au-backend (.github/workflows/release.yml).
 #
 # Base: CUDA runtime on Ubuntu 22.04 so onnxruntime-gpu's CUDA/TensorRT EPs find
 # libcudart; the cudnn/cublas/tensorrt wheels ride in via the `separation` group.
@@ -83,6 +85,7 @@ ENV AUDIO_SEPARATOR_MODEL_FILE_DIR=/models \
     HF_HOME=/models/huggingface \
     TRANSFORMERS_CACHE=/models/huggingface
 
-# Idle-friendly working dir; the compose `command` sets cwd to /repo/aligner.
-WORKDIR /repo
-CMD ["python", "-c", "print('utai-backend image; run via docker-compose.dev.yml')"]
+COPY aligner/app /repo/aligner/app
+WORKDIR /repo/aligner
+EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,281 @@
+name: release
+
+# A `v*` tag (`bun run release` then `git push --follow-tags`) builds everything and publishes a
+# GitHub release. A manual run builds without publishing, its outputs left as run artifacts.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'Build only these, comma-separated: docker, android, macos, windows. Empty builds everything.'
+        type: string
+        default: ''
+
+# Read, for every job but `docker` (pushes images) and `publish` (cuts the release).
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      desktop: ${{ steps.pick.outputs.desktop }}
+      docker: ${{ steps.pick.outputs.docker }}
+      android: ${{ steps.pick.outputs.android }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: package.json
+          sparse-checkout-cone-mode: false
+      - id: tag
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version package.json)
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::$TAG does not match package.json's $version: cut releases with \`bun run release\`"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - id: pick
+        env:
+          ONLY: ${{ inputs.only }}
+          # `name` is what `only` matches; `platform` names the release files.
+          DESKTOP: |
+            [
+              {"name": "macos", "platform": "macos-arm64", "runs-on": "macos-14", "bundles": "app,dmg"},
+              {"name": "windows", "platform": "windows-x86_64", "runs-on": "windows-latest", "bundles": "nsis"}
+            ]
+        run: |
+          set -eu
+          only=$(tr -d ' ' <<<"$ONLY")
+          # A misspelt name would otherwise build nothing and pass.
+          known="docker android $(jq -r 'map(.name) | join(" ")' <<<"$DESKTOP")"
+          for name in ${only//,/ }; do
+            case " $known " in
+              *" $name "*) ;;
+              *) echo "::error::$name is not something this workflow builds: $known"; exit 1 ;;
+            esac
+          done
+          wanted() { [ -z "$only" ] || [[ ",$only," == *",$1,"* ]]; }
+          echo "docker=$(wanted docker && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "android=$(wanted android && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          desktop=$(jq -c --arg only "$only" \
+            '($only | split(",") | map(select(. != ""))) as $names
+             | map(select(($names | length) == 0 or (.name as $n | $names | index($n) != null)))' \
+            <<<"$DESKTOP")
+          echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
+
+  # The aligner backend (the music facade + ML pipeline the website and Android app talk to) and
+  # the OnTheSpot service it fronts, as docker-compose.dev.yml runs them.
+  docker:
+    needs: plan
+    if: needs.plan.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [backend, onthespot]
+    steps:
+      - uses: actions/checkout@v5
+      # The backend's CUDA + onnxruntime wheels need more than a runner's ~14GB free.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
+          df -h /
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}-${{ matrix.image }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.plan.outputs.tag }},enable=${{ needs.plan.outputs.tag != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.plan.outputs.tag }},enable=${{ needs.plan.outputs.tag != '' }}
+            type=raw,value=latest,enable=${{ needs.plan.outputs.tag != '' && !contains(needs.plan.outputs.tag, '-') }}
+            type=sha
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/${{ matrix.image }}.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # The registry, not `type=gha`: the repository's 10GB of Actions cache is mostly Rust.
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}-${{ matrix.image }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}-${{ matrix.image }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
+
+  # Each platform on its own OS: a Tauri app with a staged Python sidecar doesn't cross-build.
+  desktop:
+    needs: plan
+    if: needs.plan.outputs.desktop != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.desktop) }}
+    runs-on: ${{ matrix.runs-on }}
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      # desktop:resources bundles uv from PATH and builds the git deps into wheels with it.
+      - uses: astral-sh/setup-uv@v6
+      - run: bun install --frozen-lockfile
+
+      # Runs beforeBuildCommand (frontend build + desktop:resources), then bundles. Signed updater
+      # bundles only with the key: without it Tauri refuses to build them at all.
+      - name: Build the app
+        shell: bash
+        run: |
+          set -eu
+          config='{}'
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            config='{"bundle":{"createUpdaterArtifacts":true}}'
+          else
+            echo "::warning::no TAURI_SIGNING_PRIVATE_KEY secret: building without updater bundles, so installs won't see this release"
+          fi
+          bun run tauri build --bundles ${{ matrix.bundles }} --config "$config"
+
+      # Renamed to `utai.au_<version>_<platform><kind>`: the bundler names its files by
+      # architecture alone (`_aarch64.dmg`, `_x64-setup.exe`).
+      - name: Collect the release files
+        shell: bash
+        run: |
+          set -eu
+          version=$(jq -r .version package.json)
+          dest=dist/${{ matrix.platform }}
+          mkdir -p "$dest"
+          name="utai.au_${version}_${{ matrix.platform }}"
+          bundle=src-tauri/target/release/bundle
+          copy() { cp "$1" "$dest/$2"; [ ! -f "$1.sig" ] || cp "$1.sig" "$dest/$2.sig"; }
+          case "${{ matrix.platform }}" in
+            windows-*)
+              copy "$(ls "$bundle"/nsis/*_"$version"_*-setup.exe)" "$name-setup.exe"
+              cp src-tauri/target/release/Utai-portable-windows.zip "$dest/$name-portable.zip"
+              ;;
+            macos-*)
+              copy "$(ls "$bundle"/dmg/*_"$version"_*.dmg)" "$name.dmg"
+              [ ! -f "$bundle/macos/utai.au.app.tar.gz" ] || copy "$bundle/macos/utai.au.app.tar.gz" "$name.app.tar.gz"
+              ;;
+          esac
+          ls -la "$dest"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist-${{ matrix.platform }}
+          path: dist/
+
+  # A dev build: release-optimised, signed with a debug key, no Play upload.
+  android:
+    needs: plan
+    if: needs.plan.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - name: The NDK
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - run: bun install --frozen-lockfile
+      - run: bun run android:init
+      - run: bun run android:build
+
+      # One debug key across runs, so a new build installs over the last without losing its data.
+      - name: Sign with the debug key
+        env:
+          DEBUG_KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          set -eu
+          keystore="$RUNNER_TEMP/debug.keystore"
+          if [ -n "${DEBUG_KEYSTORE:-}" ]; then
+            echo "$DEBUG_KEYSTORE" | base64 -d > "$keystore"
+          else
+            echo "::warning::no ANDROID_DEBUG_KEYSTORE_BASE64 secret: signing with a new debug key, so this APK won't install over an earlier one"
+            keytool -genkeypair -keystore "$keystore" -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=Android Debug,O=Android,C=US'
+          fi
+          version=$(jq -r .version package.json)
+          unsigned=$(find src-tauri/gen/android/app/build/outputs/apk -name '*release*.apk' | head -n1)
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)
+          mkdir -p dist/android-arm64
+          "$tools/apksigner" sign --ks "$keystore" --ks-pass pass:android --ks-key-alias androiddebugkey \
+            --out "dist/android-arm64/utai.au_${version}_android-arm64.apk" "$unsigned"
+          rm -f "$keystore"
+          ls -la dist/android-arm64
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist-android-arm64
+          path: dist/
+
+  # One release, made once every build has finished. A platform that failed is left out rather
+  # than holding the others back; `latest.json` is written from the files actually uploaded, so
+  # it can't point an install at a file that isn't there.
+  publish:
+    needs: [plan, docker, desktop, android]
+    if: ${{ always() && needs.plan.outputs.tag != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+      - run: bun scripts/write-update-manifest.ts --dist dist --tag "$TAG" --repo "$REPO"
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          REPO: ${{ github.repository }}
+      - run: jq -r --arg tag "$TAG" '.[$tag] // "Bug fixes and performance improvements"' changelog.json > "$RUNNER_TEMP/changelog.md"
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.plan.outputs.tag }}
+          # The release's description is the changelog the app shows.
+          body_path: ${{ runner.temp }}/changelog.md
+          prerelease: ${{ contains(needs.plan.outputs.tag, '-') }}
+          files: |
+            dist/latest.json
+            dist/*/*
