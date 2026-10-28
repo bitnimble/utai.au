@@ -19,12 +19,15 @@ import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_setting
 import { SettingsModalProvider } from 'src/settings/settings_modal_context';
 import { ErrorBoundary } from 'src/ui/error_boundary/error_boundary';
 import { ModalProvider } from 'src/ui/modal/modal_manager';
+import { followRemote } from 'src/tv_remote/remote_navigation';
+import { onTv } from 'src/tv_remote/tv';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { UpdatesPresenterContext, UpdatesStoreContext } from 'src/updates/updates_contexts';
 import { UpdatesPresenter } from 'src/updates/updates_presenter';
 import { UpdatesStore } from 'src/updates/updates_store';
 
 pageLog.follow();
+if (onTv()) followRemote();
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Missing #root mount element');

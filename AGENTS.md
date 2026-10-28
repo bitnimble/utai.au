@@ -31,7 +31,7 @@ the repo root**, and the **`src/…` import alias maps to `frontend/src/…`**
 `frontend/src/foo`).
 
 The desktop app is Tauri + a Python sidecar broker (`src-tauri/` +
-`frontend/src/desktop/` + `aligner/app/comms/`). It is standalone: everything
+`frontend/src/net/sidecar_transport.ts` + `aligner/app/comms/`). It is standalone: everything
 the backend container provides runs locally. ML runs on per-job stdio sidecars;
 the music stack (OnTheSpot via `aligner/app/music/onthespot_server.py`, plus the
 aligner HTTP API in `api` role) runs as long-lived loopback processes started by
@@ -63,6 +63,36 @@ Advertised join URLs come from the backend's `PUBLIC_URL` (desktop: its LAN
 IP), overridable per host in the join dialog. The backend's GPU lock serves
 waiting jobs round-robin across sessions, keyed by the `X-Utai-Session`
 header `backendFetch` attaches.
+
+### Releases, updates, logs, TV
+
+- **Version** lives in `package.json` alone (`tauri.conf.json` reads it).
+  `bun run release [version]` (on `main`, clean tree) bumps it, has `claude -p`
+  write the user-facing changelog of the commits since the last `v*` tag
+  (`scripts/changelog.ts`) into `changelog.json`, commits, and tags `v<version>`.
+  `git push --follow-tags` starts `.github/workflows/release.yml`.
+- **CI** (`release.yml`) builds the backend + OnTheSpot images
+  (`ghcr.io/bitnimble/utai.au-{backend,onthespot}`), macOS arm64 (`.dmg`),
+  Windows (NSIS + portable zip) and a debug-key-signed Android APK, then
+  publishes one GitHub release whose body is the changelog plus a `latest.json`
+  (`scripts/write-update-manifest.ts`). No Linux, no Play. A manual run builds
+  without publishing (`only` input narrows it). Secrets:
+  `TAURI_SIGNING_PRIVATE_KEY` (+ `_PASSWORD`, empty) signs updater bundles; the
+  public key is in `tauri.conf.json`; `ANDROID_DEBUG_KEYSTORE_BASE64` keeps one
+  debug key so APKs install over each other.
+- **Updates** (`frontend/src/updates/`): the app checks the GitHub releases API
+  at launch and hourly; Settings > Updates lists newer releases' notes. Desktop
+  installs via `tauri-plugin-updater` (`src-tauri/src/updates.rs`); the portable
+  Windows build and Android open the download instead.
+- **Logs**: the page keeps its last 2000 console lines (`log_viewer/page_log.ts`);
+  the desktop shell's Rust + sidecar output goes to the log file
+  `read_log_tail` reads. Settings > Logs shows either.
+- **Android TV**: `scripts/android-tv.ts` patches the regenerated `gen/android`
+  (banner, touchscreen optional, a `MainActivity` adding `UtaiTV` to the user
+  agent and routing Back to `window.utaiBack`) on every `tauri-build.ts android …`
+  run. On a TV the page's `followRemote()` (`frontend/src/tv_remote/`) moves focus
+  geometrically with the D-pad; Back sends Escape, so anything closable on Escape
+  closes on Back.
 
 ## Critical rules (apply to every request)
 
@@ -141,7 +171,9 @@ Frontend (`bun`, repo root):
 | `bun run build` | lint:design + tsc + Vite build. Agent compile-check. |
 | `bun run e2e` | Playwright suite. |
 | `bun run tauri` | Tauri desktop build (via `scripts/tauri-build.ts`). |
+| `bun run android:init` | Generate `src-tauri/gen/android` (gitignored), TV-patched. |
 | `bun run android:build` | Android APK. |
+| `bun run release [version]` | Bump, write the changelog, commit + tag `v<version>`. |
 | `bun run win:build` | **Cross-build** the Windows app (binary + NSIS installer) from Linux via cargo-xwin, no Wine. |
 | `bun run mac:build` | **Cross-build** the macOS `.app` (dev testing only) from Linux via osxcross. Unsigned, no DMG. |
 

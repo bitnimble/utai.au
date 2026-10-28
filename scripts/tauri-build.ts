@@ -5,6 +5,7 @@
 // straight through (`… tauri-build.ts android build --apk` → `tauri android
 // build --apk`).
 import { spawnSync } from 'node:child_process';
+import { patchAndroidProject } from './android-tv';
 import { assemblePortableWindows, buildOutputEnv, relocateAndroidArtifacts } from './build_env';
 
 const args = process.argv.slice(2);
@@ -13,7 +14,10 @@ const env = { ...process.env, ...extra };
 if (extra.CARGO_TARGET_DIR) {
   console.error(`[tauri-build] CARGO_TARGET_DIR=${extra.CARGO_TARGET_DIR}`);
 }
+const androidInit = args[0] === 'android' && args[1] === 'init';
+if (args[0] === 'android' && !androidInit) patchAndroidProject();
 const r = spawnSync('tauri', args, { stdio: 'inherit', env });
+if (r.status === 0 && androidInit) patchAndroidProject();
 // `android build` packages the APK/AAB outside CARGO_TARGET_DIR; move it too.
 if (r.status === 0 && args[0] === 'android' && args[1] === 'build') {
   relocateAndroidArtifacts();

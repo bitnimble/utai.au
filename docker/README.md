@@ -4,6 +4,12 @@ A throwaway docker-compose stack for developing the music-source feature: search
 your streaming services and pull a track's audio into utai.au, via OnTheSpot.
 **Dev only** (self-hosting a web build later is possible, but we don't host it).
 
+Releases also publish the backend and OnTheSpot images as
+`ghcr.io/bitnimble/utai.au-backend` and `ghcr.io/bitnimble/utai.au-onthespot`
+(`.github/workflows/release.yml`). The backend image carries the aligner source
+and starts uvicorn on `:8000` by itself; the compose file below bind-mounts the
+repo over it for development.
+
 ## Run
 
 The `web` + `backend` services bind-mount the repo (for hot reload). Set `REPO_PATH`
