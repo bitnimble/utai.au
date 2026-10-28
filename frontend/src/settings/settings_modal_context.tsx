@@ -1,6 +1,6 @@
 import React from 'react';
 
-export type SettingsTab = 'sources' | 'audio';
+export type SettingsTab = 'sources' | 'audio' | 'logs';
 
 type SettingsModalApi = {
   open: boolean;

@@ -2,6 +2,7 @@ import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { AudioSettings } from 'src/audio_devices/audio_settings';
 import { AudioDevicePresenterContext } from 'src/audio_devices/audio_device_contexts';
+import { LogsSettings } from 'src/log_viewer/logs_settings';
 import { MusicSourcesSettings } from 'src/music_source/music_sources_settings';
 import { MusicSourcePresenterContext } from 'src/music_source/music_source_contexts';
 import { Modal, ModalHeader } from 'src/ui/modal/modal';
@@ -11,11 +12,12 @@ import { useSettingsModal, type SettingsTab } from './settings_modal_context';
 const TAB_OPTIONS: ReadonlyArray<{ value: SettingsTab; label: string; testId: string }> = [
   { value: 'sources', label: 'Music sources', testId: 'settings-tab-sources' },
   { value: 'audio', label: 'Audio', testId: 'settings-tab-audio' },
+  { value: 'logs', label: 'Logs', testId: 'settings-tab-logs' },
 ];
 
 /**
  * The app's Settings dialog: a tabbed <Modal> hosting the music-source
- * ("Music sources") and audio-device ("Audio") panels. Open/tab state comes
+ * ("Music sources"), audio-device ("Audio") and log ("Logs") panels. Open/tab state comes
  * from the global {@link useSettingsModal} context; each panel reads its own
  * domain via context. Opening it lazily loads the service catalog + enumerates
  * audio devices.
@@ -44,7 +46,9 @@ export const SettingsModal = observer(function SettingsModal() {
     >
       <ModalHeader title="Settings" onClose={close} closeLabel="Close settings" />
       <Tabs options={TAB_OPTIONS} value={tab} onChange={setTab} ariaLabel="Settings sections" />
-      {tab === 'sources' ? <MusicSourcesSettings /> : <AudioSettings />}
+      {tab === 'sources' && <MusicSourcesSettings />}
+      {tab === 'audio' && <AudioSettings />}
+      {tab === 'logs' && <LogsSettings />}
     </Modal>
   );
 });

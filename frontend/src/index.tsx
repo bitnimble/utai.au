@@ -3,6 +3,7 @@ import { when } from 'mobx';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import 'src/design_tokens.css';
+import { pageLog } from 'src/log_viewer/page_log';
 import { ProvisioningPresenter } from 'src/provisioning/provisioning_presenter';
 import { createProvisioningSource } from 'src/provisioning/provisioning_source';
 import { ProvisioningStore } from 'src/provisioning/provisioning_store';
@@ -18,6 +19,8 @@ import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_setting
 import { SettingsModalProvider } from 'src/settings/settings_modal_context';
 import { ErrorBoundary } from 'src/ui/error_boundary/error_boundary';
 import { toastStore } from 'src/ui/toasts/toasts';
+
+pageLog.follow();
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Missing #root mount element');

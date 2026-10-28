@@ -1,0 +1,49 @@
+.body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px 16px;
+    min-height: 0;
+}
+
+.toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.spacer {
+    flex: 1 1 auto;
+}
+
+.button {
+    composes: secondary from '../ui/button/button.module.css';
+}
+
+.scroller {
+    display: flex;
+    /* Opens scrolled to the newest line. */
+    flex-direction: column-reverse;
+    height: 420px;
+    overflow: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-cream);
+}
+
+.text {
+    composes: mono from '../typography.module.css';
+    margin: 0;
+    padding: 8px 10px;
+    color: var(--color-text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.empty {
+    composes: bodySm from '../typography.module.css';
+    margin: 0;
+    padding: 24px 0;
+    text-align: center;
+    color: var(--color-text-muted-alt);
+}
