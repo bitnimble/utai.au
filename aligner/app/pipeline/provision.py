@@ -315,12 +315,17 @@ def provision(
         for asset in _capability_assets(capability):
             assets[asset.filename] = asset
     for asset in assets.values():
-        _download(
-            asset.url,
-            models_dir / asset.filename,
-            update_check=update_check,
-            on_progress=on_progress,
-        )
+        try:
+            _download(
+                asset.url,
+                models_dir / asset.filename,
+                update_check=update_check,
+                on_progress=on_progress,
+            )
+        except Exception as exc:
+            # httpx's message runs on to a second line linking MDN's status-code docs.
+            reason = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+            raise RuntimeError(f"couldn't download {asset.filename}: {reason}") from exc
     log.info("provision: %d assets ready in %s for %s", len(assets), models_dir, list(capabilities))
 
 
@@ -416,8 +421,8 @@ def main(argv: list[str]) -> int:
     pre-fetch (and update-check) the assets the given capabilities need, so they
     download at install/launch time rather than on first use. The desktop shell
     runs this after `uv sync`. `--progress-json` streams one JSON progress event
-    per line for the parent to parse. Best-effort; lazy fallbacks still cover a
-    failure.
+    per line for the parent to parse, and on failure a final `{"error": ...}` line.
+    Best-effort; lazy fallbacks still cover a failure.
 
     `python -m app.pipeline.provision --prune <keep-capability>...` -- the
     uninstall counterpart: delete model files not needed by the capabilities that
@@ -429,7 +434,13 @@ def main(argv: list[str]) -> int:
     if args and args[0] == "--prune":
         deprovision([g for g in args[1:] if g in _KNOWN_CAPABILITIES])
         return 0
-    provision(*[g for g in args if g in _KNOWN_CAPABILITIES], on_progress=on_progress)
+    try:
+        provision(*[g for g in args if g in _KNOWN_CAPABILITIES], on_progress=on_progress)
+    except Exception as exc:
+        log.exception("provision failed")
+        if on_progress is not None:
+            print(json.dumps({"error": str(exc)}), flush=True)
+        return 1
     return 0
 
 

@@ -35,7 +35,15 @@
     margin: 0;
 }
 
+.actions {
+    display: flex;
+    gap: 8px;
+}
+
 .retry {
     composes: secondary from '../ui/button/button.module.css';
-    align-self: flex-start;
+}
+
+.close {
+    composes: ghost from '../ui/button/button.module.css';
 }

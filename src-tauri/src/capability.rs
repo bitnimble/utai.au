@@ -558,17 +558,20 @@ async fn provision_models_streaming(
     let err = child.stderr.take();
     let sink = on_event.clone();
     let out_task = tokio::spawn(async move {
+        let mut error = None;
         if let Some(r) = out {
             let mut lines = BufReader::new(r).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                match parse_progress_line(&line) {
-                    Some(ev) => {
+                match parse_provision_line(&line) {
+                    Some(ProvisionLine::Progress(ev)) => {
                         let _ = sink.send(ev);
                     }
+                    Some(ProvisionLine::Error(message)) => error = Some(message),
                     None => log::info!("[provision] {line}"),
                 }
             }
         }
+        error
     });
     let err_task = tokio::spawn(async move {
         if let Some(r) = err {
@@ -579,33 +582,45 @@ async fn provision_models_streaming(
         }
     });
     let status = child.wait().await.map_err(|e| e.to_string())?;
-    let _ = out_task.await;
+    let error = out_task.await.ok().flatten();
     let _ = err_task.await;
     if status.success() {
-        Ok(())
-    } else {
-        Err(format!("model provisioning failed ({status})"))
+        return Ok(());
     }
+    Err(match error {
+        Some(message) => message,
+        None => format!("model provisioning failed ({status})"),
+    })
 }
 
-/// Parse one `--progress-json` stdout line into a {@link ProvisionEvent::Progress};
-/// None for a non-JSON line (a stray log line that landed on stdout).
-fn parse_progress_line(line: &str) -> Option<ProvisionEvent> {
+enum ProvisionLine {
+    Progress(ProvisionEvent),
+    Error(String),
+}
+
+/// Parse one `--progress-json` stdout line; None for a non-JSON line (a stray log
+/// line that landed on stdout).
+fn parse_provision_line(line: &str) -> Option<ProvisionLine> {
     #[derive(serde::Deserialize)]
-    struct Raw {
-        asset: String,
-        phase: String,
-        #[serde(rename = "bytesDone")]
-        bytes_done: Option<u64>,
-        #[serde(rename = "bytesTotal")]
-        bytes_total: Option<u64>,
+    #[serde(untagged)]
+    enum Raw {
+        Error {
+            error: String,
+        },
+        Progress {
+            asset: String,
+            phase: String,
+            #[serde(rename = "bytesDone")]
+            bytes_done: Option<u64>,
+            #[serde(rename = "bytesTotal")]
+            bytes_total: Option<u64>,
+        },
     }
-    let raw: Raw = serde_json::from_str(line.trim()).ok()?;
-    Some(ProvisionEvent::Progress {
-        asset: raw.asset,
-        phase: raw.phase,
-        bytes_done: raw.bytes_done,
-        bytes_total: raw.bytes_total,
+    Some(match serde_json::from_str(line.trim()).ok()? {
+        Raw::Error { error } => ProvisionLine::Error(error),
+        Raw::Progress { asset, phase, bytes_done, bytes_total } => {
+            ProvisionLine::Progress(ProvisionEvent::Progress { asset, phase, bytes_done, bytes_total })
+        }
     })
 }
 
@@ -857,5 +872,23 @@ mod tests {
         });
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn provision_lines_parse_progress_error_and_strays() {
+        match parse_provision_line(r#"{"asset":"m.onnx","phase":"downloading","bytesDone":1,"bytesTotal":10}"#) {
+            Some(ProvisionLine::Progress(ProvisionEvent::Progress { asset, phase, bytes_done, bytes_total })) => {
+                assert_eq!(
+                    (asset.as_str(), phase.as_str(), bytes_done, bytes_total),
+                    ("m.onnx", "downloading", Some(1), Some(10))
+                );
+            }
+            _ => panic!("expected progress"),
+        }
+        match parse_provision_line(r#"{"error":"couldn't download m.onnx: 404"}"#) {
+            Some(ProvisionLine::Error(message)) => assert_eq!(message, "couldn't download m.onnx: 404"),
+            _ => panic!("expected error"),
+        }
+        assert!(parse_provision_line("INFO:provision: fetched m.onnx").is_none());
     }
 }

@@ -83,6 +83,14 @@ describe('ProvisioningPresenter', () => {
     expect(source.disposed).toBe(false); // watching again
   });
 
+  test('dismissing a failure hides the gate without re-watching', () => {
+    const { store, presenter, source } = setup();
+    source.push({ state: 'error', error: 'boom', assets: [] });
+    presenter.dismiss();
+    expect(store.gateVisible).toBe(false);
+    expect(source.disposed).toBe(true);
+  });
+
   test('aggregates download fraction across sized assets', () => {
     const { store, source } = setup();
     source.push({

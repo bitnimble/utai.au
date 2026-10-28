@@ -42,10 +42,14 @@ export class ProvisioningPresenter {
   }
 
   retry(): void {
-    this.stop();
+    this.dismiss();
     this.store.status = undefined;
-    this.store.gateVisible = false;
     this.start();
+  }
+
+  dismiss(): void {
+    this.stop();
+    this.store.gateVisible = false;
   }
 
   private onStatus(status: ProvisionStatus): void {

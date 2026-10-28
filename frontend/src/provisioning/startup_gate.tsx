@@ -11,9 +11,10 @@ const MB = 1024 * 1024;
 const NOOP = (): void => {};
 
 /**
- * Blocks the app with a non-dismissable dialog while startup model provisioning
- * runs, and only then. An already-up-to-date launch (or a backend that isn't
- * reachable) never shows it: the app renders optimistically underneath and the
+ * Blocks the app with a dialog while startup model provisioning runs, and only
+ * then; it can be closed only once provisioning has failed. An already-up-to-date
+ * launch (or a backend that isn't reachable) never shows it: the app renders
+ * optimistically underneath and the
  * presenter overlays the gate only when there's real download/update work.
  *
  * The presenter's watch is started once at app boot (index.tsx), not here, so a
@@ -33,7 +34,13 @@ export const StartupGate = observer(
       <>
         {children}
         {store.gateVisible && (
-          <Modal open onClose={NOOP} ariaLabel="Setting up models" width={420} testId="provisioning-gate">
+          <Modal
+            open
+            onClose={store.isError ? () => presenter.dismiss() : NOOP}
+            ariaLabel="Setting up models"
+            width={420}
+            testId="provisioning-gate"
+          >
             <ModalBody>
               <h2 className={styles.title}>Setting up models</h2>
               <GateBody store={store} presenter={presenter} />
@@ -53,9 +60,19 @@ const GateBody = observer(
           <p className={styles.error} data-testid="provisioning-error">
             Couldn&apos;t set up the models: {store.errorMessage ?? 'unknown error'}
           </p>
-          <button type="button" className={styles.retry} onClick={() => presenter.retry()}>
-            Retry
-          </button>
+          <div className={styles.actions}>
+            <button type="button" className={styles.retry} onClick={() => presenter.retry()}>
+              Retry
+            </button>
+            <button
+              type="button"
+              className={styles.close}
+              onClick={() => presenter.dismiss()}
+              data-testid="provisioning-close"
+            >
+              Close
+            </button>
+          </div>
         </div>
       );
     }
