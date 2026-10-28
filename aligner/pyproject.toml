@@ -76,6 +76,8 @@ separation = [
     # UTAI_SEP_TRT=0; onnx_cuda.preload_tensorrt_libs RTLD_GLOBAL-preloads its libnvinfer so the EP
     # can dlopen it. TRT 10.x matches onnxruntime-gpu 1.19-1.25 (CUDA 12); absent -> stays on CUDA.
     "tensorrt-cu12>=10,<11; sys_platform != 'darwin'",
+    # Direct so its NVIDIA [tool.uv.sources] entry applies: PyPI's stub sdist fails to lock on macOS.
+    "tensorrt-cu12-libs; sys_platform != 'darwin'",
 ]
 
 # Lyrics alignment: MahmoudAshraf97's long-form CTC forced aligner (MMS-300m).
@@ -178,12 +180,18 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true
+
 # cu128 torch is Linux/Windows only; on macOS torch resolves from PyPI (the arm64
 # MPS build) by having no source point at the cu128 index there.
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
 torchaudio = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+tensorrt-cu12-libs = [{ index = "nvidia", marker = "sys_platform != 'darwin'" }]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

@@ -2734,8 +2734,11 @@ wheels = [
 [[package]]
 name = "tensorrt-cu12-libs"
 version = "10.16.1.11"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/56/9b/8d5b85c7cb7feaead7d462e81a4592a9d4ad3f581798f65ed34b765441f3/tensorrt_cu12_libs-10.16.1.11.tar.gz", hash = "sha256:53b45a3e82bead09638e7a3ddf4b927254b81fa0d924fe3fe594420a09ebf48b", size = 15757, upload-time = "2026-04-07T19:42:58.348Z" }
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/tensorrt-cu12-libs/tensorrt_cu12_libs-10.16.1.11-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:8e45036efeb964d323231544442a73619201136ccc84392560254cc8f0d516e4" },
+    { url = "https://pypi.nvidia.com/tensorrt-cu12-libs/tensorrt_cu12_libs-10.16.1.11-py3-none-win_amd64.whl", hash = "sha256:ed0d4536f1322aa2f76da54feb3f9bd2d14d89e4325cef02165a98f3a2c1a493" },
+]
 
 [[package]]
 name = "threadpoolctl"
@@ -3085,6 +3088,7 @@ lyrics = [
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "soundfile" },
     { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'" },
     { name = "transformers" },
 ]
 lyrics-ja = [
@@ -3102,6 +3106,7 @@ lyrics-ja = [
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "soundfile" },
     { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'" },
     { name = "transformers" },
     { name = "unidic-lite" },
 ]
@@ -3124,6 +3129,7 @@ pitch = [
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "soundfile" },
     { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'" },
 ]
 runtime = [
     { name = "librosa" },
@@ -3144,6 +3150,7 @@ separation = [
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "soundfile" },
     { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'" },
 ]
 torch = [
     { name = "einops" },
@@ -3193,6 +3200,7 @@ lyrics = [
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
     { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'", specifier = ">=10,<11" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'", index = "https://pypi.nvidia.com/" },
     { name = "transformers", specifier = ">=4.40" },
 ]
 lyrics-ja = [
@@ -3209,6 +3217,7 @@ lyrics-ja = [
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
     { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'", specifier = ">=10,<11" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'", index = "https://pypi.nvidia.com/" },
     { name = "transformers", specifier = ">=4.40" },
     { name = "unidic-lite", specifier = ">=1.0.8" },
 ]
@@ -3228,6 +3237,7 @@ pitch = [
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
     { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'", specifier = ">=10,<11" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'", index = "https://pypi.nvidia.com/" },
 ]
 runtime = [
     { name = "librosa", specifier = ">=0.10.2" },
@@ -3246,6 +3256,7 @@ separation = [
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
     { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'", specifier = ">=10,<11" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'", index = "https://pypi.nvidia.com/" },
 ]
 torch = [
     { name = "einops", specifier = ">=0.8" },
