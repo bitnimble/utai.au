@@ -11,4 +11,7 @@ test('logs: the Logs tab shows what the page wrote to the console', async ({ pag
   // The web build has no desktop log file, so there is only one source to show.
   await expect(page.getByTestId('logs-source-backend')).toHaveCount(0);
   await expect(page.getByTestId('logs-text')).toContainText('WARN  e2e-log-marker {"n":1}');
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('settings-modal')).toBeHidden();
 });

@@ -18,6 +18,7 @@ import { isSidecarAvailable } from 'src/net/sidecar_transport';
 import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_settings_presenter';
 import { SettingsModalProvider } from 'src/settings/settings_modal_context';
 import { ErrorBoundary } from 'src/ui/error_boundary/error_boundary';
+import { ModalProvider } from 'src/ui/modal/modal_manager';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { UpdatesPresenterContext, UpdatesStoreContext } from 'src/updates/updates_contexts';
 import { UpdatesPresenter } from 'src/updates/updates_presenter';
@@ -30,7 +31,9 @@ if (!container) throw new Error('Missing #root mount element');
 
 createRoot(container).render(
   <ErrorBoundary>
-    <React.StrictMode>{renderRoute()}</React.StrictMode>
+    <React.StrictMode>
+      <ModalProvider>{renderRoute()}</ModalProvider>
+    </React.StrictMode>
   </ErrorBoundary>,
 );
 
