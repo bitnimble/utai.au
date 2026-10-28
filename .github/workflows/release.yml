@@ -180,6 +180,108 @@ jobs:
           name: dist-${{ matrix.platform }}
           path: dist/
 
+  # Its own job so the certificate never shares a runner with what the build ran, from
+  # `bun install` to every crate's build script. The certificate's CN is utai.au, which finds it
+  # below; its p12 is 3DES (`-keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1`), since
+  # `security import` cannot read OpenSSL 3's default.
+  sign-macos:
+    needs: [plan, desktop]
+    # `always()`: a failed Windows leg fails `desktop` as a whole.
+    if: ${{ always() && contains(needs.plan.outputs.desktop, '"macos"') && needs.desktop.result != 'skipped' && needs.desktop.result != 'cancelled' }}
+    runs-on: macos-14
+    environment: macos-signing
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/download-artifact@v7
+        with:
+          name: dist-macos-arm64
+          path: dist
+      - name: Sign the app in the DMG and the updater bundle
+        id: sign
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${CERTIFICATE:-}" ]; then
+            echo "::warning::no MACOS_CERTIFICATE_BASE64 secret: publishing the ad-hoc signed app, so every update asks for the microphone again"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          trap 'security delete-keychain "$keychain" 2>/dev/null || true; rm -f "$RUNNER_TEMP/signing.p12"' EXIT
+          keychain_password=$(uuidgen)
+          echo "$CERTIFICATE" | base64 -D > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          # codesign finds the private key through the search list, whatever `--keychain` says.
+          security list-keychains -d user -s "$keychain"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/signing.p12"
+          # Without this codesign waits on a dialog asking to use the key.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          # By hash: a self-signed certificate is untrusted, which a lookup by name can skip.
+          identity=$(security find-certificate -a -c utai.au -Z "$keychain" | awk '/SHA-1 hash/ { print $3; exit }')
+          if [ -z "$identity" ]; then
+            echo "::error::no certificate named utai.au in the p12"
+            exit 1
+          fi
+          sign() {
+            codesign --force --deep --preserve-metadata=entitlements --sign "$identity" --keychain "$keychain" "$1"
+            codesign --verify --deep --strict "$1"
+            requirement=$(codesign --display --requirements - "$1" 2>&1)
+            echo "$requirement"
+            case "$requirement" in
+              *'certificate leaf = H"'*) ;;
+              *) echo "::error::$1 is not signed by the certificate"; exit 1 ;;
+            esac
+          }
+
+          archive=$(ls dist/macos-arm64/*.app.tar.gz 2>/dev/null || true)
+          if [ -n "$archive" ]; then
+            staging="$RUNNER_TEMP/updater"
+            mkdir -p "$staging"
+            tar -xzf "$archive" -C "$staging"
+            sign "$staging/utai.au.app"
+            rm -f "$archive" "$archive.sig"
+            # Else macOS's tar adds a `._` file of extended attributes beside every entry.
+            COPYFILE_DISABLE=1 tar -czf "$archive" -C "$staging" utai.au.app
+          fi
+
+          dmg=$(ls dist/macos-arm64/*.dmg)
+          # Sparse so it can grow: the new signatures are larger than the ad-hoc ones the image
+          # was sized for.
+          hdiutil convert "$dmg" -format UDSP -o "$RUNNER_TEMP/rw"
+          hdiutil resize -size 2g "$RUNNER_TEMP/rw.sparseimage"
+          mount="$RUNNER_TEMP/dmg"
+          hdiutil attach "$RUNNER_TEMP/rw.sparseimage" -nobrowse -noautoopen -mountpoint "$mount"
+          sign "$mount/utai.au.app"
+          # Spotlight indexing a fresh mount can hold it busy.
+          hdiutil detach "$mount" || { sleep 5; hdiutil detach -force "$mount"; }
+          hdiutil resize -sectors min "$RUNNER_TEMP/rw.sparseimage"
+          rm "$dmg"
+          hdiutil convert "$RUNNER_TEMP/rw.sparseimage" -format UDZO -o "$dmg"
+
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      # After the certificate's keychain is gone: `bun install` runs the packages' install scripts.
+      - name: Sign the updater bundle's new contents for the updater
+        if: steps.sign.outputs.signed == 'true' && hashFiles('dist/macos-arm64/*.app.tar.gz') != ''
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -eu
+          bun install --frozen-lockfile
+          bunx tauri signer sign -p '' dist/macos-arm64/*.app.tar.gz
+      - if: steps.sign.outputs.signed == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-macos-arm64
+          path: dist/
+          overwrite: true
+
   android:
     needs: plan
     if: needs.plan.outputs.android == 'true'
@@ -238,7 +340,7 @@ jobs:
           path: dist/
 
   publish:
-    needs: [plan, desktop, android]
+    needs: [plan, desktop, sign-macos, android]
     if: ${{ !cancelled() && needs.plan.outputs.tag != '' }}
     runs-on: ubuntu-latest
     permissions:
@@ -280,12 +382,13 @@ jobs:
           REPO: ${{ github.repository }}
           ID: ${{ steps.release.outputs.id }}
           DESKTOP: ${{ needs.desktop.result }}
+          SIGN_MACOS: ${{ needs.sign-macos.result }}
           ANDROID: ${{ needs.android.result }}
           SIGNED: ${{ steps.manifest.outputs.signed }}
         run: |
           set -eu
-          if [ "$DESKTOP" != success ] || [ "$ANDROID" != success ] || [ "$SIGNED" != true ]; then
-            echo "::warning::left as a draft (desktop: $DESKTOP, android: $ANDROID, signed updater bundles: $SIGNED): fix the build and rerun all jobs, or publish the draft by hand"
+          if [ "$DESKTOP" != success ] || [ "$SIGN_MACOS" != success ] || [ "$ANDROID" != success ] || [ "$SIGNED" != true ]; then
+            echo "::warning::left as a draft (desktop: $DESKTOP, macOS signing: $SIGN_MACOS, android: $ANDROID, signed updater bundles: $SIGNED): fix the build and rerun all jobs, or publish the draft by hand"
             exit 0
           fi
           gh api -X PATCH "repos/$REPO/releases/$ID" -F draft=false > /dev/null
