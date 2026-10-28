@@ -7,6 +7,8 @@ import { MusicSourcesSettings } from 'src/music_source/music_sources_settings';
 import { MusicSourcePresenterContext } from 'src/music_source/music_source_contexts';
 import { Modal, ModalHeader } from 'src/ui/modal/modal';
 import { Tabs } from 'src/ui/tabs/tabs';
+import { UpdatesStoreContext } from 'src/updates/updates_contexts';
+import { UpdatesSettings } from 'src/updates/updates_settings';
 import { useSettingsModal, type SettingsTab } from './settings_modal_context';
 
 const TAB_OPTIONS: ReadonlyArray<{ value: SettingsTab; label: string; testId: string }> = [
@@ -15,9 +17,12 @@ const TAB_OPTIONS: ReadonlyArray<{ value: SettingsTab; label: string; testId: st
   { value: 'logs', label: 'Logs', testId: 'settings-tab-logs' },
 ];
 
+const UPDATES_TAB = { value: 'updates', label: 'Updates', testId: 'settings-tab-updates' } as const;
+
 /**
  * The app's Settings dialog: a tabbed <Modal> hosting the music-source
- * ("Music sources"), audio-device ("Audio") and log ("Logs") panels. Open/tab state comes
+ * ("Music sources"), audio-device ("Audio"), log ("Logs") and, in the app,
+ * update ("Updates") panels. Open/tab state comes
  * from the global {@link useSettingsModal} context; each panel reads its own
  * domain via context. Opening it lazily loads the service catalog + enumerates
  * audio devices.
@@ -26,6 +31,8 @@ export const SettingsModal = observer(function SettingsModal() {
   const { open, tab, close, setTab } = useSettingsModal();
   const musicPresenter = React.useContext(MusicSourcePresenterContext);
   const audioPresenter = React.useContext(AudioDevicePresenterContext);
+  const updates = React.useContext(UpdatesStoreContext);
+  const tabs = updates?.current != null ? [...TAB_OPTIONS, UPDATES_TAB] : TAB_OPTIONS;
 
   React.useEffect(() => {
     if (!open) return;
@@ -45,10 +52,11 @@ export const SettingsModal = observer(function SettingsModal() {
       testId="settings-modal"
     >
       <ModalHeader title="Settings" onClose={close} closeLabel="Close settings" />
-      <Tabs options={TAB_OPTIONS} value={tab} onChange={setTab} ariaLabel="Settings sections" />
+      <Tabs options={tabs} value={tab} onChange={setTab} ariaLabel="Settings sections" />
       {tab === 'sources' && <MusicSourcesSettings />}
       {tab === 'audio' && <AudioSettings />}
       {tab === 'logs' && <LogsSettings />}
+      {tab === 'updates' && <UpdatesSettings />}
     </Modal>
   );
 });

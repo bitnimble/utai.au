@@ -30,6 +30,7 @@ import {
 import { ViewportStoreContext } from 'src/editing/viewport/viewport_contexts';
 import { ViewConfig } from 'src/editing/viewport/view_config';
 import { ToastContainer } from 'src/ui/toasts/toast_container';
+import { UpdateButton } from 'src/updates/update_button';
 import {
   ActionMenuItem,
   DropdownButton,
@@ -555,6 +556,7 @@ const Toolbar = observer(function Toolbar() {
           {formatBeatSummary(beats.analysis)}
         </span>
       )}
+      <UpdateButton className={styles.toolButton} />
       <button
         type="button"
         className={styles.toolButton}

@@ -28,6 +28,7 @@ tauri = { version = "2.11.3", features = ["protocol-asset"] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
 # WebdriverIO desktop e2e plugins (the in-app Execute API + the embedded
 # WebDriver server). Optional + behind the `wdio` feature so they NEVER ride a
@@ -44,6 +45,7 @@ utai-audio = { path = "crates/audio", features = ["device"] }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio", "ws"] }
 getrandom = "0.3"
 tokio = { version = "1", features = ["net"] }
+tauri-plugin-updater = "2"
 
 [features]
 wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]

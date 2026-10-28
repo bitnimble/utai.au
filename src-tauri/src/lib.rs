@@ -21,6 +21,7 @@ mod pitch;
 mod session_server;
 #[cfg(desktop)]
 mod sidecar;
+mod updates;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -58,7 +59,14 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(log_builder.build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init());
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init());
+
+    #[cfg(mobile)]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        updates::open_external,
+        updates::update_can_install,
+    ]);
 
     // WebdriverIO e2e: the in-app Execute API + the embedded WebDriver server.
     // Behind the `wdio` cargo feature, so a shipped build never carries them.
@@ -74,6 +82,7 @@ pub fn run() {
     // pipeline at the bundled data root; mobile ships none of that.
     #[cfg(desktop)]
     let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(sidecar::SidecarState::default())
         .manage(local_backend::LocalBackend::default())
         .manage(audio::AudioState::new())
@@ -138,19 +147,27 @@ pub fn run() {
             pitch::audio_pitch_unsubscribe,
             session_server::session_server_api_base,
             local_backend::local_backend_api_base,
+            updates::open_external,
+            updates::update_can_install,
+            updates::update_install,
         ]);
 
     let app = builder
         .build(context)
         .expect("error while building tauri application");
     app.run(|_app_handle, _event| {
-        // Tree-kill any live sidecar Python on exit: a window-close/quit doesn't
-        // drop the task owning the child, so its kill_on_drop never fires and a
-        // mid-separation process is orphaned holding the GPU.
         #[cfg(desktop)]
         if let tauri::RunEvent::Exit = _event {
-            use tauri::Manager;
-            _app_handle.state::<sidecar::SidecarState>().kill_all_children();
+            shutdown_children(_app_handle);
         }
     });
+}
+
+/// Tree-kill any live sidecar Python: a window-close/quit doesn't drop the task
+/// owning the child, so its kill_on_drop never fires and a mid-separation process
+/// is orphaned holding the GPU.
+#[cfg(desktop)]
+fn shutdown_children<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager;
+    app.state::<sidecar::SidecarState>().kill_all_children();
 }

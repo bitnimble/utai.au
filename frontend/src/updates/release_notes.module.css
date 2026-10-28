@@ -1,0 +1,23 @@
+.notes {
+    composes: bodySm from '../typography.module.css';
+    color: var(--color-text);
+}
+
+.heading {
+    composes: bodyEmphasis from '../typography.module.css';
+    margin: 10px 0 4px;
+    color: var(--color-text-strong);
+}
+
+.para {
+    margin: 6px 0;
+}
+
+.list {
+    margin: 6px 0;
+    padding-left: 18px;
+}
+
+.link {
+    color: var(--color-accent);
+}

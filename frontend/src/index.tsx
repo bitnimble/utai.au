@@ -19,6 +19,9 @@ import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_setting
 import { SettingsModalProvider } from 'src/settings/settings_modal_context';
 import { ErrorBoundary } from 'src/ui/error_boundary/error_boundary';
 import { toastStore } from 'src/ui/toasts/toasts';
+import { UpdatesPresenterContext, UpdatesStoreContext } from 'src/updates/updates_contexts';
+import { UpdatesPresenter } from 'src/updates/updates_presenter';
+import { UpdatesStore } from 'src/updates/updates_store';
 
 pageLog.follow();
 
@@ -52,11 +55,18 @@ function renderHost(target: HostTarget): React.ReactElement {
   void new HostPagePresenter(hostPageStore, target).start();
   // Provisioning syncs the venv the local backend runs from.
   if (isSidecarAvailable()) when(() => provisioningStore.state === 'ready', connectLocalBackend);
+  const updatesStore = new UpdatesStore();
+  const updatesPresenter = new UpdatesPresenter(updatesStore);
+  if (isTauri()) void updatesPresenter.start();
   return (
     <SettingsModalProvider>
-      <StartupGate store={provisioningStore} presenter={provisioningPresenter}>
-        <HostPage store={hostPageStore} />
-      </StartupGate>
+      <UpdatesStoreContext.Provider value={updatesStore}>
+        <UpdatesPresenterContext.Provider value={updatesPresenter}>
+          <StartupGate store={provisioningStore} presenter={provisioningPresenter}>
+            <HostPage store={hostPageStore} />
+          </StartupGate>
+        </UpdatesPresenterContext.Provider>
+      </UpdatesStoreContext.Provider>
     </SettingsModalProvider>
   );
 }
