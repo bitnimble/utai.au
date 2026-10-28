@@ -2,8 +2,9 @@
  * Desktop transport for lyrics alignment: instead of POSTing to the HTTP
  * `/api` backend, it drives the bundled Python ML sidecar through the Rust
  * broker (`src-tauri/src/sidecar.rs`). We invoke `run_job` with a Tauri
- * `Channel`; the broker spawns `python -m app.sidecar`, forwards our
- * {@link RequestMessage}, and streams each {@link ServerMessage} frame back.
+ * `Channel`; the broker forwards our {@link RequestMessage} to its long-lived
+ * `python -m app.sidecar`, streams progress frames back over the channel, and
+ * resolves to the terminal {@link ServerMessage}.
  *
  * The sidecar's `alignLyrics` runner only reads a local file path (no upload
  * store over stdio), so we first materialize the audio blob to a temp file
@@ -101,16 +102,11 @@ type RunJobOptions = { signal?: AbortSignal; onRunning?: () => void };
 function runJob(id: string, request: RequestMessage, opts: RunJobOptions): Promise<ResultMessage> {
   return new Promise<ResultMessage>((resolve, reject) => {
     let settled = false;
-    let endTimer: ReturnType<typeof setTimeout> | undefined;
 
-    const cleanup = (): void => {
-      if (endTimer !== undefined) clearTimeout(endTimer);
-      opts.signal?.removeEventListener('abort', onAbort);
-    };
     const finish = (fn: () => void): void => {
       if (settled) return;
       settled = true;
-      cleanup();
+      opts.signal?.removeEventListener('abort', onAbort);
       fn();
     };
 
@@ -124,15 +120,9 @@ function runJob(id: string, request: RequestMessage, opts: RunJobOptions): Promi
     const channel = new Channel<ServerMessage>();
     channel.onmessage = (msg): void => {
       if (settled) return;
-      if (msg.type === 'progress') {
-        // The sidecar is single-tenant (no GPU queue), so any frame means work
-        // is actively running; there's no `queued` wait-state to surface.
-        opts.onRunning?.();
-      } else if (msg.type === 'result') {
-        finish(() => resolve(msg));
-      } else if (msg.type === 'error') {
-        finish(() => reject(new Error(msg.message)));
-      }
+      // Any progress frame means work is actively running; there's no `queued`
+      // wait-state to surface.
+      if (msg.type === 'progress') opts.onRunning?.();
     };
 
     if (opts.signal) {
@@ -143,15 +133,11 @@ function runJob(id: string, request: RequestMessage, opts: RunJobOptions): Promi
       opts.signal.addEventListener('abort', onAbort);
     }
 
-    invoke('run_job', { request, onEvent: channel }).then(
-      () => {
-        // The broker resolves once it forwards the terminal frame, but that
-        // frame may be delivered to `onmessage` a tick later; defer before
-        // treating a resolved-without-terminal stream as a hard end.
-        if (settled) return;
-        endTimer = setTimeout(() => {
-          finish(() => reject(new Error('sidecar stream ended without a terminal result')));
-        }, 0);
+    invoke<ServerMessage | null>('run_job', { request, onEvent: channel }).then(
+      (terminal) => {
+        if (terminal?.type === 'result') finish(() => resolve(terminal));
+        else if (terminal?.type === 'error') finish(() => reject(new Error(terminal.message)));
+        else finish(() => reject(new Error('sidecar stream ended without a terminal result')));
       },
       (err: unknown) => {
         finish(() => reject(new Error(typeof err === 'string' ? err : 'sidecar job failed')));

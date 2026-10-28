@@ -54,7 +54,7 @@ struct Routes {
 
 struct Route {
     events: Channel<Value>,
-    done: oneshot::Sender<Result<(), String>>,
+    done: oneshot::Sender<Result<Value, String>>,
 }
 
 const EXITED_MID_JOB: &str = "the sidecar exited before finishing the job";
@@ -155,11 +155,17 @@ impl Routes {
         let mut open = self.open.lock().unwrap();
         // No route: a cancelled job's late frames.
         let Some(route) = open.get(&id) else { return };
-        let sent = route.events.send(frame).map_err(|e| e.to_string());
-        if sent.is_err() || terminal {
+        if !terminal {
+            let Err(e) = route.events.send(frame) else { return };
             if let Some(route) = open.remove(&id) {
-                let _ = route.done.send(sent);
+                let _ = route.done.send(Err(e.to_string()));
             }
+            return;
+        }
+        // Returned from run_job, not sent: Tauri delivers a channel message over 8 KB
+        // with a second round trip, so it can reach the page after run_job resolves.
+        if let Some(route) = open.remove(&id) {
+            let _ = route.done.send(Ok(frame));
         }
     }
 }
@@ -172,16 +178,16 @@ impl SidecarState {
         line: &str,
         events: Channel<Value>,
         mut cancel_rx: oneshot::Receiver<()>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<Value>, String> {
         let (done_tx, done_rx) = oneshot::channel();
         let worker = self.register(app, id, Route { events, done: done_tx }).await?;
         let outcome = match worker.send(line).await {
             Err(e) => Err(format!("failed to write request: {e}")),
             Ok(()) => tokio::select! {
-                done = done_rx => done.unwrap_or_else(|_| Err(EXITED_MID_JOB.to_string())),
+                done = done_rx => done.unwrap_or_else(|_| Err(EXITED_MID_JOB.to_string())).map(Some),
                 _ = &mut cancel_rx => {
                     worker.cancel(id).await;
-                    Ok(())
+                    Ok(None)
                 }
             },
         };
@@ -369,16 +375,16 @@ fn finish_line(mut buf: Vec<u8>) -> String {
 
 /// Run one backend job. `request` is a validated client control-protocol frame
 /// (the frontend builds it via `buildAlignLyricsRequest` in
-/// `frontend/src/net/control_protocol.ts`); each backend frame for its `id` is
-/// forwarded verbatim through `on_event`. Resolves when the sidecar emits that
-/// job's terminal `result`/`error`, the sidecar exits, or the job is cancelled.
+/// `frontend/src/net/control_protocol.ts`); each progress frame for its `id` is
+/// forwarded verbatim through `on_event`. Resolves to the job's terminal
+/// `result`/`error` frame, or `None` once cancelled.
 #[tauri::command]
 pub async fn run_job<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, SidecarState>,
     request: Value,
     on_event: Channel<Value>,
-) -> Result<(), String> {
+) -> Result<Option<Value>, String> {
     let id = request
         .get("id")
         .and_then(|v| v.as_str())
@@ -502,10 +508,10 @@ mod tests {
     }
 
     // Drives the broker against a fake sidecar that speaks the control protocol:
-    // it must forward each frame up the channel and resolve on the terminal one.
+    // it must forward progress up the channel and resolve to the terminal frame.
     #[cfg(unix)]
     #[test]
-    fn run_job_forwards_frames_until_the_terminal_result() {
+    fn run_job_forwards_progress_and_resolves_to_the_terminal_result() {
         use std::os::unix::fs::PermissionsExt;
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -538,12 +544,11 @@ printf '{"v":1,"type":"result","id":"job1","artifacts":[]}\n'
         });
 
         let result = tauri::async_runtime::block_on(run_job(handle, state, request, channel));
-        assert!(result.is_ok(), "run_job errored: {result:?}");
+        assert_eq!(result.unwrap().unwrap()["type"], "result");
 
         let frames = frames.lock().unwrap();
-        assert_eq!(frames.len(), 2, "expected progress + result, got {frames:?}");
+        assert_eq!(frames.len(), 1, "expected one progress frame, got {frames:?}");
         assert_eq!(frames[0]["type"], "progress");
-        assert_eq!(frames[1]["type"], "result");
         // The job must be reaped from the in-flight map once it terminates.
         assert!(tauri::async_runtime::block_on(app.state::<SidecarState>().jobs.lock()).is_empty());
 
@@ -583,14 +588,11 @@ done
         let app = mock_app();
 
         let run = |id: &str| -> Value {
-            let (channel, frames) = recording_channel();
-            let state = app.state::<SidecarState>();
-            let result = tauri::async_runtime::block_on(run_job(app.handle().clone(), state, request(id), channel));
-            assert!(result.is_ok(), "run_job errored: {result:?}");
-            let frames = frames.lock().unwrap();
-            assert_eq!(frames.len(), 1, "expected one result, got {frames:?}");
-            assert_eq!(frames[0]["id"], id);
-            frames[0]["pid"].clone()
+            let (channel, _) = recording_channel();
+            let result = tauri::async_runtime::block_on(run_job(app.handle().clone(), app.state(), request(id), channel));
+            let frame = result.unwrap().unwrap();
+            assert_eq!(frame["id"], id);
+            frame["pid"].clone()
         };
 
         let first = run("job1");
@@ -603,7 +605,7 @@ done
 
     #[cfg(unix)]
     #[test]
-    fn overlapping_jobs_each_get_their_own_frames() {
+    fn overlapping_jobs_each_get_their_own_result() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Takes both requests, then answers them in reverse order.
         let script = fake_sidecar(
@@ -618,8 +620,8 @@ cat > /dev/null
         );
         let _env = EnvVarGuard::set("UTAI_SIDECAR_PYTHON", script.as_os_str());
         let app = mock_app();
-        let (channel1, frames1) = recording_channel();
-        let (channel2, frames2) = recording_channel();
+        let (channel1, _) = recording_channel();
+        let (channel2, _) = recording_channel();
 
         let (r1, r2) = tauri::async_runtime::block_on(async {
             tokio::join!(
@@ -628,9 +630,8 @@ cat > /dev/null
             )
         });
 
-        assert_eq!((r1, r2), (Ok(()), Ok(())));
-        assert_eq!(frames1.lock().unwrap().iter().map(|f| f["id"].clone()).collect::<Vec<_>>(), ["job1"]);
-        assert_eq!(frames2.lock().unwrap().iter().map(|f| f["id"].clone()).collect::<Vec<_>>(), ["job2"]);
+        assert_eq!(r1.unwrap().unwrap()["id"], "job1");
+        assert_eq!(r2.unwrap().unwrap()["id"], "job2");
         let _ = std::fs::remove_file(&script);
     }
 
@@ -650,11 +651,9 @@ done
         let _env = EnvVarGuard::set("UTAI_SIDECAR_PYTHON", script.as_os_str());
         let app = mock_app();
         let run = |id: &str| -> Value {
-            let (channel, frames) = recording_channel();
+            let (channel, _) = recording_channel();
             let result = tauri::async_runtime::block_on(run_job(app.handle().clone(), app.state(), request(id), channel));
-            assert!(result.is_ok(), "run_job errored: {result:?}");
-            let pid = frames.lock().unwrap()[0]["pid"].clone();
-            pid
+            result.unwrap().unwrap()["pid"].clone()
         };
 
         let first = run("job1");
@@ -666,7 +665,7 @@ done
             })
         });
 
-        assert_eq!(hung, Ok(()));
+        assert_eq!(hung, Ok(None));
         assert!(frames.lock().unwrap().is_empty());
         assert_ne!(run("job2"), first);
         let _ = std::fs::remove_file(&script);
