@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from app.music.models import TrackResult
-from app.music.youtube_music import normalize_results, rank_by_query
+from app.music.youtube_music import music_videos_first, normalize_results, rank_by_query
 
 SONG = {
     "resultType": "song",
@@ -94,6 +94,41 @@ def test_rank_keeps_the_catalogue_song_first_and_ties_in_order():
 def test_rank_matches_glued_non_latin_words():
     results = [_track("Lemon", "Someone"), _track("LADY", "米津玄師ハチ")]
     assert [t.title for t in rank_by_query(results, "lady 米津玄師")] == ["LADY", "Lemon"]
+
+
+def _row(video_id: str, title: str, artist: str, video_type: str = "MUSIC_VIDEO_TYPE_UGC") -> dict:
+    return {**VIDEO, "videoId": video_id, "title": title, "artists": [{"name": artist}], "videoType": video_type}
+
+
+def test_music_video_goes_right_before_its_song():
+    other_song = {**SONG, "videoId": "other", "title": "Can't Hold Us"}
+    official = _row("omv", "Wing$", "Macklemore & Ryan Lewis", "MUSIC_VIDEO_TYPE_OMV")
+    ordered = music_videos_first([other_song, SONG], [VIDEO, official])
+    assert [r["videoId"] for r in ordered] == ["other", "omv", "gAg3uMlNyHA", "KP4tmbzrCEc"]
+
+
+def test_song_words_alone_dont_make_a_music_video():
+    song = {**SONG, "title": "Video Games", "artists": [{"name": "Lana Del Rey"}]}
+    reupload = _row("reupload", "Lana Del Rey - Video Games", "some channel")
+    assert [r["videoId"] for r in music_videos_first([song], [reupload])] == ["KP4tmbzrCEc", "reupload"]
+
+
+def test_song_keeps_its_row_when_the_videos_search_returns_it_too():
+    same_id = {**SONG, "resultType": "video", "videoType": "MUSIC_VIDEO_TYPE_OMV"}
+    [song] = normalize_results(music_videos_first([SONG], [same_id]))
+    assert song.album == "The Heist"
+    assert song.uploaderTitled is False
+
+
+def test_other_videos_stay_below_the_songs():
+    videos = [
+        _row("wrong-song", "Can't Hold Us (Official Video)", "Macklemore & Ryan Lewis", "MUSIC_VIDEO_TYPE_OMV"),
+        _row("live", "Wing$ (Live Video)", "Macklemore & Ryan Lewis", "MUSIC_VIDEO_TYPE_OMV"),
+        _row("reupload", "Macklemore & Ryan Lewis - Wing$", "some channel"),
+        _row("cover", "Wing$ Macklemore & Ryan Lewis cover video", "some channel"),
+    ]
+    ordered = music_videos_first([SONG], videos)
+    assert [r["videoId"] for r in ordered] == ["KP4tmbzrCEc", "wrong-song", "live", "reupload", "cover"]
 
 
 def test_joins_artists_and_drops_duplicates_and_malformed_rows():
