@@ -262,7 +262,7 @@ test('karaoke "Show 2 lines" sizes both lines alike, small enough for the longer
     .toEqual({ oneRow: true, unclipped: true, insideSlot: true, fillsSlot: true, sameSize: true, shrunk: true });
 });
 
-test('karaoke counts a line in after a gap: a dot per beat of the bar above its first word, the last out on the line', async ({ page }) => {
+test('karaoke counts a line in after a gap: 3, 2, 1 dots above its first word, the last out on the line', async ({ page }) => {
   await page.route('**/music/beats', async (route) => {
     const beats = {
       beats: Array.from({ length: 40 }, (_, i) => i * 0.5),
@@ -303,8 +303,8 @@ test('karaoke counts a line in after a gap: a dot per beat of the bar above its 
 
   await seek(2.2);
   await expect(page.getByTestId('karaoke-line')).toHaveText('count me in');
-  await expect(countIn.locator('> span')).toHaveCount(4);
-  await expect.poll(dots).toBe('oooo');
+  await expect(countIn.locator('> span')).toHaveCount(3);
+  await expect.poll(dots).toBe('ooo');
   const firstWord = page.getByTestId('karaoke-line').locator('[data-word-state]').first();
   const [dotsBox, wordBox] = [await countIn.boundingBox(), await firstWord.boundingBox()];
   expect(dotsBox!.y + dotsBox!.height).toBeLessThanOrEqual(wordBox!.y + 1);
@@ -318,9 +318,9 @@ test('karaoke counts a line in after a gap: a dot per beat of the bar above its 
   await page.getByTestId('karaoke-show-pitch').click();
   await page.keyboard.press('Escape');
   await seek(3.2);
-  await expect.poll(dots).toBe('oo--');
-  await seek(3.8);
-  await expect.poll(dots).toBe('o---');
+  await expect.poll(dots).toBe('oo-');
+  await seek(3.6);
+  await expect.poll(dots).toBe('o--');
   await seek(4.05);
   await expect(countIn).toHaveCount(0);
 

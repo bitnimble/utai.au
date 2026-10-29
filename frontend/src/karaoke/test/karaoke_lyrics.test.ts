@@ -109,18 +109,41 @@ describe('shownLineIdx', () => {
 describe('countInTimes', () => {
   const beats = Array.from({ length: 20 }, (_, i) => i * 0.5);
 
-  test('4/4 into a downbeat: out on the three beats before, the last on the line', () => {
-    expect(countInTimes(beats, 4, 0.5, 4)).toEqual([2.5, 3, 3.5, 4]);
+  test('4/4 counts 3, 2, 1, the last out on the line', () => {
+    expect(countInTimes(beats, 4, 0.5, 4)).toEqual([3, 3.5, 4]);
   });
 
-  test('a line sung just off its beat still counts in from the bar before', () => {
-    expect(countInTimes(beats, 4.1, 0.5, 4)).toEqual([2.5, 3, 3.5, 4.1]);
-    expect(countInTimes(beats, 3.9, 0.5, 4)).toEqual([2.5, 3, 3.5, 3.9]);
+  test('a line sung just off its beat counts in to that beat', () => {
+    expect(countInTimes(beats, 4.2, 0.5, 4)).toEqual([3, 3.5, 4]);
+    expect(countInTimes(beats, 3.8, 0.5, 4)).toEqual([3, 3.5, 4]);
   });
 
-  test('3/4 counts three; no beats before the song starts', () => {
-    expect(countInTimes(beats, 4, 0.5, 3)).toEqual([3, 3.5, 4]);
-    expect(countInTimes(beats, 0.5, 0.5, 4)).toEqual([0, 0.5]);
+  test('evenly paced past a dropped, a spurious or a doubled tracked beat', () => {
+    const dropped = [...beats.filter((b) => b <= 2), ...beats.map((b) => b + 10)];
+    expect(countInTimes(dropped, 10, 0.5, 4)).toEqual([9, 9.5, 10]);
+    expect(countInTimes([...beats, 3.7].sort((a, b) => a - b), 4, 0.5, 4)).toEqual([3, 3.5, 4]);
+    expect(countInTimes([...beats, 3.5].sort((a, b) => a - b), 4, 0.5, 4)).toEqual([3, 3.5, 4]);
+  });
+
+  test('follows the tracked beats, not the song-wide tempo', () => {
+    expect(countInTimes(beats, 4.2, 0.25, 4)).toEqual([3, 3.5, 4]);
+    const halfTime = Array.from({ length: 20 }, (_, i) => i);
+    expect(countInTimes(halfTime, 4.4, 0.5, 4)).toEqual([2, 3, 4]);
+  });
+
+  test('3/4 counts 2, 1; 2/4 counts 1; 1/4 none', () => {
+    expect(countInTimes(beats, 4, 0.5, 3)).toEqual([3.5, 4]);
+    expect(countInTimes(beats, 4, 0.5, 2)).toEqual([4]);
+    expect(countInTimes(beats, 4, 0.5, 1)).toEqual([]);
+  });
+
+  test('counts back from the line off the tracked beats', () => {
+    expect(countInTimes(beats, 30, 0.5, 4)).toEqual([29, 29.5, 30]);
+    expect(countInTimes([], 4, 0.5, 4)).toEqual([3, 3.5, 4]);
+  });
+
+  test('counts in before the first tracked beat', () => {
+    expect(countInTimes(beats, 0.5, 0.5, 4)).toEqual([-0.5, 0, 0.5]);
   });
 });
 

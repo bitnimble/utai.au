@@ -71,18 +71,41 @@ export function followsGap(lines: readonly LyricLine[], idx: number): boolean {
   return true;
 }
 
-/** When each dot of the count-in to a line sung at `startSec` goes out: on the
- *  bar's beats before it, the last as the line starts. A beat within half a
- *  beat of `startSec` is the line's own. */
+/** When each dot of the count-in to a line sung at `startSec` goes out, one a
+ *  beat, the last on the beat the line lands on: "3, 2, 1, go" in 4/4. Paced by
+ *  the tracked beats around the line, `beatSec` without any. A tracked beat
+ *  within half a beat of `startSec` is the line's own; with none, it counts
+ *  back from `startSec`. */
 export function countInTimes(
   beats: readonly number[],
   startSec: number,
   beatSec: number,
   beatsPerBar: number,
 ): number[] {
-  const fromSec = startSec - (beatsPerBar - 0.5) * beatSec;
-  const toSec = startSec - beatSec / 2;
-  return [...beats.filter((b) => b >= fromSec && b < toSec), startSec];
+  const dots = beatsPerBar - 1;
+  const onIdx = nearestIdx(beats, startSec);
+  const stepSec = localBeatSec(beats, onIdx, beatsPerBar) ?? beatSec;
+  const onBeat = beats.length > 0 && Math.abs(beats[onIdx] - startSec) <= stepSec / 2;
+  const onSec = onBeat ? beats[onIdx] : startSec;
+  return Array.from({ length: dots }, (_, i) => onSec - (dots - 1 - i) * stepSec);
+}
+
+function nearestIdx(sorted: readonly number[], value: number): number {
+  let best = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    if (Math.abs(sorted[i] - value) < Math.abs(sorted[best] - value)) best = i;
+  }
+  return best;
+}
+
+/** The median interval within a bar either side of `beats[idx]`, so a dropped
+ *  or spurious tracked beat doesn't skew it. */
+function localBeatSec(beats: readonly number[], idx: number, beatsPerBar: number): number | undefined {
+  const intervals: number[] = [];
+  const to = Math.min(beats.length - 1, idx + beatsPerBar);
+  for (let i = Math.max(0, idx - beatsPerBar); i < to; i++) intervals.push(beats[i + 1] - beats[i]);
+  intervals.sort((a, b) => a - b);
+  return intervals.length > 0 ? intervals[intervals.length >> 1] : undefined;
 }
 
 /** First non-blank line after `idx` (or from the start when `idx` is undefined). */
