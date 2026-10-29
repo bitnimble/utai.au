@@ -1,10 +1,9 @@
 import classNames from 'classnames';
-import { Music, Search, Settings } from 'lucide-react';
+import { Music, Search } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import type { TrackResult } from 'src/net/music_source_client';
 import { Spinner } from 'src/ui/spinner/spinner';
-import { useSettingsModal } from 'src/settings/settings_modal_context';
 import { MusicSourcePresenterContext, MusicSourceStoreContext } from './music_source_contexts';
 import type { MusicSourcePresenter } from './music_source_presenter';
 import type { MusicSourceStore } from './music_source_store';
@@ -17,7 +16,6 @@ import styles from './music_search_panel.module.css';
 export const MusicSearchPanel = observer(function MusicSearchPanel() {
   const store = React.useContext(MusicSourceStoreContext)!;
   const presenter = React.useContext(MusicSourcePresenterContext)!;
-  const settingsModal = useSettingsModal();
   React.useEffect(() => {
     void presenter.ensureLoaded();
   }, [presenter]);
@@ -30,16 +28,6 @@ export const MusicSearchPanel = observer(function MusicSearchPanel() {
 
   return (
     <div className={styles.panel} data-testid="music-search">
-      {!store.anyServiceConfigured && (
-        <button
-          type="button"
-          className={styles.setupNote}
-          onClick={() => settingsModal.openSettings('sources')}
-          data-testid="music-search-setup-note"
-        >
-          <Settings size={14} aria-hidden="true" /> No music services configured yet. Set one up.
-        </button>
-      )}
       <form className={styles.form} onSubmit={onSubmit}>
         <input
           type="text"
