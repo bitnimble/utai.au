@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { LyricLine } from 'src/lyrics/lrc';
 import {
   countInTimes,
   followingLineIdx,
@@ -6,6 +7,7 @@ import {
   lineSegments,
   nextVocalLineIdx,
   shownLineIdx,
+  splitLongLines,
   vocalOrdinal,
 } from '../karaoke_lyrics';
 
@@ -57,6 +59,110 @@ describe('lineSegments', () => {
 
   test('a word-less line is one run', () => {
     expect(lineSegments({ startSec: 0, text: 'plain line' })).toEqual([{ text: 'plain line', wordIdx: 0 }]);
+  });
+});
+
+describe('splitLongLines', () => {
+  const timedWords = (texts: string[]) => texts.map((text, i) => ({ startSec: 10 + i, endSec: 10.5 + i, text }));
+  const noPhrases = () => undefined;
+  const KIMI = ['君', 'の', '名前', 'を', '呼', 'んで', 'い', 'た', 'ん', 'だ', 'ずっと', '遠い', '空', 'の', '向こう', 'へ'];
+  const kimiLine = { startSec: 9, text: KIMI.join(''), words: timedWords(KIMI) };
+
+  const spaced = (text: string) => ({ startSec: 9, text, words: timedWords(text.split(' ')) });
+  const texts = (lines: { text: string }[]) => lines.map((l) => l.text);
+  const split = (lines: LyricLine[], phraseStarts: (text: string) => number[] | undefined = noPhrases) =>
+    splitLongLines(lines, { splitAboveEm: 20, maxPartEm: 16 }, phraseStarts);
+
+  test('leaves a line that fits alone, with leeway past the part width', () => {
+    const line = spaced('We were dancing in the moonlight now');
+    expect(split([line])).toEqual([line]);
+  });
+
+  test('a narrower line splits what a wider one keeps', () => {
+    const line = spaced('We were dancing in the moonlight now');
+    expect(texts(splitLongLines([line], { splitAboveEm: 15, maxPartEm: 12 }, noPhrases))).toEqual([
+      'We were dancing in',
+      'the moonlight now',
+    ]);
+  });
+
+  test('splits just past the leeway evenly, not orphaning a word', () => {
+    expect(texts(split([spaced('we were dancing in the moonlight all night')]))).toEqual([
+      'we were dancing in the',
+      'moonlight all night',
+    ]);
+  });
+
+  test('splits a very long line into the fewest parts that fit', () => {
+    const parts = split([spaced(Array.from({ length: 15 }, () => 'abcd').join(' '))]);
+    expect(parts.map((l) => l.words?.length)).toEqual([5, 5, 5]);
+  });
+
+  test('splits a long line between words, each part starting at its first word', () => {
+    const words = timedWords('Is this the real life is this just fantasy'.split(' '));
+    const line = { startSec: 9, text: 'Is this the real life, is this just fantasy', words };
+    expect(split([line])).toEqual([
+      { startSec: 9, text: 'Is this the real life,', words: words.slice(0, 5) },
+      { startSec: 15, text: 'is this just fantasy', words: words.slice(5) },
+    ]);
+  });
+
+  test('a part whose first word has no start time starts at its first timed word', () => {
+    const words = timedWords('Is this the real life is this just fantasy'.split(' '));
+    words[5] = { ...words[5], startSec: NaN };
+    const line = { startSec: 9, text: 'Is this the real life, is this just fantasy', words };
+    expect(split([line]).map((l) => l.startSec)).toEqual([9, 16]);
+  });
+
+  const ONE_TO_TEN = 'one two three four five six seven eight nine ten'.split(' ');
+
+  test('favours a break after punctuation over a slightly more even one', () => {
+    expect(texts(split([spaced(ONE_TO_TEN.join(' '))]))).toEqual(['one two three four five', 'six seven eight nine ten']);
+    const line = { startSec: 9, text: 'one two three four, five six seven eight nine ten', words: timedWords(ONE_TO_TEN) };
+    expect(texts(split([line]))).toEqual(['one two three four,', 'five six seven eight nine ten']);
+  });
+
+  test('favours a break at a pause in the singing', () => {
+    const words = ONE_TO_TEN.map((text, i) => {
+      const startSec = 10 + i * 0.5 + (i >= 4 ? 1 : 0);
+      return { startSec, endSec: startSec + 0.4, text };
+    });
+    const line = { startSec: 10, text: ONE_TO_TEN.join(' '), words };
+    expect(texts(split([line]))).toEqual(['one two three four', 'five six seven eight nine ten']);
+  });
+
+  test('never breaks after an opening bracket', () => {
+    const line = { startSec: 9, text: 'one two three four five (six seven) eight nine ten', words: timedWords(ONE_TO_TEN) };
+    expect(texts(split([line]))).toEqual(['one two three four five (six', 'seven) eight nine ten']);
+  });
+
+  test('a word too wide for any part gets a part of its own', () => {
+    const wide = 'x'.repeat(40);
+    expect(texts(split([spaced(`a ${wide} b`)]))).toEqual(['a', wide, 'b']);
+  });
+
+  test('leaves word-less and single-word lines whole', () => {
+    const long = 'a line far too long to fit on one row of the karaoke view at all';
+    const wordless = { startSec: 9, text: long };
+    const oneWord = { startSec: 9, text: long, words: timedWords([long]) };
+    expect(split([wordless])[0]).toBe(wordless);
+    expect(split([oneWord])[0]).toBe(oneWord);
+  });
+
+  test('splits unspaced Japanese only at a phrase start', () => {
+    expect(split([kimiLine])[0]).toBe(kimiLine);
+    expect(texts(split([kimiLine], () => [2, 5, 12, 15, 17, 19]))).toEqual([
+      '君の名前を呼んでいたんだ',
+      'ずっと遠い空の向こうへ',
+    ]);
+  });
+
+  test('splits Japanese at a space without phrases', () => {
+    const line = { ...kimiLine, text: '君の名前を呼んでいたんだ　ずっと遠い空の向こうへ' };
+    expect(texts(split([line]))).toEqual([
+      '君の名前を呼んでいたんだ',
+      'ずっと遠い空の向こうへ',
+    ]);
   });
 });
 

@@ -1,10 +1,11 @@
 import { expect } from '@playwright/test';
-import { HOST_PATH, test } from 'src/testing/e2e_test';
+import { HOST_PATH, showTracksView, test } from 'src/testing/e2e_test';
 import { makeSongBundle } from 'src/testing/song_bundle';
 
 test('dropdown: a menu opened near the bottom edge stays inside the viewport', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 480 });
   await page.goto(HOST_PATH);
+  await showTracksView(page);
   await page.locator('input[type="file"][accept=".zip,application/zip"]').setInputFiles({
     name: 'song.utai.zip',
     mimeType: 'application/zip',

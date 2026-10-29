@@ -67,7 +67,26 @@ describe('annotateTokens', () => {
         { start: 1, end: 2, romaji: 'to' },
         { start: 2, end: 4, romaji: 'futari' },
       ],
+      phraseStarts: [2],
     });
+  });
+
+  test('phrases start at content words, past their particles and endings', () => {
+    const tokens = [
+      tok('東京', 'トウキョウ', '名詞', '固有名詞'),
+      tok('タワー', 'タワー', '名詞', '一般'),
+      tok('を', 'ヲ', '助詞', '格助詞'),
+      tok('愛', 'アイ', '名詞', 'サ変接続'),
+      tok('し', 'シ', '動詞', '自立', '*', 'する'),
+      tok('て', 'テ', '助詞', '接続助詞'),
+      tok('走り', 'ハシリ', '動詞', '自立'),
+      tok('続ける', 'ツヅケル', '動詞', '自立'),
+      tok('こと', 'コト', '名詞', '非自立'),
+      tok('、', '、', '記号', '読点'),
+      tok('お', 'オ', '接頭詞', '名詞接続'),
+      tok('前', 'マエ', '名詞', '代名詞'),
+    ];
+    expect(annotateTokens(tokens, source).phraseStarts).toEqual([6, 9, 17]);
   });
 
   test('merges multi-token numerals and keeps per-kanji splits', () => {

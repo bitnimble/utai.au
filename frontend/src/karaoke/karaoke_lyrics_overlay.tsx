@@ -21,7 +21,16 @@ import { activeLineIndexAt, activeWordIndexAt, lineSpanSec, LyricLine, wordState
 import { LyricsTrack, lyricsStore } from 'src/lyrics/store';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { StatusPill } from 'src/ui/status_pill/status_pill';
-import { countInTimes, followingLineIdx, followsGap, lineSegments, shownLineIdx, vocalOrdinal } from './karaoke_lyrics';
+import {
+  countInTimes,
+  followingLineIdx,
+  followsGap,
+  lineSegments,
+  lineSplitLimits,
+  shownLineIdx,
+  splitLongLines,
+  vocalOrdinal,
+} from './karaoke_lyrics';
 import styles from './karaoke_lyrics_overlay.module.css';
 
 const PITCH_BAND_EM = 2.5;
@@ -41,6 +50,25 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
       const id = lyricsStore.trackIds[0];
       return id != null ? lyricsStore.get(id) : undefined;
     },
+    widthPx: 0,
+    setWidthPx(px: number): void {
+      this.widthPx = px;
+    },
+    get lineWidthPx(): number {
+      return this.widthPx * (appSettingsStore.karaokeTwoLines ? TWO_LINE_WIDTH_FRAC : 1);
+    },
+    get baseFontSizePx(): number {
+      return karaokeFontSizePx(this.widthPx);
+    },
+    get lineWidthEm(): number {
+      // rounded: absorbs float noise so resizes don't re-split
+      return Math.round((this.lineWidthPx / this.baseFontSizePx) * 10) / 10;
+    },
+    get lines(): readonly LyricLine[] {
+      const t = this.track;
+      if (!t || this.lineWidthEm <= 0) return t?.lines ?? [];
+      return splitLongLines(t.lines, lineSplitLimits(this.lineWidthEm), (text) => furiganaAnnotator.phraseStartsFor(text));
+    },
     get audioTimeNow(): number {
       return playbackEngine.currentTime - playbackEngine.songLeadInSec;
     },
@@ -49,44 +77,42 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     },
     get activeLineIdx(): number | undefined {
       const t = this.track;
-      return t ? activeLineIndexAt(t.lines, this.lyricsTimeNow, t.offsetSec) : undefined;
+      return t ? activeLineIndexAt(this.lines, this.lyricsTimeNow, t.offsetSec) : undefined;
     },
     get shownIdx(): number | undefined {
       const t = this.track;
       if (playbackEngine.ended) return undefined;
-      return t ? shownLineIdx(t.lines, this.lyricsTimeNow, t.offsetSec) : undefined;
+      return t ? shownLineIdx(this.lines, this.lyricsTimeNow, t.offsetSec) : undefined;
     },
     get nextIdx(): number | undefined {
-      const t = this.track;
       const shown = this.shownIdx;
-      return t && shown != null ? followingLineIdx(t.lines, shown) : undefined;
+      return shown != null ? followingLineIdx(this.lines, shown) : undefined;
     },
     get shownOnTop(): boolean {
-      const t = this.track;
       const shown = this.shownIdx;
-      return t != null && shown != null && vocalOrdinal(t.lines, shown) % 2 === 0;
+      return shown != null && vocalOrdinal(this.lines, shown) % 2 === 0;
     },
     get activeWordIdx(): number | undefined {
       const t = this.track;
       const lineIdx = this.activeLineIdx;
       if (!t || lineIdx == null) return undefined;
-      if (!t.lines[lineIdx].words?.length) return 0;
-      return activeWordIndexAt(t.lines, lineIdx, this.lyricsTimeNow, t.offsetSec);
+      if (!this.lines[lineIdx].words?.length) return 0;
+      return activeWordIndexAt(this.lines, lineIdx, this.lyricsTimeNow, t.offsetSec);
     },
     get activeWordEnded(): boolean {
       const t = this.track;
       const lineIdx = this.activeLineIdx;
       const wordIdx = this.activeWordIdx;
       if (!t || lineIdx == null || wordIdx == null) return false;
-      const end = t.lines[lineIdx].words?.[wordIdx]?.endSec;
+      const end = this.lines[lineIdx].words?.[wordIdx]?.endSec;
       return end != null && this.lyricsTimeNow - t.offsetSec >= end;
     },
     get countInTimes(): readonly number[] {
       const t = this.track;
       const shown = this.shownIdx;
       const analysis = beats?.analysis;
-      if (!t || shown == null || !analysis?.beats.length || !followsGap(t.lines, shown)) return [];
-      const startSec = lineSpanSec(t.lines, shown).startSec + t.offsetSec;
+      if (!t || shown == null || !analysis?.beats.length || !followsGap(this.lines, shown)) return [];
+      const startSec = lineSpanSec(this.lines, shown).startSec + t.offsetSec;
       return countInTimes(analysis.beats, startSec, 60 / analysis.bpm, analysis.timeSignature.numerator);
     },
     get countInLeft(): number {
@@ -95,21 +121,21 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     },
   }));
   const ref = React.useRef<HTMLDivElement>(null);
-  const [widthPx, setWidthPx] = React.useState(0);
   React.useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const ro = new ResizeObserver(([entry]) => setWidthPx(entry.contentRect.width));
+    const ro = new ResizeObserver(([entry]) => playhead.setWidthPx(entry.contentRect.width));
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [playhead]);
 
   const track = playhead.track;
+  const lines = playhead.lines;
   const shownIdx = playhead.shownIdx;
   const twoLines = appSettingsStore.karaokeTwoLines;
   const lineView: LineView = (idx, lineWidthPx, oneRowFontSizePx) => {
-    if (track == null || idx == null) return null;
-    const line = track.lines[idx];
+    if (idx == null) return null;
+    const line = lines[idx];
     const isActive = playhead.activeLineIdx === idx;
     const activeWordIdx = isActive ? playhead.activeWordIdx : undefined;
     const activeWordEnded = isActive && playhead.activeWordEnded;
@@ -120,10 +146,10 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     return isPitched(line, lineWidthPx) ? (
       <PitchedKaraokeLine
         key={idx}
-        lines={track.lines}
+        lines={lines}
         lineIdx={idx}
         widthPx={lineWidthPx}
-        baseFontSizePx={oneRowFontSizePx ?? karaokeFontSizePx(widthPx)}
+        baseFontSizePx={oneRowFontSizePx ?? playhead.baseFontSizePx}
         oneRow={oneRowFontSizePx != null}
         activeWordIdx={activeWordIdx}
         activeWordEnded={activeWordEnded}
@@ -154,7 +180,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
   if (!twoLines || shownIdx == null) {
     return (
       <div ref={ref} className={styles.overlay} data-testid="karaoke-lyrics">
-        {lineView(shownIdx, widthPx)}
+        {lineView(shownIdx, playhead.lineWidthPx)}
       </div>
     );
   }
@@ -162,11 +188,12 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
   return (
     <div ref={ref} className={classNames(styles.overlay, styles.twoLines)} data-testid="karaoke-lyrics">
       <TwoLineSlots
-        lines={track.lines}
+        lines={lines}
         topIdx={topIdx}
         bottomIdx={bottomIdx}
         shownOnTop={playhead.shownOnTop}
-        widthPx={widthPx}
+        slotWidthPx={playhead.lineWidthPx}
+        baseFontSizePx={playhead.baseFontSizePx}
         lineView={lineView}
       />
     </div>
@@ -197,14 +224,16 @@ const TwoLineSlots = observer(function TwoLineSlots({
   topIdx,
   bottomIdx,
   shownOnTop,
-  widthPx,
+  slotWidthPx,
+  baseFontSizePx,
   lineView,
 }: {
   lines: readonly LyricLine[];
   topIdx: number | undefined;
   bottomIdx: number | undefined;
   shownOnTop: boolean;
-  widthPx: number;
+  slotWidthPx: number;
+  baseFontSizePx: number;
   lineView: LineView;
 }) {
   const [rowWidths, setRowWidths] = React.useState<Partial<Record<Slot, { text: string; px: number }>>>({});
@@ -213,8 +242,6 @@ const TwoLineSlots = observer(function TwoLineSlots({
       setRowWidths((prev) => (prev[slot]?.text === text && prev[slot]?.px === px ? prev : { ...prev, [slot]: { text, px } })),
     [],
   );
-  const slotWidthPx = widthPx * TWO_LINE_WIDTH_FRAC;
-  const baseFontSizePx = karaokeFontSizePx(widthPx);
   const fontReady = lyricsMeasurer.fontReady;
   const furiganaRevision = furiganaAnnotator.revision;
   const slots: [Slot, number | undefined][] = [

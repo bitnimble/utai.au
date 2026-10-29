@@ -46,6 +46,147 @@ export function lineSegments(line: LyricLine): LineSegment[] {
   return segments;
 }
 
+const SPLIT_ABOVE_WIDTH_FRAC = 0.84;
+const MAX_PART_WIDTH_FRAC = 0.67;
+const NARROW_CHAR_EM = 0.5;
+const PUNCTUATION_BONUS = 0.3;
+const PAUSE_BONUS_PER_SEC = 0.3;
+const OVERFLOW_COST_PER_EM = 100;
+const CLOSING_PUNCTUATION_RE = /[\p{Po}\p{Pe}\p{Pf}]/u;
+const OPENING_PUNCTUATION_RE = /[\p{Ps}\p{Pi}]/u;
+const APOSTROPHES = "'’";
+
+export type LineSplitLimits = { splitAboveEm: number; maxPartEm: number };
+
+/** Split limits for a line container `lineWidthEm` wide at the lyric font size. */
+export function lineSplitLimits(lineWidthEm: number): LineSplitLimits {
+  return { splitAboveEm: lineWidthEm * SPLIT_ABOVE_WIDTH_FRAC, maxPartEm: lineWidthEm * MAX_PART_WIDTH_FRAC };
+}
+
+/** Word-timed lines wider than `splitAboveEm`, split into the fewest lines that
+ *  each fit `maxPartEm`, as even as possible. `phraseStarts` gives offsets into
+ *  the line's {@link lineSegments} text where unspaced text may break; a line
+ *  with nowhere to break stays whole. */
+export function splitLongLines(
+  lines: readonly LyricLine[],
+  limits: LineSplitLimits,
+  phraseStarts: (text: string) => readonly number[] | undefined,
+): LyricLine[] {
+  return lines.flatMap((line) => splitLongLine(line, limits, phraseStarts));
+}
+
+function splitLongLine(
+  line: LyricLine,
+  { splitAboveEm, maxPartEm }: LineSplitLimits,
+  phraseStarts: (text: string) => readonly number[] | undefined,
+): LyricLine[] {
+  const words = line.words;
+  if (!words || words.length < 2) return [line];
+  const segments = lineSegments(line);
+  const text = segments.map((s) => s.text).join('');
+  const totalEm = textEm(text);
+  if (totalEm <= splitAboveEm) return [line];
+  const wordStarts: number[] = [];
+  let offset = 0;
+  for (const s of segments) {
+    wordStarts[s.wordIdx] ??= offset;
+    offset += s.text.length;
+  }
+  wordStarts.push(text.length);
+  const phrases = phraseStarts(text);
+  const slice = (from: number, to: number): string => text.slice(wordStarts[from], wordStarts[to]).trim();
+  const breaks: Break[] = [{ at: 0, bonus: 0 }];
+  for (let at = 1; at < words.length; at++) {
+    const lastMark = text.slice(0, wordStarts[at]).trimEnd().at(-1) ?? '';
+    if (OPENING_PUNCTUATION_RE.test(lastMark)) continue;
+    const afterPunctuation = CLOSING_PUNCTUATION_RE.test(lastMark) && !APOSTROPHES.includes(lastMark);
+    const afterSpace = /\s/u.test(text[wordStarts[at] - 1]) || /\s/u.test(text[wordStarts[at]]);
+    if (!afterPunctuation && !afterSpace && !phrases?.includes(wordStarts[at])) continue;
+    const pauseSec = words[at].startSec - words[at - 1].endSec;
+    const pauseBonus = Number.isFinite(pauseSec) ? Math.min(Math.max(pauseSec, 0), 1) * PAUSE_BONUS_PER_SEC : 0;
+    breaks.push({ at, bonus: (afterPunctuation ? PUNCTUATION_BONUS : 0) + pauseBonus });
+  }
+  breaks.push({ at: words.length, bonus: 0 });
+  const bounds = evenestParts(breaks, totalEm, maxPartEm, (from, to) => textEm(slice(from, to)));
+  if (bounds.length <= 2) return [line];
+  let startSec = line.startSec;
+  return bounds.slice(0, -1).map((from, i) => {
+    const partWords = words.slice(from, bounds[i + 1]);
+    if (from > 0) startSec = Math.max(startSec, partWords.find((w) => Number.isFinite(w.startSec))?.startSec ?? startSec);
+    return { startSec, text: slice(from, bounds[i + 1]), words: partWords };
+  });
+}
+
+type Break = { at: number; bonus: number };
+type Plan = { bounds: number[]; overflowEm: number };
+
+/** `breaks` include the line's ends. When no plan fits `maxPartEm`, the one
+ *  overflowing it least. */
+function evenestParts(
+  breaks: readonly Break[],
+  totalEm: number,
+  maxPartEm: number,
+  partEm: (from: number, to: number) => number,
+): number[] {
+  const maxParts = breaks.length - 1;
+  let best: Plan | undefined;
+  const minParts = Math.max(2, Math.ceil(totalEm / maxPartEm));
+  for (let parts = Math.min(minParts, maxParts); parts <= maxParts; parts++) {
+    const plan = cheapestPlan(breaks, parts, totalEm / parts, maxPartEm, partEm);
+    if (best != null && plan.overflowEm >= best.overflowEm) break;
+    best = plan;
+    if (plan.overflowEm === 0) break;
+  }
+  return best?.bounds ?? [0, breaks[maxParts].at];
+}
+
+function cheapestPlan(
+  breaks: readonly Break[],
+  parts: number,
+  idealEm: number,
+  maxPartEm: number,
+  partEm: (from: number, to: number) => number,
+): Plan {
+  const last = breaks.length - 1;
+  const cheapest = Array.from({ length: parts + 1 }, () => new Array<number>(breaks.length).fill(Infinity));
+  const prevBreak = Array.from({ length: parts + 1 }, () => new Array<number>(breaks.length).fill(0));
+  cheapest[0][0] = 0;
+  for (let p = 1; p <= parts; p++) {
+    for (let j = 1; j <= last; j++) {
+      for (let i = 0; i < j; i++) {
+        if (cheapest[p - 1][i] === Infinity) continue;
+        const em = partEm(breaks[i].at, breaks[j].at);
+        const cost =
+          cheapest[p - 1][i] +
+          OVERFLOW_COST_PER_EM * Math.max(0, em - maxPartEm) +
+          ((em - idealEm) / idealEm) ** 2 -
+          breaks[i].bonus;
+        if (cost < cheapest[p][j]) {
+          cheapest[p][j] = cost;
+          prevBreak[p][j] = i;
+        }
+      }
+    }
+  }
+  const bounds = [breaks[last].at];
+  let overflowEm = 0;
+  for (let p = parts, j = last; p > 0; p--) {
+    const i = prevBreak[p][j];
+    overflowEm += Math.max(0, partEm(breaks[i].at, breaks[j].at) - maxPartEm);
+    bounds.unshift(breaks[i].at);
+    j = i;
+  }
+  return { bounds, overflowEm };
+}
+
+const WIDE_CHAR_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}　-〿！-｠]/u;
+
+function textEm(text: string): number {
+  let em = 0;
+  for (const ch of text) em += WIDE_CHAR_RE.test(ch) ? 1 : NARROW_CHAR_EM;
+  return em;
+}
+
 /** How many non-blank lines come before `lines[idx]`. */
 export function vocalOrdinal(lines: readonly LyricLine[], idx: number): number {
   let n = 0;

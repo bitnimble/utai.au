@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test';
 import { GUTTER_PX } from 'src/editing/score/autoscroll';
-import { HOST_PATH, test } from 'src/testing/e2e_test';
+import { HOST_PATH, showTracksView, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type UtaiWindow = {
@@ -20,6 +20,7 @@ type UtaiWindow = {
 /** Queue a track and stop the auto-play once it starts, leaving it idle at 0. */
 async function loadIdleTrack(page: Page): Promise<void> {
   await page.goto(HOST_PATH);
+  await showTracksView(page);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',
