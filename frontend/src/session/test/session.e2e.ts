@@ -211,6 +211,15 @@ test('host: a session this browser did not create offers to join it as a remote'
   await expect(page).toHaveURL('/session/XYZ123/remote');
 });
 
+test('remote: shares a join QR for other phones', async ({ page }) => {
+  await new FakeRelay().attach(page);
+  await page.goto(REMOTE_PATH);
+  await page.getByTestId('remote-share-open').click();
+  const modal = page.getByTestId('remote-share-modal');
+  await expect(modal.getByTestId('session-join-qr')).toBeVisible();
+  await expect(modal.getByTestId('session-join-url')).toHaveText(page.url());
+});
+
 test('remote: an unknown session says so', async ({ page }) => {
   await page.routeWebSocket(/\/api\/sessions\/[^/]+\/ws/, (ws) => ws.close({ code: 4404 }));
   await page.goto(REMOTE_PATH);

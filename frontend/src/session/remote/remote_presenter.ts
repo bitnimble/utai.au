@@ -103,6 +103,14 @@ export class RemotePresenter {
     this.store.tab = tab;
   }
 
+  openShare(): void {
+    this.store.shareOpen = true;
+  }
+
+  closeShare(): void {
+    this.store.shareOpen = false;
+  }
+
   setQuery(query: string): void {
     this.store.searchQuery = query;
   }

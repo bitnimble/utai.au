@@ -4,7 +4,7 @@ import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_settings_presenter';
 import { Modal, ModalBody, ModalHeader } from 'src/ui/modal/modal';
-import { renderSVG } from 'uqr';
+import { JoinDetails, joinStyles } from './join_details';
 import { SessionHostPresenterContext, SessionHostStoreContext } from './session_host_contexts';
 import styles from './session_host_view.module.css';
 
@@ -64,21 +64,9 @@ export const SessionJoinModal = observer(function SessionJoinModal() {
   return (
     <Modal open={store.joinOpen} onClose={close} ariaLabel="Join as a remote" width={380} testId="session-join-modal">
       <ModalHeader title="Join as a remote" onClose={close} />
-      <ModalBody className={styles.body}>
-        {joinUrl != null ? (
-          <>
-            <QrImage text={joinUrl} />
-            <a className={styles.url} href={joinUrl} target="_blank" rel="noreferrer" data-testid="session-join-url">
-              {joinUrl}
-            </a>
-          </>
-        ) : (
-          <p className={styles.hint}>Set the address phones should open below.</p>
-        )}
-        <p className={styles.hint}>
-          Or open the app on a phone, choose Join, and enter
-          <span className={styles.bigCode}>{store.code}</span>
-        </p>
+      <ModalBody className={joinStyles.body}>
+        {joinUrl == null && <p className={joinStyles.hint}>Set the address phones should open below.</p>}
+        <JoinDetails joinUrl={joinUrl} code={store.code} />
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Address phones open</span>
           <input
@@ -94,16 +82,3 @@ export const SessionJoinModal = observer(function SessionJoinModal() {
     </Modal>
   );
 });
-
-const QrImage = ({ text }: { text: string }): React.ReactElement => {
-  const svg = React.useMemo(() => renderSVG(text, { ecc: 'M', border: 2 }), [text]);
-  return (
-    <div
-      className={styles.qr}
-      role="img"
-      aria-label={`QR code for ${text}`}
-      dangerouslySetInnerHTML={{ __html: svg }}
-      data-testid="session-join-qr"
-    />
-  );
-};

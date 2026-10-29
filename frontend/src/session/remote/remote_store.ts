@@ -2,6 +2,7 @@ import { makeAutoObservable, observable } from 'mobx';
 import { now } from 'mobx-utils';
 import type { SearchPhase } from 'src/music_source/music_source_store';
 import type { TrackResult } from 'src/net/music_source_client';
+import { remotePath } from '../app_route';
 import type { SocketStatus } from '../session_client';
 import type { HostState } from '../session_protocol';
 
@@ -21,9 +22,22 @@ export class RemoteStore {
   searchQuery = '';
   searchPhase: SearchPhase = { kind: 'idle' };
   results: TrackResult[] = [];
+  shareOpen = false;
 
-  constructor(readonly sessionId: string) {
-    makeAutoObservable(this, { sessionId: false, host: observable.ref, results: observable.ref });
+  constructor(
+    readonly sessionId: string,
+    private readonly pageOrigin: string,
+  ) {
+    makeAutoObservable<this, 'pageOrigin'>(this, {
+      sessionId: false,
+      pageOrigin: false,
+      host: observable.ref,
+      results: observable.ref,
+    });
+  }
+
+  get joinUrl(): string {
+    return `${this.pageOrigin}${remotePath(this.sessionId)}`;
   }
 
   get connected(): boolean {

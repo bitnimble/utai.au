@@ -1,13 +1,27 @@
 import classNames from 'classnames';
-import { ArrowDown, ArrowUp, ListStart, Music, Pause, Play, Search, SkipForward, Trash2, Volume2 } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ListStart,
+  Music,
+  Pause,
+  Play,
+  QrCode,
+  Search,
+  SkipForward,
+  Trash2,
+  Volume2,
+} from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { formatDuration, ResultRow } from 'src/music_source/music_search_panel';
 import { statusLabel } from 'src/queue/queue_view';
+import { Modal, ModalBody, ModalHeader } from 'src/ui/modal/modal';
 import { Slider } from 'src/ui/slider/slider';
 import { Spinner } from 'src/ui/spinner/spinner';
 import { Tabs, type TabOption } from 'src/ui/tabs/tabs';
 import { ToastContainer } from 'src/ui/toasts/toast_container';
+import { JoinDetails, joinStyles } from '../join_details';
 import { RemotePresenter } from './remote_presenter';
 import { RemoteStore, type RemoteTab } from './remote_store';
 import styles from './remote_page.module.css';
@@ -16,7 +30,7 @@ type Props = { store: RemoteStore; presenter: RemotePresenter };
 
 export const RemotePage = observer(function RemotePage({ sessionId, apiBase }: { sessionId: string; apiBase: string }) {
   const [{ store, presenter }] = React.useState(() => {
-    const store = new RemoteStore(sessionId);
+    const store = new RemoteStore(sessionId, window.location.origin);
     return { store, presenter: new RemotePresenter(store, apiBase) };
   });
   React.useEffect(() => {
@@ -41,9 +55,19 @@ export const RemotePage = observer(function RemotePage({ sessionId, apiBase }: {
     <div className={styles.page} data-testid="remote-page">
       <header className={styles.header}>
         <span className={styles.brand}>utai.au remote</span>
-        <span className={styles.code}>{sessionId}</span>
+        <button
+          type="button"
+          className={styles.shareButton}
+          onClick={() => presenter.openShare()}
+          title="Show how others join as a remote"
+          data-testid="remote-share-open"
+        >
+          <QrCode size={16} aria-hidden="true" />
+          <span className={styles.code}>{sessionId}</span>
+        </button>
         <ConnectionStatus store={store} />
       </header>
+      <ShareModal store={store} presenter={presenter} />
       <NowPlaying store={store} presenter={presenter} />
       <div className={styles.tabs}>
         <Tabs options={TABS} value={store.tab} onChange={(tab) => presenter.setTab(tab)} ariaLabel="Remote" />
@@ -62,6 +86,18 @@ const TABS: ReadonlyArray<TabOption<RemoteTab>> = [
   { value: 'queue', label: 'Queue', testId: 'remote-tab-queue' },
   { value: 'search', label: 'Add songs', testId: 'remote-tab-search' },
 ];
+
+const ShareModal = observer(function ShareModal({ store, presenter }: Props) {
+  const close = (): void => presenter.closeShare();
+  return (
+    <Modal open={store.shareOpen} onClose={close} ariaLabel="Join as a remote" width={380} testId="remote-share-modal">
+      <ModalHeader title="Join as a remote" onClose={close} />
+      <ModalBody className={joinStyles.body}>
+        <JoinDetails joinUrl={store.joinUrl} code={store.sessionId} />
+      </ModalBody>
+    </Modal>
+  );
+});
 
 const ConnectionStatus = observer(function ConnectionStatus({ store }: { store: RemoteStore }) {
   let label: string;

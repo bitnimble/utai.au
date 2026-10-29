@@ -21,6 +21,12 @@
     color: var(--color-text-secondary);
 }
 
+.shareButton {
+    composes: ghost from '../../ui/button/button.module.css';
+    gap: 6px;
+    color: var(--color-text-secondary);
+}
+
 .code {
     composes: mono from '../../typography.module.css';
     color: var(--color-text-strong);

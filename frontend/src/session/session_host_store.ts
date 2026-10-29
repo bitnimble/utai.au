@@ -1,5 +1,6 @@
 import { makeAutoObservable, observable } from 'mobx';
 import type { AppSettingsStore } from 'src/settings/app_settings_store';
+import { remotePath } from './app_route';
 import type { HostSession, SocketStatus } from './session_client';
 
 export class SessionHostStore {
@@ -34,6 +35,6 @@ export class SessionHostStore {
 
   get joinUrl(): string | undefined {
     const base = this.joinBaseUrl;
-    return base == null ? undefined : `${base}/session/${this.code}/remote`;
+    return base == null ? undefined : `${base}${remotePath(this.code)}`;
   }
 }
