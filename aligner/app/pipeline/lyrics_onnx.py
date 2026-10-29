@@ -20,6 +20,7 @@ import numpy as np
 
 from app.pipeline.audio_io import load_samples
 from app.pipeline.onnx_cuda import release_arena_run_options
+from app.request_context import check_cancelled
 
 SR = 16000
 
@@ -222,14 +223,11 @@ def generate_emissions_np(session, audio: np.ndarray, *, window_length=30, conte
     name = session.get_inputs()[0].name
     step = max(batch_size, 1)
     starts = range(0, chunks.shape[0], step)
-    outs = [
-        session.run(
-            None,
-            {name: chunks[i : i + step]},
-            release_arena_run_options(session) if i == starts[-1] else None,
-        )[0]
-        for i in starts
-    ]
+    outs = []
+    for i in starts:
+        check_cancelled()
+        run_options = release_arena_run_options(session) if i == starts[-1] else None
+        outs.append(session.run(None, {name: chunks[i : i + step]}, run_options)[0])
     emissions = np.concatenate(outs, axis=0)  # (n_chunks, frames, vocab)
     if context > 0:
         emissions = emissions[:, _time_to_frame(context_length) : -_time_to_frame(context_length) + 1]
@@ -296,16 +294,9 @@ def load_onnx_aligner(model_path: str, models_dir, *, providers=None) -> OnnxCtc
     (cached in `models_dir`). The tokenizer loads via HF (torch-free)."""
     from transformers import AutoTokenizer
 
-    from app.pipeline.provision import (
-        allow_local_export,
-        missing_shipped_onnx,
-        provision,
-        shipped_onnx,
-    )
+    from app.pipeline.provision import allow_local_export, missing_shipped_onnx, shipped_onnx
 
     name = f"ctc_align__{_sanitize(model_path)}"
-    if shipped_onnx(name) is None:
-        provision("lyrics", update_check=False)
     onnx_path = shipped_onnx(name)  # provisioned fp16
     if onnx_path is None:
         if not allow_local_export():

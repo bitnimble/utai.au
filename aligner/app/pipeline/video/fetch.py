@@ -20,11 +20,13 @@ from pathlib import Path
 
 from app.cache import BlobCache
 from app.config import settings
+from app.lazy import Lazy
+from app.request_context import check_cancelled
 
 _VIDEO_ID_RE = re.compile(r"^[\w-]{11}$")
 
-_cache: BlobCache | None = None
-_cache_lock = threading.Lock()
+cache = Lazy(lambda: BlobCache(settings.cache_dir / "video", cap_bytes=settings.cache_video_cap_bytes))
+_fetch_locks_lock = threading.Lock()
 _fetch_locks: dict[str, threading.Lock] = {}
 
 
@@ -42,19 +44,6 @@ def video_cache_key(video_id: str) -> str:
     return f"{video_id}-{digest}.mp4"
 
 
-def _video_cache() -> BlobCache:
-    global _cache
-    if _cache is not None:
-        return _cache
-    with _cache_lock:
-        if _cache is None:
-            _cache = BlobCache(
-                settings.cache_dir / "video",
-                cap_bytes=settings.cache_video_cap_bytes,
-            )
-        return _cache
-
-
 def fetch_video(video_id: str) -> Path:
     """Return a local mp4 of the backing video for `video_id`, downloading it
     video-only via yt-dlp on a cache miss. A call for a video already being
@@ -66,17 +55,17 @@ def fetch_video(video_id: str) -> Path:
     if not is_valid_video_id(video_id):
         raise ValueError(f"invalid YouTube video id: {video_id!r}")
     key = video_cache_key(video_id)
-    cache = _video_cache()
-    with _cache_lock:
+    videos = cache.get()
+    with _fetch_locks_lock:
         fetch_lock = _fetch_locks.setdefault(key, threading.Lock())
     with fetch_lock:
-        cached = cache.get(key)
+        cached = videos.get(key)
         if cached is not None:
             return cached
         # Stage on the cache's disk: /tmp may be RAM-backed tmpfs, and 4K runs to GBs.
-        with tempfile.TemporaryDirectory(prefix="utai_video_", dir=cache.dir) as tmp:
+        with tempfile.TemporaryDirectory(prefix="utai_video_", dir=videos.dir) as tmp:
             produced = _download(video_id, Path(tmp))
-            return cache.put_path(key, produced)
+            return videos.put_path(key, produced)
 
 
 def _download(video_id: str, dest_dir: Path) -> Path:
@@ -92,9 +81,14 @@ def _download(video_id: str, dest_dir: Path) -> Path:
         # Remux whatever container the chosen stream lands in (VP9 usually comes
         # as webm) to mp4 so the cached artifact is always an mp4.
         "postprocessors": [{"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"}],
+        "progress_hooks": [lambda _: check_cancelled()],
     }
-    with YoutubeDL(opts) as ydl:
-        ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
+    try:
+        with YoutubeDL(opts) as ydl:
+            ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
+    except Exception:
+        check_cancelled()  # yt-dlp wraps a hook's exception in its own
+        raise
     produced = dest_dir / f"{video_id}.mp4"
     if not produced.is_file():
         raise RuntimeError(f"yt-dlp produced no mp4 for {video_id}")

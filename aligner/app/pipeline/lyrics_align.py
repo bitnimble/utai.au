@@ -35,11 +35,6 @@ Language is resolved entirely from the caller's lyric text by
 heuristics), so there is no audio-based language detector: every
 script with letters routes to the MMS + uroman path, and only
 genuinely letter-free text falls back to a plain `en` default.
-
-Models are loaded **lazily** on the first /music/align request rather
-than eagerly at startup; lyrics alignment is an optional, on-demand
-feature. The aligner keeps the loaded models around for subsequent
-requests so warm-call latency drops to inference time only.
 """
 
 from __future__ import annotations
@@ -51,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.lazy import Lazy
 
 log = logging.getLogger(__name__)
 
@@ -172,7 +168,7 @@ def _all_finite(emissions: Any) -> bool:
 
 
 class LyricsAligner:
-    """Lazy-loaded forced-alignment wrapper.
+    """Forced-alignment wrapper.
 
     The `align_model` + `align_tokenizer` pair (MMS-300m multilingual
     CTC aligner via `ctc-forced-aligner`, plus the English-specialised
@@ -189,12 +185,14 @@ class LyricsAligner:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # Lazy-loaded torch-free ONNX aligners (OnnxCtcAligner) keyed by
-        # HuggingFace model path (`None` selects the package default = MMS-300m).
-        # Each is built on the first request that routes to it and stays warm for
-        # the process lifetime; both the English (wav2vec2-large-robust) and the
-        # multilingual MMS-300m aligner can be resident simultaneously.
+        # Keyed by HuggingFace model path; `None` selects the package default, MMS-300m.
         self._onnx_aligners: dict[str | None, Any] = {}
+
+    def load_all(self) -> None:
+        """Load every CTC aligner a request can route to."""
+        with self._lock:
+            for model_path in (settings.lyrics_align_model_english, None):
+                self._load_ctc_onnx(model_path)
 
     def _load_ctc_onnx(self, model_path: str | None):
         """Torch-free `OnnxCtcAligner` for `model_path` (None -> the MMS default).
@@ -1211,22 +1209,7 @@ def _stitch_lines(
     return out
 
 
-# Process-wide singleton; the heavy MMS-300m aligner lives here so the
-# second request reuses the warm model. Imported by main.py and
-# initialised on first use; never auto-loaded at startup.
-_aligner_singleton: LyricsAligner | None = None
-_singleton_lock = threading.Lock()
-
-
-def get_aligner() -> LyricsAligner:
-    """Return the process-wide {@link LyricsAligner}, constructing on
-    first call. The aligner itself defers model loading until
-    `realign_text` is invoked, so this is cheap."""
-    global _aligner_singleton
-    with _singleton_lock:
-        if _aligner_singleton is None:
-            _aligner_singleton = LyricsAligner()
-        return _aligner_singleton
+aligner: Lazy[LyricsAligner] = Lazy(LyricsAligner)
 
 
 def _word_to_json(w: LyricWord) -> dict[str, Any]:

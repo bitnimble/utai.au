@@ -1,29 +1,76 @@
-"""Tests for the NDJSON streaming primitives behind the streaming
-endpoints: `_serialized_gpu_stream` (GPU-lock sequencing) and
-`_pump_with_heartbeat` (the shared heartbeat pump the three streamers use).
+"""Tests for what the job endpoints share: the model gate (`require_models`),
+`ndjson_job`, and its streaming primitives `serialized_gpu_stream` (GPU-lock
+sequencing) and `pump_with_heartbeat`.
 
-`_serialized_gpu_stream` wraps a unit of GPU work behind the process-wide
+`serialized_gpu_stream` wraps a unit of GPU work behind the process-wide
 GPU lock and emits a `{"type": "queued"}` envelope when the lock is already
 held, so a client blocked behind another in-flight request can show a wait
 state instead of a silent hang. Once it owns the lock it emits
 `{"type": "running"}` and then forwards whatever the job yields.
 
-`_pump_with_heartbeat` drives a next-item factory to exhaustion, emitting a
-`{"type": "heartbeat"}` NDJSON line during silent gaps so an idle-timeout
-proxy doesn't drop the connection.
+`pump_with_heartbeat` encodes an envelope stream as NDJSON, emitting a
+`{"type": "heartbeat"}` line during silent gaps so an idle-timeout proxy
+doesn't drop the connection.
 
-Imports `app.main` (cheap; lyrics_align lazy-loads torch inside its
-methods). The helpers are pure asyncio, so these drive the async generators
-directly via `asyncio.run` rather than pulling in pytest-asyncio.
+The helpers are pure asyncio, so these drive the async generators directly
+via `asyncio.run` rather than pulling in pytest-asyncio.
 """
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
-import app.main as main
+import pytest
+from fastapi import HTTPException
+
+import app.job_stream as job_stream
+from app.provisioning import Provisioner
 from app.round_robin_lock import RoundRobinLock
+
+
+def test_require_models_refuses_only_what_is_not_downloaded(monkeypatch) -> None:
+    monkeypatch.setattr(job_stream, "is_provisioned", lambda capability: capability == "separation")
+    job_stream.require_models("separation")
+    with pytest.raises(HTTPException) as exc:
+        job_stream.require_models("lyrics")
+    assert exc.value.status_code == 424
+
+
+def _run_job(tmp_path: Path, work, *, loaded: bool = True, cached=lambda: None) -> tuple[list[dict], Path]:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    audio = job_stream.JobAudio(scratch / "mix.wav", "hash", scratch)
+
+    async def scenario() -> list[dict]:
+        provisioner = Provisioner()
+        provisioner.status.set_loaded(loaded)
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(provisioner=provisioner)), headers={})
+        response = job_stream.ndjson_job(request, "req", "test", audio, work, gpu=True, cached=cached)
+        return [json.loads(chunk) async for chunk in response.body_iterator]
+
+    return asyncio.run(scenario()), scratch
+
+
+@pytest.mark.parametrize(("error", "status_code"), [(FileNotFoundError("gone"), 404), (RuntimeError("boom"), 500)])
+def test_a_failed_job_streams_an_error_and_drops_its_scratch_dir(tmp_path, error, status_code) -> None:
+    async def work():
+        raise error
+
+    envelopes, scratch = _run_job(tmp_path, work)
+    assert envelopes == [{"type": "running"}, {"type": "error", "status_code": status_code, "message": str(error)}]
+    assert not scratch.exists()
+
+
+def test_a_cached_result_skips_the_model_wait_and_the_work(tmp_path) -> None:
+    async def work():
+        raise AssertionError("a cache hit must not run the job")
+
+    envelopes, scratch = _run_job(tmp_path, work, loaded=False, cached=lambda: {"type": "result", "data": 1})
+    assert envelopes == [{"type": "result", "data": 1}]
+    assert not scratch.exists()
 
 
 def test_uncontended_emits_running_then_job_without_queued() -> None:
@@ -37,7 +84,7 @@ def test_uncontended_emits_running_then_job_without_queued() -> None:
         async def job():
             yield {"type": "result", "data": {"lines": []}}
 
-        out =[env async for env in main._serialized_gpu_stream(lock, job)]
+        out = [env async for env in job_stream.serialized_gpu_stream(lock, job)]
         return out, lock.locked()
 
     out, still_locked = asyncio.run(scenario())
@@ -61,7 +108,7 @@ def test_contended_emits_queued_before_running() -> None:
         async def job():
             yield {"type": "result", "data": {"lines": []}}
 
-        gen = main._serialized_gpu_stream(lock, job)
+        gen = job_stream.serialized_gpu_stream(lock, job)
         first = await gen.__anext__()
         # Hand the lock back so the helper can acquire and finish.
         lock.release()
@@ -90,7 +137,7 @@ def test_releases_lock_when_job_raises() -> None:
                 raise RuntimeError("boom")
             yield {}  # unreachable; makes `job` an async generator
 
-        gen = main._serialized_gpu_stream(lock, job)
+        gen = job_stream.serialized_gpu_stream(lock, job)
         error: Exception | None = None
         try:
             async for _ in gen:
@@ -104,22 +151,13 @@ def test_releases_lock_when_job_raises() -> None:
     assert still_locked is False
 
 
-# ---------- _pump_with_heartbeat ----------------------------------------
+async def _envelopes(values):
+    for value in values:
+        yield value
 
 
-def _iter_next(values):
-    """A next-item factory over `values`: each call returns a fresh
-    awaitable yielding the next value; raises StopAsyncIteration when
-    exhausted, matching an async iterator's `__anext__`."""
-    it = iter(values)
-
-    async def next_item():
-        try:
-            return next(it)
-        except StopIteration:
-            raise StopAsyncIteration from None
-
-    return next_item
+def _line(envelope: dict) -> bytes:
+    return (json.dumps(envelope) + "\n").encode("utf-8")
 
 
 def test_pump_forwards_items_then_ends_without_heartbeat() -> None:
@@ -127,83 +165,33 @@ def test_pump_forwards_items_then_ends_without_heartbeat() -> None:
     the output is exactly the encoded items and nothing else."""
 
     async def scenario():
-        return [
-            chunk
-            async for chunk in main._pump_with_heartbeat(
-                _iter_next([{"type": "running"}, {"type": "result", "data": 1}]),
-                main._encode_envelope,
-            )
-        ]
+        envelopes = _envelopes([{"type": "running"}, {"type": "result", "data": 1}])
+        return [chunk async for chunk in job_stream.pump_with_heartbeat(envelopes)]
 
-    out = asyncio.run(scenario())
-    assert out == [
-        (json.dumps({"type": "running"}) + "\n").encode("utf-8"),
-        (json.dumps({"type": "result", "data": 1}) + "\n").encode("utf-8"),
-    ]
+    assert asyncio.run(scenario()) == [_line({"type": "running"}), _line({"type": "result", "data": 1})]
 
 
-def test_pump_emits_heartbeat_during_silent_gap_without_dropping_item(
-    monkeypatch,
-) -> None:
+def test_pump_emits_heartbeat_during_silent_gap_without_dropping_item(monkeypatch) -> None:
     """A silent gap longer than the heartbeat interval yields a heartbeat
     line; the awaited item is held (shielded) across the timeout and still
     delivered afterwards, never dropped."""
-    monkeypatch.setattr(main, "HEARTBEAT_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(job_stream, "HEARTBEAT_INTERVAL_SECONDS", 0.01)
+
+    async def slow():
+        await asyncio.sleep(0.05)  # > heartbeat interval
+        yield {"type": "result", "data": 2}
 
     async def scenario():
-        delivered = asyncio.Event()
-
-        async def next_item():
-            if delivered.is_set():
-                raise StopAsyncIteration
-            await asyncio.sleep(0.05)  # > heartbeat interval
-            delivered.set()
-            return {"type": "result", "data": 2}
-
-        return [
-            chunk
-            async for chunk in main._pump_with_heartbeat(
-                next_item, main._encode_envelope
-            )
-        ]
+        return [chunk async for chunk in job_stream.pump_with_heartbeat(slow())]
 
     out = asyncio.run(scenario())
-    heartbeat = (json.dumps({"type": "heartbeat"}) + "\n").encode("utf-8")
-    assert out[-1] == (json.dumps({"type": "result", "data": 2}) + "\n").encode("utf-8")
-    assert heartbeat in out
-    assert out.count(heartbeat) >= 1
-
-
-def test_pump_encode_none_consumes_item_silently() -> None:
-    """An `encode` that returns None (internal sentinel like `_done`)
-    consumes the item without emitting a line; other items still flow."""
-
-    def encode(value):
-        if value.get("type") == "_done":
-            return None
-        return main._encode_envelope(value)
-
-    async def scenario():
-        return [
-            chunk
-            async for chunk in main._pump_with_heartbeat(
-                _iter_next(
-                    [{"type": "stage", "n": 1}, {"type": "_done"}, {"type": "result"}]
-                ),
-                encode,
-            )
-        ]
-
-    out = asyncio.run(scenario())
-    assert out == [
-        (json.dumps({"type": "stage", "n": 1}) + "\n").encode("utf-8"),
-        (json.dumps({"type": "result"}) + "\n").encode("utf-8"),
-    ]
+    assert out[-1] == _line({"type": "result", "data": 2})
+    assert out.count(_line({"type": "heartbeat"})) >= 1
 
 
 def test_pump_cancels_pending_on_unwind() -> None:
     """If the consumer stops iterating mid-wait (client disconnect), the
-    in-flight pending await is cancelled so it doesn't leak. Cancelling the
+    in-flight pull is cancelled so it doesn't leak. Cancelling the
     outstanding `__anext__()` pull propagates into the generator's `finally`,
     which cancels the shielded pending."""
 
@@ -211,16 +199,16 @@ def test_pump_cancels_pending_on_unwind() -> None:
         started = asyncio.Event()
         cancelled = asyncio.Event()
 
-        async def next_item():
+        async def forever():
             started.set()
             try:
                 await asyncio.sleep(3600)
             except asyncio.CancelledError:
                 cancelled.set()
                 raise
-            return {"type": "result"}
+            yield {"type": "result"}
 
-        gen = main._pump_with_heartbeat(next_item, main._encode_envelope)
+        gen = job_stream.pump_with_heartbeat(forever())
         pull = asyncio.ensure_future(gen.__anext__())
         await started.wait()
         pull.cancel()

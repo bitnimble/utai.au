@@ -5,7 +5,7 @@ an audio track, import lyrics (LRCLIB or pasted), and get a lyrics track
 whose word chips are time-aligned to the vocal, each chip's position and
 width track when and how long each word is sung, over the audio waveform.
 Runs as a website (with WebGPU/WebNN local ML on the roadmap) or as a
-Tauri desktop/Android app with a local Python ML sidecar.
+Tauri desktop/Android app (desktop runs the Python ML backend locally).
 
 It reuses the lyrics-alignment tech from the sibling **Drumjot** project;
 the domain knowledge lives in [docs/lyrics-alignment.md](docs/lyrics-alignment.md), read it before touching the alignment pipeline.
@@ -30,21 +30,21 @@ the repo root**, and the **`src/…` import alias maps to `frontend/src/…`**
 (a path written `src/foo` is imported as `src/foo` and lives on disk at
 `frontend/src/foo`).
 
-The desktop app is Tauri + a Python sidecar broker (`src-tauri/` +
-`frontend/src/net/sidecar_transport.ts` + `aligner/app/comms/`). It is standalone: everything
-the backend container provides runs locally. ML runs on a long-lived stdio
-sidecar that `src-tauri/src/sidecar.rs` multiplexes jobs over by request id
-(models stay loaded between jobs; a venv sync or model download retires it);
-the music stack (OnTheSpot via `aligner/app/music/onthespot_server.py`, plus the
-aligner HTTP API in `api` role) runs as long-lived loopback processes started by
-`src-tauri/src/local_backend.rs` once startup provisioning has synced the venv,
-and the frontend's `apiBase` points at it. The venv also carries ffmpeg
+**One HTTP API on every platform.** The frontend talks to the backend
+(`aligner/app/main.py`) only over HTTP, through `backendFetch`; nothing branches
+on web vs desktop. The desktop app is standalone: `src-tauri/src/local_backend.rs`
+syncs the venv (`capability::prepare_venv`) and runs the same backend, plus
+OnTheSpot (`aligner/app/music/onthespot_server.py`, downloading into the
+backend's `music_download_dir`), as loopback processes, and the frontend's
+`apiBase` points at them (a capability install/uninstall restarts them).
+Jobs pass audio the backend already holds by path instead of uploading it
+(`frontend/src/net/job_audio.ts`). The venv also carries ffmpeg
 (imageio-ffmpeg, which startup links to `<data>/bin/ffmpeg`, put first on PATH)
 and deno (yt-dlp's JS runtime for YouTube). The **Android** app reuses
-the same shell + frontend but has **no sidecar** (no on-device Python/ML):
-it aligns over the HTTP backend, same as the web build. Desktop-only Rust
-(sidecar, capability install, portable paths, session server, local backend)
-is `#[cfg(desktop)]`-gated.
+the same shell + frontend but has **no local backend** (no on-device Python/ML):
+it uses a remote one, same as the web build. Desktop-only Rust
+(local backend, capability install, live-mic pitch, portable paths, session
+server) is `#[cfg(desktop)]`-gated.
 
 ### Sessions
 
@@ -95,7 +95,7 @@ header `backendFetch` attaches.
   installs via `tauri-plugin-updater` (`src-tauri/src/updates.rs`); the portable
   Windows build and Android open the download instead.
 - **Logs**: the page keeps its last 2000 console lines (`log_viewer/page_log.ts`);
-  the desktop shell's Rust + sidecar output goes to the log file
+  the desktop shell's Rust + backend output goes to the log file
   `read_log_tail` reads. Settings > Logs shows either.
 - **Android TV**: `scripts/android-tv.ts` patches the regenerated `gen/android`
   (banner, touchscreen optional, a `MainActivity` adding `UtaiTV` to the user
@@ -146,11 +146,13 @@ header `backendFetch` attaches.
   separation-only install must never pull the aligner weights. Model URLs / HF
   ids are `settings.*` build fields (config.py), not hardcoded. fp16 is
   GPU-only. Shipped weights live on HF (`settings.onnx_repo`,
-  `bitnimble/utai-onnx`). At startup the backend **eagerly provisions**
-  `settings.startup_capabilities` (default `lyrics,pitch` = every model) and
-  **update-checks** each present asset via its ETag (re-downloading a pushed
-  model); the desktop app only checks, and downloads missing/outdated models
-  when the user accepts the toast's prompt; see
+  `bitnimble/utai-onnx`). At startup the backend **checks**
+  `settings.startup_capabilities` (default `lyrics,pitch,beat` = every model),
+  **update-checking** each present asset via its ETag, and loads what's on disk;
+  the frontend downloads missing/outdated models (`POST /provision/download`)
+  when the user accepts the toast's prompt, on web and desktop alike. **A job
+  never downloads a model**: without its models it's refused (424) and the song
+  plays its full mix; see
   [docs/lyrics-alignment.md](docs/lyrics-alignment.md).
 - **The timeline is linear time**, "beat" collapses onto "second"; there
   is no musical bar/tempo grid (that was Drumjot-specific). The lyrics
@@ -193,7 +195,7 @@ heavy Rust/Tauri artifacts off the repo disk (maps to `CARGO_TARGET_DIR`).
 
 **Windows cross-build (`win:build`).** Emits `Utai.exe` + the NSIS `*-setup.exe`
 to `UTAI_WIN_DIST_DIR` (set in `.env`, e.g. a `/codebox-workspace` path reachable
-over SMB from Windows). Drops the ML-sidecar resources (can't cross-stage a
+over SMB from Windows). Drops the Python backend resources (can't cross-stage a
 Windows Python), so **alignment, music search and downloads are unavailable in
 this build**; audio + UI work.
 One-time host prereqs: `rustup target add x86_64-pc-windows-msvc`, `cargo install
@@ -202,11 +204,11 @@ One-time host prereqs: `rustup target add x86_64-pc-windows-msvc`, `cargo instal
 
 **macOS cross-build (`mac:build`), dev only.** Emits an unsigned `utai.au.app`
 (no DMG, no notarization) to `UTAI_MAC_DIST_DIR` (`.env`) if set, else the target
-dir. Unlike `win:build` it DOES ship the sidecar, but as a **dev bundle**: the
+dir. Unlike `win:build` it DOES ship the backend, but as a **dev bundle**: the
 pure-Python aligner source + a downloaded macOS `uv`, and NO vendored
 wheels/models. A `devbuild` marker resource makes the runtime `uv sync` the deps
-from git (`paths.rs::is_dev_build`) on launch, before the startup model check
-(`capability::check_models`); the models then download when accepted from the toast.
+from git (`paths.rs::is_dev_build`) on launch, before the backend starts
+(`capability::prepare_venv`); the models then download when accepted from the toast.
 So the **test Mac needs Xcode Command Line Tools** (git + a compiler) and a
 network on first run. `prepare-desktop-resources.ts` produces this variant
 when `UTAI_RESOURCE_DEV=1` (skips wheel vendoring, keeps the torch-null override,

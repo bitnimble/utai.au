@@ -1,23 +1,23 @@
-"""Unit tests for the backing-video fetch + the `fetchVideo` runner: id
-validation, the content-addressed cache round-trip, and the runner's artifact
-shape. yt-dlp itself is stubbed (no network); only our glue is exercised."""
+"""Unit tests for the backing-video fetch: id validation and the
+content-addressed cache round-trip. yt-dlp itself is stubbed (no network);
+only our glue is exercised."""
 from __future__ import annotations
 
-import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
-from app.comms.core import CancelToken
-from app.comms.fetch_video_runner import FetchVideoRunner
-from app.comms.protocol import RequestArgs, RequestMessage
 from app.pipeline.video import fetch as video_fetch
 
 
-async def _noop_emit(*args, **kwargs):
-    return None
+@pytest.fixture
+def isolated_cache(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(video_fetch.settings, "cache_dir", tmp_path)
+    video_fetch.cache.reset()
+    yield
+    video_fetch.cache.reset()
 
 
 def test_is_valid_video_id():
@@ -34,10 +34,7 @@ def test_fetch_video_rejects_bad_id():
         video_fetch.fetch_video("../etc/passwd")
 
 
-def test_fetch_video_caches(tmp_path, monkeypatch):
-    monkeypatch.setattr(video_fetch.settings, "cache_dir", tmp_path)
-    monkeypatch.setattr(video_fetch, "_cache", None)  # reset the lazy singleton for this cache_dir
-
+def test_fetch_video_caches(isolated_cache, monkeypatch):
     calls: list[str] = []
 
     def fake_download(video_id: str, dest_dir: Path) -> Path:
@@ -58,10 +55,7 @@ def test_fetch_video_caches(tmp_path, monkeypatch):
     assert calls == [vid]
 
 
-def test_fetch_video_concurrent_calls_share_one_download(tmp_path, monkeypatch):
-    monkeypatch.setattr(video_fetch.settings, "cache_dir", tmp_path)
-    monkeypatch.setattr(video_fetch, "_cache", None)
-
+def test_fetch_video_concurrent_calls_share_one_download(isolated_cache, monkeypatch):
     calls: list[str] = []
     started = threading.Event()
     release = threading.Event()
@@ -86,48 +80,9 @@ def test_fetch_video_concurrent_calls_share_one_download(tmp_path, monkeypatch):
     assert calls == [vid]
 
 
-def test_fetch_video_runner_returns_video_artifact(tmp_path, monkeypatch):
-    monkeypatch.setenv("UTAI_OUTPUTS_DIR", str(tmp_path))
-
-    def fake_fetch(video_id: str) -> Path:
-        src = tmp_path / "cache_src.mp4"
-        src.write_bytes(b"fake-mp4")
-        return src
-
-    monkeypatch.setattr(video_fetch, "fetch_video", fake_fetch)
-
-    request = RequestMessage(
-        v=1,
-        type="request",
-        id="job1",
-        op="fetchVideo",
-        args=RequestArgs(params={"videoId": "dQw4w9WgXcQ"}),
-    )
-    result = asyncio.run(FetchVideoRunner().run(request, _noop_emit, CancelToken()))
-
-    assert len(result.artifacts) == 1
-    art = result.artifacts[0]
-    assert art.role == "video"
-    assert art.ref.kind == "path"
-    assert Path(art.ref.path) == tmp_path / video_fetch.video_cache_key("dQw4w9WgXcQ")
-    assert Path(art.ref.path).read_bytes() == b"fake-mp4"
-
-
 def test_video_cache_key_tracks_format_selection(monkeypatch):
     before = video_fetch.video_cache_key("dQw4w9WgXcQ")
     monkeypatch.setattr(video_fetch.settings, "video_format_sort", ["res:720"])
     after = video_fetch.video_cache_key("dQw4w9WgXcQ")
     assert before != after
     assert after.startswith("dQw4w9WgXcQ-") and after.endswith(".mp4")
-
-
-def test_fetch_video_runner_rejects_bad_id():
-    request = RequestMessage(
-        v=1,
-        type="request",
-        id="job1",
-        op="fetchVideo",
-        args=RequestArgs(params={"videoId": "nope"}),
-    )
-    with pytest.raises(ValueError):
-        asyncio.run(FetchVideoRunner().run(request, _noop_emit, CancelToken()))

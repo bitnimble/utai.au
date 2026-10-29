@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from app.pipeline.onnx_cuda import default_providers, log_bound_ep, release_arena_run_options
+from app.request_context import check_cancelled
 
 SR, N_FFT, HOP, N_MELS, FMIN, FMAX = 22050, 1024, 441, 128, 30, 11000
 FPS = 50
@@ -175,14 +176,11 @@ class OnnxBeatThis:
         spect = _logmel(np.asarray(y, np.float32), self.fb)
         chunks, starts = _split(spect)
         last = len(chunks) - 1
-        preds = [
-            tuple(v[0] for v in self.sess.run(
-                None,
-                {self._in: ch[None].astype(np.float32)},
-                release_arena_run_options(self.sess) if i == last else None,
-            ))
-            for i, ch in enumerate(chunks)
-        ]
+        preds = []
+        for i, ch in enumerate(chunks):
+            check_cancelled()
+            run_options = release_arena_run_options(self.sess) if i == last else None
+            preds.append(tuple(v[0] for v in self.sess.run(None, {self._in: ch[None].astype(np.float32)}, run_options)))
         beat_logits, downbeat_logits = _aggregate(preds, starts, spect.shape[0])
         return _postp(beat_logits, downbeat_logits)
 

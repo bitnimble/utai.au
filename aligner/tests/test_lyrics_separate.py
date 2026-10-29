@@ -1,6 +1,6 @@
 """Tests for the full-quality stem separation feature.
 
-Two independent, model-free surfaces:
+All model-free:
 
   - `_accompaniment`, the pure numpy residual helper: `mix - vocals`, so
     `vocals + accompaniment == mix`. Imports only the torch-free helper, no
@@ -8,16 +8,19 @@ Two independent, model-free surfaces:
   - the GET /music/stems/{id}/{name} path-traversal guard, driven by calling
     the route handler directly (no TestClient, so the model-warming lifespan
     never runs).
+  - POST /music/separate refusing (424) when its models aren't downloaded.
 """
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from fastapi import HTTPException
 
-import app.main as main
+import app.analysis_routes as routes
+from app.pipeline import provision
 from app.pipeline.separation.np_inference import _accompaniment
 
 
@@ -34,7 +37,7 @@ def test_accompaniment_reconstructs_the_mix() -> None:
 
 
 def test_stems_result_envelope_shape() -> None:
-    env = main._stems_result_envelope("abc123")
+    env = routes._stems_result_envelope("abc123")
     assert env["type"] == "result"
     stems = env["data"]["stems"]
     assert [s["role"] for s in stems] == ["vocals", "accompaniment"]
@@ -59,23 +62,36 @@ _VALID_ID = "a" * 64
 )
 def test_stem_route_rejects_bad_ids_and_names(stem_id: str, name: str) -> None:
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(main.lyrics_stem(stem_id, name))
+        asyncio.run(routes.lyrics_stem(stem_id, name))
     assert exc.value.status_code == 404
 
 
-def test_stem_route_404_when_file_absent(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(main.settings, "cache_dir", tmp_path)
+def test_separation_without_its_models_is_refused_not_downloaded(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(routes.settings, "worker_role", "pipeline")
+    monkeypatch.setattr(routes.settings, "models_dir", tmp_path)
+
+    def download(*_caps, **_kwargs):
+        raise AssertionError("a job must not download models")
+
+    monkeypatch.setattr(provision, "provision", download)
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(main.lyrics_stem(_VALID_ID, "vocals.flac"))
+        asyncio.run(routes.lyrics_separate(SimpleNamespace(), None, "/nowhere"))
+    assert exc.value.status_code == 424
+
+
+def test_stem_route_404_when_file_absent(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(routes.settings, "cache_dir", tmp_path)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(routes.lyrics_stem(_VALID_ID, "vocals.flac"))
     assert exc.value.status_code == 404
 
 
 def test_stem_route_serves_existing_file(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(main.settings, "cache_dir", tmp_path)
+    monkeypatch.setattr(routes.settings, "cache_dir", tmp_path)
     stem_path = tmp_path / "stems" / _VALID_ID / "vocals.flac"
     stem_path.parent.mkdir(parents=True)
     stem_path.write_bytes(b"fake flac")
 
-    resp = asyncio.run(main.lyrics_stem(_VALID_ID, "vocals.flac"))
+    resp = asyncio.run(routes.lyrics_stem(_VALID_ID, "vocals.flac"))
     assert resp.path == str(stem_path)
     assert resp.media_type == "audio/flac"

@@ -1,13 +1,10 @@
 /**
- * Tests for `alignLyricsForced`. The client always uploads a multipart
- * form with the audio + the caller's lyrics payload; there's no longer
- * a cache-lookup probe (the realign-only flow has no cacheable output).
- *
- * `globalThis.fetch` is stubbed per test so the assertions can inspect
- * the outbound request shape.
+ * Tests for `alignLyricsForced`. `globalThis.fetch` is stubbed per test so the
+ * assertions can inspect the outbound request shape.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { ModelsMissingError } from 'src/net/backend_job';
 import { alignLyricsForced } from '../forced_align';
 
 type FetchCall = { url: string; method: string; body: BodyInit | null | undefined };
@@ -38,9 +35,8 @@ function makeFile(content: string, name = 'audio.mp3'): File {
   return new File([content], name, { type: 'audio/mpeg' });
 }
 
-/** Build a streaming NDJSON response body from a list of envelopes, the
- *  wire shape the backend's /music/align now emits (queued / running /
- *  result / error, one JSON object per line). */
+/** A streaming NDJSON response of `envelopes`, one JSON object per line, as
+ *  the backend's /music/align emits. */
 function ndjsonResponse(envelopes: object[], status = 200): Response {
   const body = envelopes.map((e) => JSON.stringify(e)).join('\n') + '\n';
   return new Response(body, {
@@ -72,7 +68,7 @@ describe('alignLyricsForced', () => {
     };
     const lines = await alignLyricsForced({
       kind: 'mix',
-      file,
+      audio: { file },
       realign: { lines: [{ startSec: 0, text: 'hello' }] },
     });
     expect(lines).toEqual(aligned);
@@ -89,7 +85,22 @@ describe('alignLyricsForced', () => {
     };
     await alignLyricsForced({
       kind: 'vocals',
-      file,
+      audio: { file },
+      realign: { lines: [{ startSec: 0, text: 'foo' }] },
+    });
+    expect(fetchCalls.length).toBe(1);
+  });
+
+  test('names audio the backend already holds instead of uploading it', async () => {
+    fetchHandler = (call) => {
+      const form = call.body as FormData;
+      expect(form.get('vocalsPath')).toBe('/cache/stems/abc/vocals.flac');
+      expect(form.get('vocals')).toBeNull();
+      return ndjsonResponse([{ type: 'result', data: { lines: [] } }]);
+    };
+    await alignLyricsForced({
+      kind: 'vocals',
+      audio: { file: makeFile('vocals-content'), serverPath: '/cache/stems/abc/vocals.flac' },
       realign: { lines: [{ startSec: 0, text: 'foo' }] },
     });
     expect(fetchCalls.length).toBe(1);
@@ -104,7 +115,7 @@ describe('alignLyricsForced', () => {
     };
     await alignLyricsForced({
       kind: 'mix',
-      file,
+      audio: { file },
       realign: { lines: [{ startSec: 0, text: 'こんにちは' }], language: 'ja' },
     });
     expect(fetchCalls.length).toBe(1);
@@ -119,10 +130,18 @@ describe('alignLyricsForced', () => {
     };
     await alignLyricsForced({
       kind: 'mix',
-      file,
+      audio: { file },
       realign: { lines: [{ startSec: 0, text: 'hi' }] },
     });
     expect(fetchCalls.length).toBe(1);
+  });
+
+  test('models the user has not downloaded reject with ModelsMissingError', async () => {
+    fetchHandler = () =>
+      new Response(JSON.stringify({ detail: "The AI models for lyrics aren't downloaded." }), { status: 424 });
+    await expect(
+      alignLyricsForced({ kind: 'mix', audio: { file: makeFile('x') }, realign: { lines: [] } }),
+    ).rejects.toBeInstanceOf(ModelsMissingError);
   });
 
   test('non-OK status surfaces the server detail message', async () => {
@@ -135,7 +154,7 @@ describe('alignLyricsForced', () => {
     await expect(
       alignLyricsForced({
         kind: 'mix',
-        file,
+        audio: { file },
         realign: { lines: [{ startSec: 0, text: 'x' }] },
       }),
     ).rejects.toThrow(/no aligner for language/);
@@ -145,7 +164,7 @@ describe('alignLyricsForced', () => {
 describe('alignLyricsForced NDJSON stream', () => {
   const req = {
     kind: 'mix' as const,
-    file: makeFile('x'),
+    audio: { file: makeFile('x') },
     realign: { lines: [{ startSec: 0, text: 'hi' }] },
   };
 

@@ -1,7 +1,8 @@
 """Capability-scoped provisioning of model assets.
 
 Every model the packaged app runs on is downloaded into `settings.models_dir`
-here, and downloads are **capability-scoped**: `provision("separation")` fetches
+here, only when the user asks (the startup prompt, a capability install), never
+by a job. Downloads are **capability-scoped**: `provision("separation")` fetches
 only the separation assets, `provision("lyrics")` only what /music needs, and so
 on. This is the whole point of the dependency-group split -- a user who installs
 one capability must never pull another capability's weights (the lyrics models
@@ -20,10 +21,10 @@ so a build can repoint them without code changes.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -255,8 +256,8 @@ def _download(
         log.info("provision: %s changed upstream, re-downloading", name)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    # pid-unique .part so concurrent provisioners don't clobber one temp file.
-    tmp = dest.with_name(f"{name}.{os.getpid()}.part")
+    # Unique .part so concurrent provisioners (processes or threads) don't clobber one temp file.
+    tmp = dest.with_name(f"{name}.{uuid.uuid4().hex[:12]}.part")
     log.info("provision: downloading %s -> %s", url, name)
     try:
         with httpx.stream("GET", url, follow_redirects=True, timeout=_HTTP_TIMEOUT) as resp:
@@ -333,6 +334,12 @@ def check(*capabilities: str) -> list[AssetCheck]:
     return results
 
 
+def is_provisioned(capability: str) -> bool:
+    """Whether every asset `capability` needs is on disk."""
+    models_dir = Path(settings.models_dir)
+    return all(_present(models_dir / asset.filename) for asset in _capability_assets(capability))
+
+
 def provision(
     *capabilities: str,
     update_check: bool | None = None,
@@ -392,14 +399,6 @@ def deprovision(keep_capabilities: list[str]) -> int:
     return removed
 
 
-def provision_custom_models() -> None:
-    """Ensure the separation capability's assets (yaml + fp16 onnx) are present.
-    Called eagerly by `separate.py` on model load. Presence-only: the startup
-    provisioning pass owns update-checks, so a separator load never blocks on a
-    per-asset network round-trip."""
-    provision("separation", update_check=False)
-
-
 def provisioned_file(filename: str) -> Path | None:
     """Path to a provisioned asset `filename` under `settings.models_dir` if
     present + non-empty, else None."""
@@ -436,60 +435,24 @@ def missing_shipped_onnx(name: str) -> RuntimeError:
     )
 
 
-def _json_line_emitter() -> ProgressFn:
-    """Progress callback that prints one JSON line per event, for a parent process
-    (the desktop Rust broker) to parse into structured progress."""
-
-    def emit(ev: ProvisionEvent) -> None:
-        print(
-            json.dumps(
-                {
-                    "asset": ev.asset,
-                    "phase": ev.phase,
-                    "bytesDone": ev.bytes_done,
-                    "bytesTotal": ev.bytes_total,
-                }
-            ),
-            flush=True,
-        )
-
-    return emit
-
-
 def main(argv: list[str]) -> int:
-    """`python -m app.pipeline.provision [--progress-json] <capability>...` --
-    pre-fetch (and update-check) the assets the given capabilities need, so they
-    download at install/launch time rather than on first use. The desktop shell
-    runs this after `uv sync`. `--progress-json` streams one JSON progress event
-    per line for the parent to parse, and on failure a final `{"error": ...}` line.
-    Best-effort; lazy fallbacks still cover a failure.
+    """`python -m app.pipeline.provision <capability>...` -- pre-fetch (and
+    update-check) the assets the given capabilities need. The desktop shell runs
+    this after `uv sync`; a failure leaves the models missing, so the jobs that
+    need them are refused (424) until a download succeeds.
 
     `python -m app.pipeline.provision --prune <keep-capability>...` -- the
     uninstall counterpart: delete model files not needed by the capabilities that
     remain installed (the desktop uninstaller runs this before syncing the venv
-    down).
-
-    `python -m app.pipeline.provision --check <capability>...` -- download nothing;
-    print one `{"asset", "phase": missing|outdated|current, "bytesTotal"}` line per
-    asset, for the desktop shell to offer the download."""
+    down)."""
     logging.basicConfig(level=logging.INFO)
-    args = [a for a in argv if a not in ("--progress-json", "--check")]
-    on_progress = _json_line_emitter() if "--progress-json" in argv else None
-    if args and args[0] == "--prune":
-        deprovision([g for g in args[1:] if g in _KNOWN_CAPABILITIES])
-        return 0
-    capabilities = [g for g in args if g in _KNOWN_CAPABILITIES]
-    if "--check" in argv:
-        for result in check(*capabilities):
-            event = {"asset": result.asset, "phase": result.freshness, "bytesTotal": result.bytes_total}
-            print(json.dumps(event), flush=True)
+    if argv and argv[0] == "--prune":
+        deprovision([g for g in argv[1:] if g in _KNOWN_CAPABILITIES])
         return 0
     try:
-        provision(*capabilities, on_progress=on_progress)
-    except Exception as exc:
+        provision(*(g for g in argv if g in _KNOWN_CAPABILITIES))
+    except Exception:
         log.exception("provision failed")
-        if on_progress is not None:
-            print(json.dumps({"error": str(exc)}), flush=True)
         return 1
     return 0
 

@@ -136,6 +136,27 @@ test('queue: skipping to a song still preparing shows a loading screen until it 
   await expect(page.getByTestId('queue-loading')).toBeHidden();
 });
 
+test('queue: without downloaded models a song plays its full mix, and says so', async ({ page }) => {
+  await page.route('**/music/separate', (route) =>
+    route.fulfill({
+      status: 424,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: "The AI models for separation aren't downloaded." }),
+    }),
+  );
+
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'Plain.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(5),
+  });
+  await expectPlaying(page, 'Plain');
+  await expect(page.getByTestId('kept-full-mix-toast')).toHaveText(
+    "Plain: playing the full mix, as the AI models aren't downloaded.",
+  );
+});
+
 test('queue: dragging an item reorders the queue', async ({ page }) => {
   await page.goto(HOST_PATH);
   await queueBundles(page, bundle('Alpha'), bundle('Bravo'), bundle('Charlie'), bundle('Delta'));

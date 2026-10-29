@@ -27,6 +27,7 @@ from scipy import signal
 
 from app.pipeline.audio_io import load_samples
 from app.pipeline.onnx_cuda import release_arena_run_options
+from app.request_context import check_cancelled
 
 from . import np_stft
 from ._chunking import (
@@ -532,6 +533,7 @@ class NumpySeparator:
                 self._fold_off = True  # config-disabled or build failed; don't retry
         fold = self._fold
         for done, i in enumerate(starts):
+            check_cancelled()
             part = mix[:, i : i + chunk_size]
             length = part.shape[-1]
             at_tail = i + chunk_size > mix.shape[1]

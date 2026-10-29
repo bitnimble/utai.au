@@ -70,7 +70,8 @@ export async function backendFetch(
   opts: { silent?: boolean } = {}
 ): Promise<Response> {
   try {
-    return await fetch(await toLocalBackend(input, init?.signal), withSessionLane(init));
+    const url = typeof input === 'string' ? await resolveBackendUrl(input, init?.signal ?? undefined) : input;
+    return await fetch(url, withSessionLane(init));
   } catch (err) {
     // A user/programmatic cancel isn't "the server is down".
     if (err instanceof DOMException && err.name === 'AbortError') throw err;
@@ -83,13 +84,14 @@ const RELATIVE_API = '/api';
 
 /** A relative `/api/...` URL composed before the desktop app's own backend was up
  *  would hit the webview's origin, which answers anything with index.html: wait for
- *  the backend and send it there instead. */
-async function toLocalBackend(input: RequestInfo | URL, signal?: AbortSignal | null): Promise<RequestInfo | URL> {
+ *  the backend and point it there instead. Exported for URLs loaded outside
+ *  `fetch` (a `<video src>`). */
+export async function resolveBackendUrl(input: string, signal?: AbortSignal): Promise<string> {
   if (appSettingsStore.localBackend === 'none') return input;
-  if (typeof input !== 'string' || !input.startsWith(`${RELATIVE_API}/`)) return input;
+  if (!input.startsWith(`${RELATIVE_API}/`)) return input;
   try {
     await when(() => appSettingsStore.localApiBase != null || appSettingsStore.localBackend === 'failed', {
-      signal: signal ?? undefined,
+      signal,
     });
   } catch (err) {
     signal?.throwIfAborted();
@@ -98,6 +100,24 @@ async function toLocalBackend(input: RequestInfo | URL, signal?: AbortSignal | n
   const base = appSettingsStore.localApiBase;
   if (base == null) throw new BackendUnreachableError();
   return base + input.slice(RELATIVE_API.length);
+}
+
+/** The response's JSON, or throws its {@link errorDetail}. */
+export async function okJson(res: Response, what: string): Promise<unknown> {
+  if (!res.ok) throw new Error(await errorDetail(res, what));
+  return res.json();
+}
+
+/** A failed response's message: the backend's `detail` (or `message`), else its status. */
+export async function errorDetail(res: Response, what: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { detail?: unknown; message?: unknown };
+    const detail = body?.detail ?? body?.message;
+    if (typeof detail === 'string' && detail.length > 0) return detail;
+  } catch {
+    // non-JSON body; fall through
+  }
+  return `${what} failed (${res.status} ${res.statusText})`;
 }
 
 function withSessionLane(init: RequestInit | undefined): RequestInit | undefined {

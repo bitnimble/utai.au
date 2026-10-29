@@ -58,7 +58,7 @@ const ProvisioningToast = observer(
     return (
       <div className={styles.row}>
         <Spinner size={14} label="Checking models" />
-        <span>{store.state === 'loading' ? 'Preparing models…' : 'Checking for model updates…'}</span>
+        <span>Checking for model updates…</span>
       </div>
     );
   },

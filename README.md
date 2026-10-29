@@ -5,7 +5,7 @@ Load an audio track, import lyrics (from [LRCLIB](https://lrclib.net) or by
 pasting), and get a lyrics track whose word chips are time-aligned to the
 vocal, each chip's position and width follow when and how long each word
 is sung, over the audio waveform. Runs as a website or as a Tauri
-desktop/Android app with a local Python ML sidecar.
+desktop/Android app (desktop runs the Python ML backend locally).
 
 The lyrics-alignment tech is shared with the sibling **Drumjot** project.
 

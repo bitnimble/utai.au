@@ -12,16 +12,18 @@ class HealthResponse(BaseModel):
 
 class ProvisionAsset(BaseModel):
     name: str
-    # "pending" | "checking" | "downloading" | "done" | "skipped"
+    # "pending" | "missing" | "outdated" | "current" | "checking" | "downloading" | "done" | "skipped"
     phase: str
     bytesDone: int | None = None
     bytesTotal: int | None = None
 
 
 class ProvisionStatusResponse(BaseModel):
-    """Startup model-provisioning progress, polled by the frontend startup gate."""
+    """Model provisioning, polled by the frontend: the startup check, then the
+    download the user asks for."""
 
-    # "checking" | "downloading" | "loading" | "ready" | "error"
+    # "checking" | "available" | "downloading" | "ready" | "error"
     state: str
     error: str | None = None
     assets: list[ProvisionAsset] = []
+    loaded: bool = True

@@ -1,10 +1,10 @@
 import { makeAutoObservable } from 'mobx';
 
-/** Aggregate startup-provisioning state. `checking` = verifying local models
- *  against the remote; `available` = some are missing or outdated, waiting on the
- *  user (desktop only); `downloading` = fetching; `loading` = the web backend
- *  warming its separator; `ready` = nothing left to do; `error` = it failed. */
-export type ProvisionState = 'checking' | 'available' | 'downloading' | 'loading' | 'ready' | 'error';
+/** Aggregate startup-provisioning state. `checking` = verifying the backend's
+ *  models against the remote; `available` = some are missing or outdated, waiting
+ *  on the user; `downloading` = fetching; `ready` = nothing left to do; `error` =
+ *  it failed. */
+export type ProvisionState = 'checking' | 'available' | 'downloading' | 'ready' | 'error';
 
 /** Per-model progress. `phase` is `missing` | `outdated` | `current` after a
  *  check, else `pending` | `checking` | `downloading` | `done` | `skipped`; byte
@@ -41,12 +41,6 @@ export class ProvisioningStore {
 
   get errorMessage(): string | undefined {
     return this.status?.error;
-  }
-
-  /** The check has finished, so the desktop venv is synced and usable. */
-  get checked(): boolean {
-    const state = this.state;
-    return state === 'available' || state === 'downloading' || state === 'ready';
   }
 
   /** Models the check found missing or outdated. */

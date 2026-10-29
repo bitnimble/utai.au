@@ -14,20 +14,17 @@ Ported from Drumjot's `beats_detect.py` (the detect + orchestration layer).
 from __future__ import annotations
 
 import logging
-import threading
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from app.config import settings
+from app.lazy import Lazy
 from app.pipeline.beats.meter import beats_downbeats_to_raw, recover_bar_length_if_incoherent
 from app.pipeline.beats.structure import BeatAnalysis, build_analysis
 
 log = logging.getLogger(__name__)
-
-_model: Any | None = None
-_model_lock = threading.Lock()
 
 
 def analyze_beats(audio_path: str | Path) -> dict | None:
@@ -35,12 +32,12 @@ def analyze_beats(audio_path: str | Path) -> dict | None:
     no beats could be produced at all. Falls back to librosa (4/4, no downbeat
     classification) when Beat This! isn't provisioned or fails."""
     audio_path = Path(audio_path)
-    model = _get_model()
-    if model is None:
+    beat_this = model.get()
+    if beat_this is None:
         analysis = _librosa_fallback(audio_path)
     else:
         try:
-            analysis = _beat_this_analysis(model, audio_path)
+            analysis = _beat_this_analysis(beat_this, audio_path)
         except Exception:
             log.warning("beats: Beat This! failed; falling back to librosa", exc_info=True)
             analysis = _librosa_fallback(audio_path)
@@ -58,31 +55,21 @@ def _beat_this_analysis(model: Any, audio_path: Path) -> BeatAnalysis:
     return build_analysis(raw)
 
 
-def _get_model() -> Any | None:
-    global _model
-    with _model_lock:
-        if _model is None:
-            _model = _load_model()
-        return _model
-
-
 def _load_model() -> Any | None:
     from app.pipeline.beats.beat_onnx import load_beat_session
-    from app.pipeline.provision import provision, shipped_onnx
+    from app.pipeline.provision import shipped_onnx
 
     if shipped_onnx("beat_this") is None:
-        # provision("beat") fetches the beat model; best-effort so a fetch
-        # failure just drops to the librosa fallback.
-        try:
-            provision("beat")
-        except Exception:
-            log.warning("beats: could not provision the beat model; using librosa fallback",
-                        exc_info=True)
+        log.info("beats: Beat This! model not downloaded; using librosa fallback")
+        return None
     try:
         return load_beat_session(settings.models_dir, providers=_providers())
     except Exception:
         log.warning("beats: Beat This! model unavailable; using librosa fallback", exc_info=True)
         return None
+
+
+model: Lazy[Any | None] = Lazy(_load_model)
 
 
 def _providers() -> list[str] | None:

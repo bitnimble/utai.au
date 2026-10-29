@@ -8,10 +8,6 @@
     "dialog:default",
     "fs:default",
     {
-      "identifier": "fs:allow-read-file",
-      "allow": [{ "path": "$APPDATA/outputs/**" }]
-    },
-    {
       "identifier": "fs:allow-write-file",
       "allow": [{ "path": "$TEMP/utai/**" }]
     },

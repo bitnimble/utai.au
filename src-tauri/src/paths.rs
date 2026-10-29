@@ -2,7 +2,7 @@
 //!
 //! Portable builds (a `portable` marker file next to the exe) keep EVERYTHING -
 //! the capability venv, uv + torch + HuggingFace caches, the downloaded Python,
-//! the sidecar's outputs + scratch, the webview's data - under `<exe_dir>/data`,
+//! the backend's cache + scratch, the webview's data - under `<exe_dir>/data`,
 //! so deleting that folder removes all of it. Installed builds use the OS user
 //! app-LOCAL-data dir: never next to the exe (which may be a non-writable Program
 //! Files), and local rather than roaming since the venv + model downloads are
@@ -74,7 +74,7 @@ fn os_log_dir(identifier: &str) -> Option<PathBuf> {
 }
 
 /// Directory the app log is written to, computed without an app handle: `<data
-/// root>/logs` in portable mode (self-contained next to the venv/outputs), else
+/// root>/logs` in portable mode (self-contained next to the venv/cache), else
 /// the OS per-app log dir. The ONE place the log location is derived, so the
 /// plugin target (`configure_log_target`), the reader (`log_file`), and the
 /// launch rotation (`rotate_log_on_launch`) can't diverge.
@@ -148,7 +148,7 @@ fn rotate_log_file(current: &Path) {
 /// True iff this is a dev cross-build (see scripts/mac-build.ts): a `devbuild`
 /// marker file staged into the app's bundled resources. Such a build ships the
 /// aligner source + a target `uv` but no vendored wheels/models, so the runtime
-/// `uv sync`s on first launch (see capability::check_models).
+/// `uv sync`s on first launch (see capability::prepare_venv).
 /// A bundled resource, not a next-to-exe marker like `portable`: resource
 /// resolution already handles the per-platform bundle layout (.app Resources,
 /// Linux lib dir, …).
@@ -178,23 +178,14 @@ fn set_var(key: &str, val: impl AsRef<std::ffi::OsStr>) {
     unsafe { std::env::set_var(key, val) };
 }
 
-/// Where the sidecar writes its stem/lyrics deliverables, and where the webview's
-/// fs/asset-protocol scopes are opened to read them back. The ONE place this
-/// join happens -- `redirect_env` (which sets `UTAI_OUTPUTS_DIR` for the
-/// sidecar to read) and `lib.rs`'s scope setup both call this instead of each
-/// re-deriving `root.join("outputs")`, so they can't silently diverge.
-pub fn outputs_dir(root: &Path) -> PathBuf {
-    root.join("outputs")
-}
-
 pub fn bundled_ffmpeg(root: &Path) -> PathBuf {
     root.join("bin").join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" })
 }
 
 /// Point every dependency's cache/download/state dir under `root` via process env
-/// (inherited by the spawned uv + sidecar). `full` (portable only) also redirects
-/// TEMP - so the frontend's staged inputs + the Python scratch + the fs-plugin
-/// `$TEMP` all land under `root` - and the WebView2 user-data folder; an installed
+/// (inherited by the spawned uv + local backend). `full` (portable only) also redirects
+/// TEMP - so the Python scratch + the fs-plugin `$TEMP` land under `root` - and
+/// the WebView2 user-data folder; an installed
 /// build leaves TEMP + the webview folder at their user-writable OS defaults.
 pub fn redirect_env(root: &Path, full: bool) {
     let ffmpeg = bundled_ffmpeg(root);
@@ -208,12 +199,10 @@ pub fn redirect_env(root: &Path, full: bool) {
     // OnTheSpot only looks in fixed system paths and this.
     set_var("FFMPEG_PATH", &ffmpeg);
     let cache = root.join("cache");
-    // aligner settings + the sidecar outputs. Their defaults (/models, /cache,
-    // /outputs) are Docker paths, invalid for a packaged desktop app, so these
-    // MUST be set in both modes.
+    // aligner settings. Their defaults (/models, /cache) are Docker paths,
+    // invalid for a packaged desktop app, so these MUST be set in both modes.
     set_dir("MODELS_DIR", root.join("models"));
     set_dir("CACHE_DIR", cache.join("aligner"));
-    set_dir("UTAI_OUTPUTS_DIR", outputs_dir(root));
     // torch / HuggingFace model downloads (the separation + alignment models)
     // land under HF_HOME / TORCH_HOME on first run + uv's package cache and its
     // managed-Python install.

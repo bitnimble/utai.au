@@ -209,9 +209,11 @@ export class QueuePresenter {
 
   private setStage(id: QueueItemId, stage: PrepareStage): void {
     const current = this.store.items.find((i) => i.id === id)?.status;
-    // Download progress ticks per chunk; only re-render on a visible change.
+    // Reported per download chunk / job event; only re-render on a visible change.
     if (current?.kind === 'downloading' && stage.kind === 'downloading') {
       if (Math.round(current.frac * 100) === Math.round(stage.frac * 100)) return;
+    } else if (current?.kind === stage.kind) {
+      return;
     }
     this.update(id, { status: stage });
   }

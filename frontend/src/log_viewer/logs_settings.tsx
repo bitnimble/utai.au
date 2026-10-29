@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite';
 import React from 'react';
-import { isSidecarAvailable } from 'src/net/sidecar_transport';
+import { hasLocalBackend } from 'src/net/local_backend';
 import { RadioGroup, type RadioOption } from 'src/ui/radio_group/radio_group';
 import { LogsPresenter } from './logs_presenter';
 import { LogsStore, type LogSource } from './logs_store';
@@ -13,7 +13,7 @@ const SOURCE_OPTIONS: ReadonlyArray<RadioOption<LogSource>> = [
 
 export const LogsSettings = observer(function LogsSettings() {
   const [{ store, presenter }] = React.useState(() => {
-    const store = new LogsStore(isSidecarAvailable() ? ['interface', 'backend'] : ['interface']);
+    const store = new LogsStore(hasLocalBackend() ? ['interface', 'backend'] : ['interface']);
     return { store, presenter: new LogsPresenter(store) };
   });
 

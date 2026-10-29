@@ -1,7 +1,7 @@
 //! Suppress the console window Windows pops up for a spawned child process.
 //!
 //! Without `CREATE_NO_WINDOW`, spawning a console subsystem process (the Python
-//! sidecar, `uv`, `nvidia-smi`) from the GUI app flashes a `cmd`-style window on
+//! backend, `uv`, `nvidia-smi`) from the GUI app flashes a `cmd`-style window on
 //! Windows. No-op on every other platform.
 
 use tokio::process::Command;
