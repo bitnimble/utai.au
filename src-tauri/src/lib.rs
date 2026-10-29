@@ -20,7 +20,7 @@ mod pitch;
 #[cfg(desktop)]
 mod processes;
 #[cfg(desktop)]
-mod session_server;
+mod session_gateway;
 mod updates;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -104,7 +104,7 @@ pub fn run() {
             if paths::portable_data_root().is_none() {
                 paths::redirect_env(&root, false);
             }
-            app.manage(session_server::start(app.handle()));
+            app.manage(session_gateway::start(app.handle()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -130,7 +130,6 @@ pub fn run() {
             audio::audio_subscribe,
             pitch::audio_pitch_subscribe,
             pitch::audio_pitch_unsubscribe,
-            session_server::session_server_api_base,
             local_backend::local_backend_api_base,
             updates::open_external,
             updates::update_can_install,

@@ -8,7 +8,7 @@ stream. Torch-free (onnxruntime), like the rest of the runtime.
 
 The Rust engine forwards resampled mic frames here (one `push` per telemetry
 tick) and streams the returned (hz, confidence) up to the frontend, where
-SidecarLivePitchSource turns it into scoring frames.
+RmvpeLivePitchSource turns it into scoring frames.
 """
 from __future__ import annotations
 

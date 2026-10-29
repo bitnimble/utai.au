@@ -4,6 +4,7 @@ type Telemetry = { playSec: number; playing: boolean; level: number; latencyMs: 
 
 let telemetry: ((msg: Telemetry) => void) | undefined;
 const commands: [string, unknown][] = [];
+const failing = new Set<string>();
 const realCore = await import('@tauri-apps/api/core');
 mock.module('@tauri-apps/api/core', () => ({
   ...realCore,
@@ -15,6 +16,7 @@ mock.module('@tauri-apps/api/core', () => ({
   },
   invoke: async (cmd: string, args?: unknown): Promise<void> => {
     commands.push([cmd, args]);
+    if (failing.has(cmd)) throw new Error(`${cmd} failed`);
   },
 }));
 
@@ -29,6 +31,7 @@ afterAll(() => {
 });
 
 const { NativeAudioOutput } = await import('../native_audio_output');
+const { NONE_DEVICE_ID } = await import('src/audio_devices/audio_io_backend');
 
 const frame = (playSec: number, playing: boolean): Telemetry => ({ playSec, playing, level: 0, latencyMs: 0 });
 
@@ -89,19 +92,53 @@ test('pause freezes the position against late playing frames; resume follows Rus
   expect(output.positionSec()).toBeCloseTo(3.01, 5);
 });
 
-test('past the end, the position keeps running and a seek restarts Rust', async () => {
-  const output = initedOutput();
-  await output.start(99);
-  telemetry?.(frame(99, true));
-  telemetry?.(frame(100, false));
-  nowMs += 1500;
-  expect(output.positionSec()).toBeCloseTo(100.5, 5);
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+const sent = (cmd: string): unknown[] => commands.filter(([c]) => c === cmd).map(([, args]) => args);
 
+test('a pitch stream captures its input while the monitor is off, and releases it after', async () => {
+  const output = initedOutput();
+  output.setInput(NONE_DEVICE_ID);
+  await output.startPitchStream('');
+  output.stopPitchStream();
+  output.setInput('USB Mic');
+  await output.startPitchStream('');
+  await flush();
+  expect(sent('audio_set_devices')).toEqual([
+    { input: null, output: null, capture: false },
+    { input: null, output: null, capture: true },
+    { input: null, output: null, capture: false },
+    { input: 'USB Mic', output: null, capture: true },
+    { input: 'USB Mic', output: null, capture: true },
+  ]);
+});
+
+test('only the monitor is heard: a pitch stream capturing alone mixes no mic in', async () => {
+  const output = initedOutput();
+  output.setMicGain(0.8);
+  output.setInput(NONE_DEVICE_ID);
+  await output.startPitchStream('');
+  output.setInput('USB Mic');
+  await flush();
+  expect(sent('audio_set_mic_gain')).toEqual([{ gain: 0 }, { gain: 0 }, { gain: 0.8 }]);
+});
+
+test('a pitch sidecar that fails to start rejects and releases the capture', async () => {
+  const output = initedOutput();
+  failing.add('audio_pitch_subscribe');
+  await expect(output.startPitchStream('')).rejects.toThrow('audio_pitch_subscribe failed');
+  failing.clear();
+  await flush();
+  expect(sent('audio_set_devices').at(-1)).toEqual({ input: null, output: null, capture: false });
+});
+
+test('a seek while playing moves Rust and keeps the position running from there', async () => {
+  const output = initedOutput();
+  await output.start(0);
+  telemetry?.(frame(0, true));
   commands.length = 0;
   output.seek(30);
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(transportCommands()).toEqual([
-    ['audio_seek', { secs: 30 }],
-    ['audio_play', undefined],
-  ]);
+  expect(transportCommands()).toEqual([['audio_seek', { secs: 30 }]]);
+  nowMs += 500;
+  expect(output.positionSec()).toBeCloseTo(30.5, 5);
 });

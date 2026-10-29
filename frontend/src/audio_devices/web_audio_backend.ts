@@ -81,9 +81,9 @@ export class WebAudioBackend implements AudioIoBackend {
       },
     });
     const ctx = webAudioOutput.getAudioContext();
-    // Best-effort: without a prior user gesture resume() rejects; the graph is
+    // Not awaited: without a user gesture resume() stays pending; the graph is
     // built regardless and becomes audible once the context resumes (on play).
-    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+    if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
     const source = ctx.createMediaStreamSource(stream);
     const gainNode = ctx.createGain();
     gainNode.gain.value = gain;

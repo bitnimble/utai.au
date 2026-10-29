@@ -1,7 +1,7 @@
 //! Live-mic pitch: drives the persistent Python `app.pitch_sidecar` (RMVPE),
 //! feeding it the mic-capture tap resampled to 16 kHz and relaying its pitch
 //! frames to the frontend as telemetry. Desktop-only. The two ends are
-//! `frontend/.../sidecar_live_pitch_source.ts` + `aligner/app/pitch_sidecar.py`.
+//! `frontend/.../rmvpe_live_pitch_source.ts` + `aligner/app/pitch_sidecar.py`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};

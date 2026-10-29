@@ -15,6 +15,7 @@ class FakeBackend implements AudioIoBackend {
   permission: MicPermission = 'granted';
   starts = 0;
   stops = 0;
+  permissionRequests = 0;
   lastMicGain = -1;
   lastOutputVolume = -1;
   sink: string | undefined;
@@ -27,6 +28,7 @@ class FakeBackend implements AudioIoBackend {
     return () => {};
   }
   async requestPermission(): Promise<MicPermission> {
+    this.permissionRequests++;
     return this.permission;
   }
   async queryPermission(): Promise<MicPermission> {
@@ -82,10 +84,11 @@ describe('AudioDevicePresenter', () => {
     expect(store.outputSelectable).toBe(true);
   });
 
-  test('seeds the input from the platform default; mic muted by default', () => {
-    expect(new AudioDeviceStore().selectedInputId).toBe(''); // desktop: system default
-    expect(new AudioDeviceStore(NONE_DEVICE_ID).selectedInputId).toBe('none'); // web: none
-    expect(new AudioDeviceStore().micMuted).toBe(true);
+  test('a first boot neither captures nor asks for the mic', async () => {
+    await presenter.init();
+    expect(store.selectedInputId).toBe(NONE_DEVICE_ID);
+    expect(backend.starts).toBe(0);
+    expect(backend.permissionRequests).toBe(0);
   });
 
   test('refreshDevices splits inputs and outputs', async () => {
@@ -110,7 +113,7 @@ describe('AudioDevicePresenter', () => {
     expect(backend.lastMonitor?.inputId).toBe('mic2');
 
     await presenter.setInputDevice(NONE_DEVICE_ID);
-    expect(backend.stops).toBeGreaterThanOrEqual(1);
+    expect(backend.stops).toBe(1);
     expect(store.micLevel).toBe(0);
   });
 

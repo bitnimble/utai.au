@@ -4,7 +4,7 @@ import { fetchRetrying, PUBLIC_API_RETRY } from 'src/net/fetch_retrying';
 import { frameFromHz, type LivePitchListener, type LivePitchSource } from './live_pitch_source';
 
 /**
- * Web {@link LivePitchSource}: SwiftF0 over onnxruntime-web on the live mic.
+ * {@link LivePitchSource} running SwiftF0 over onnxruntime-web on the live mic (web, Android).
  *
  * The mic is tapped through an `AnalyserNode` on the shared AudioContext (same
  * pattern as the level meter in web_audio_backend.ts), no audible connection,
@@ -13,9 +13,8 @@ import { frameFromHz, type LivePitchListener, type LivePitchSource } from './liv
  * a scoring session starts, and code-splits out of the main app chunk.
  *
  * SwiftF0's octave-doubling weakness is on separated stems with bleed; a close
- * mic is a clean solo signal, so it holds up well here. Desktop uses the
- * sidecar RMVPE path instead (see SidecarLivePitchSource) for parity with the
- * offline reference.
+ * mic is a clean solo signal, so it holds up well here. Desktop runs RMVPE
+ * instead (see RmvpeLivePitchSource) for parity with the offline reference.
  */
 
 /** Emit cadence; also the `fps` the scoring DSP uses for vibrato timing. Kept
@@ -28,7 +27,7 @@ const SR_TARGET = 16000;
 
 const DEFAULT_MODEL_URL = 'https://huggingface.co/bitnimble/utai-onnx/resolve/main/f0_swiftf0.onnx';
 
-export class OnnxLivePitchSource implements LivePitchSource {
+export class SwiftF0LivePitchSource implements LivePitchSource {
   readonly fps = TARGET_FPS;
 
   private readonly listeners = new Set<LivePitchListener>();
@@ -44,12 +43,16 @@ export class OnnxLivePitchSource implements LivePitchSource {
   private timeBuf: Float32Array<ArrayBuffer> | undefined;
   private srcSampleRate = 48000;
   private running = false;
+  /** Bumped by every start and stop, so a start that a stop overtook mid-await backs out. */
+  private generation = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly modelUrl: string = DEFAULT_MODEL_URL) {}
 
   async start(inputId: string): Promise<void> {
+    const generation = ++this.generation;
     if (this.session == null) await this.loadModel();
+    if (generation !== this.generation) return;
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         deviceId: inputId ? { exact: inputId } : undefined,
@@ -58,8 +61,13 @@ export class OnnxLivePitchSource implements LivePitchSource {
         autoGainControl: false,
       },
     });
+    if (generation !== this.generation) {
+      for (const t of stream.getTracks()) t.stop();
+      return;
+    }
     const ctx = webAudioOutput.getAudioContext();
-    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+    // Not awaited: without a user gesture resume() stays pending, and the tap works once it runs.
+    if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
     const source = ctx.createMediaStreamSource(stream);
     const analyser = ctx.createAnalyser();
     analyser.fftSize = FFT_SIZE;
@@ -75,6 +83,7 @@ export class OnnxLivePitchSource implements LivePitchSource {
   }
 
   stop(): void {
+    this.generation++;
     this.running = false;
     if (this.timer != null) clearTimeout(this.timer);
     this.timer = undefined;

@@ -1,14 +1,10 @@
 import { nativeAudioOutput } from 'src/editing/playback/player';
 import type { LivePitchSource } from './live_pitch_source';
-import { OnnxLivePitchSource } from './onnx_live_pitch_source';
-import { SidecarLivePitchSource } from './sidecar_live_pitch_source';
+import { RmvpeLivePitchSource } from './rmvpe_live_pitch_source';
+import { SwiftF0LivePitchSource } from './swiftf0_live_pitch_source';
 
-/** Pick the live-pitch backend for this platform: desktop streams the native mic
- *  capture to the Python sidecar's RMVPE (`audio_pitch_subscribe` → LivePitchStream,
- *  octave-robust + matches the offline reference); web + Android run SwiftF0
- *  in-browser via onnxruntime-web. */
+/** RMVPE on desktop, which has the Python sidecar to run it; SwiftF0 in-browser
+ *  on web + Android. */
 export function createLivePitchSource(): LivePitchSource {
-  return nativeAudioOutput != null
-    ? new SidecarLivePitchSource(nativeAudioOutput)
-    : new OnnxLivePitchSource();
+  return nativeAudioOutput != null ? new RmvpeLivePitchSource(nativeAudioOutput) : new SwiftF0LivePitchSource();
 }

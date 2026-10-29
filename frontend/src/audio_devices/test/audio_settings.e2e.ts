@@ -3,8 +3,7 @@ import { HOST_PATH, test } from 'src/testing/e2e_test';
 
 // Audio settings + the shared home-transport controls. Chromium runs with fake
 // media devices (see playwright.config.ts launch args), so getUserMedia /
-// enumerateDevices resolve headlessly without real hardware or a prompt (the
-// mic auto-monitors on load).
+// enumerateDevices resolve headlessly without real hardware or a prompt.
 
 test('audio: None options, per-channel mute/volume, Settings ↔ home in sync', async ({ page }) => {
   await page.goto(HOST_PATH);
@@ -14,7 +13,7 @@ test('audio: None options, per-channel mute/volume, Settings ↔ home in sync', 
   await expect(page.getByTestId('audio-mic-volume-home')).toBeVisible();
   await expect(page.getByTestId('audio-output-volume-home')).toBeVisible();
 
-  // Web defaults: mic muted (both controls, in sync) and input set to None.
+  // Defaults: mic muted (both controls, in sync) and input set to None.
   await expect(page.getByTestId('audio-mic-mute-home')).toHaveAttribute('aria-pressed', 'true');
 
   await page.getByTestId('settings-open').click();
@@ -22,8 +21,7 @@ test('audio: None options, per-channel mute/volume, Settings ↔ home in sync', 
   await page.getByTestId('settings-tab-audio').click();
   await expect(page.getByTestId('audio-settings')).toBeVisible();
 
-  // Both device pickers offer a "None" option; the web build defaults the mic
-  // to None so it never captures unprompted.
+  // Both device pickers offer a "None" option, and the mic starts on it.
   await expect(page.getByTestId('audio-input-select').locator('option[value="none"]')).toHaveCount(1);
   await expect(page.getByTestId('audio-output-select').locator('option[value="none"]')).toHaveCount(1);
   await expect(page.getByTestId('audio-input-select')).toHaveValue('none');

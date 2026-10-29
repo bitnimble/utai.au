@@ -16,6 +16,7 @@ export class WebAudioOutput implements AudioOutput {
   private masterGain: GainNode | undefined;
   private controller: AudioTrackPlaybackController | undefined;
   private readonly tracks = new Map<AudioTrackId, AudioTrack>();
+  private playing = false;
   private startContextTime = 0;
   private startPlaySec = 0;
 
@@ -25,6 +26,7 @@ export class WebAudioOutput implements AudioOutput {
 
   async addTrack(track: AudioTrack): Promise<void> {
     this.tracks.set(track.id, track);
+    if (this.playing && this.ctx) this.controller?.scheduleAll([track], this.ctx.currentTime, this.positionSec());
   }
 
   removeTrack(id: AudioTrackId): void {
@@ -37,40 +39,40 @@ export class WebAudioOutput implements AudioOutput {
   }
 
   async start(fromSec: number): Promise<void> {
-    const ctx = this.getAudioContext();
-    if (ctx.state === 'suspended') await ctx.resume();
-    this.startContextTime = ctx.currentTime + SCHEDULE_LEAD_SECONDS;
-    this.startPlaySec = fromSec;
+    const ctx = await this.runningContext();
     this.controller?.dispose();
     this.controller = new AudioTrackPlaybackController(ctx, this.getOutputNode());
-    this.controller.scheduleAll(this.tracks.values(), this.startContextTime, fromSec);
+    this.playing = true;
+    this.reschedule(ctx.currentTime + SCHEDULE_LEAD_SECONDS, fromSec);
   }
 
   async pause(): Promise<void> {
+    this.startPlaySec = this.positionSec();
+    this.playing = false;
     this.controller?.cancelSources();
-    await this.ctx?.suspend();
   }
 
   async resume(): Promise<void> {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    await ctx.resume();
-    this.reschedule(ctx.currentTime, this.positionSec());
+    const ctx = await this.runningContext();
+    this.playing = true;
+    this.reschedule(ctx.currentTime, this.startPlaySec);
   }
 
   seek(sec: number): void {
-    if (!this.ctx) return;
-    this.controller?.cancelSources();
-    this.reschedule(this.ctx.currentTime, sec);
+    if (this.playing && this.ctx) this.reschedule(this.ctx.currentTime, sec);
+    else this.startPlaySec = sec;
   }
 
   stop(): void {
     this.controller?.dispose();
     this.controller = undefined;
+    this.playing = false;
+    this.startPlaySec = 0;
   }
 
   positionSec(): number {
-    return this.ctx ? this.startPlaySec + (this.ctx.currentTime - this.startContextTime) : this.startPlaySec;
+    if (!this.playing || !this.ctx) return this.startPlaySec;
+    return this.startPlaySec + (this.ctx.currentTime - this.startContextTime);
   }
 
   /** The shared context, so the mic-monitor graph attaches to the same one as
@@ -103,6 +105,12 @@ export class WebAudioOutput implements AudioOutput {
     const ctx = this.getAudioContext();
     if (typeof ctx.setSinkId !== 'function') return;
     await ctx.setSinkId(sinkId);
+  }
+
+  private async runningContext(): Promise<AudioContext> {
+    const ctx = this.getAudioContext();
+    if (ctx.state === 'suspended') await ctx.resume();
+    return ctx;
   }
 
   private reschedule(contextTime: number, sec: number): void {

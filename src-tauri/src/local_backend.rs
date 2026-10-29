@@ -5,6 +5,7 @@
 use std::future::Future;
 use std::net::TcpListener;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager, State};
@@ -13,6 +14,7 @@ use tokio::sync::Mutex;
 
 use crate::capability::resolve_python;
 use crate::processes::{ChildProcesses, Tracked};
+use crate::session_gateway::SessionGateway;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const READY_POLL: Duration = Duration::from_millis(250);
@@ -20,7 +22,12 @@ const SUPERVISE_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_RESTART_BACKOFF: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
-pub struct LocalBackend(Mutex<Backend>);
+pub struct LocalBackend {
+    backend: Mutex<Backend>,
+    // Outside `backend`: the session gateway reads it per connection, and `backend`
+    // stays locked for minutes during a venv sync or model download.
+    api_port: OnceLock<u16>,
+}
 
 /// `ports` is set once the backend first starts and kept for the app's lifetime, so
 /// the page's API base stays good across restarts.
@@ -55,8 +62,8 @@ struct Process {
 /// Syncs the app venv if it needs it, then starts the backend (restarted from then
 /// on whenever it dies) and returns its API base, e.g. `http://127.0.0.1:53211`.
 #[tauri::command]
-pub async fn local_backend_api_base(app: AppHandle, backend: State<'_, LocalBackend>) -> Result<String, String> {
-    let mut backend = backend.0.lock().await;
+pub async fn local_backend_api_base(app: AppHandle, local: State<'_, LocalBackend>) -> Result<String, String> {
+    let mut backend = local.backend.lock().await;
     if let Some(ports) = backend.ports {
         return Ok(ports.base());
     }
@@ -64,15 +71,21 @@ pub async fn local_backend_api_base(app: AppHandle, backend: State<'_, LocalBack
     let ports = Ports { onthespot: free_port()?, api: free_port()? };
     backend.running = Some(start_app(&app, ports).await?);
     backend.ports = Some(ports);
+    let _ = local.api_port.set(ports.api);
     tokio::spawn(supervise(app.clone(), ports));
     Ok(ports.base())
 }
 
 impl LocalBackend {
+    /// The API's loopback port, once it has first started.
+    pub fn api_port(&self) -> Option<u16> {
+        self.api_port.get().copied()
+    }
+
     /// Run `work` with the backend stopped, as it holds the venv's packages and
     /// models open, then start it again.
     pub async fn while_stopped<T>(&self, app: &AppHandle, work: impl Future<Output = T>) -> T {
-        let mut backend = self.0.lock().await;
+        let mut backend = self.backend.lock().await;
         stop(backend.running.take()).await;
         let result = work.await;
         if let Some(ports) = backend.ports {
@@ -88,7 +101,7 @@ async fn supervise(app: AppHandle, ports: Ports) {
     let mut interval = SUPERVISE_INTERVAL;
     loop {
         tokio::time::sleep(interval).await;
-        let mut backend = backend.0.lock().await;
+        let mut backend = backend.backend.lock().await;
         if backend.running.as_mut().is_some_and(Running::alive) {
             interval = SUPERVISE_INTERVAL;
             continue;
@@ -111,12 +124,19 @@ async fn stop(running: Option<Running>) {
 
 async fn start_app(app: &AppHandle, ports: Ports) -> Result<Running, String> {
     let root = crate::paths::data_root(app)?;
-    start(&resolve_python(app), &root, ports, &app.state::<ChildProcesses>())
+    let session_port = app.state::<SessionGateway>().port();
+    start(&resolve_python(app), &root, ports, session_port, &app.state::<ChildProcesses>())
         .await
         .inspect_err(|e| log::error!("couldn't start the local backend: {e}"))
 }
 
-async fn start(python: &str, root: &Path, ports: Ports, children: &ChildProcesses) -> Result<Running, String> {
+async fn start(
+    python: &str,
+    root: &Path,
+    ports: Ports,
+    session_port: Option<u16>,
+    children: &ChildProcesses,
+) -> Result<Running, String> {
     let ots_dir = root.join("onthespot");
     std::fs::create_dir_all(&ots_dir).map_err(|e| e.to_string())?;
     let downloads = root.join("cache").join("onthespot-downloads");
@@ -138,6 +158,10 @@ async fn start(python: &str, root: &Path, ports: Ports, children: &ChildProcesse
         .env("ONTHESPOT_PUBLIC_PORT", ports.onthespot.to_string())
         .env("ONTHESPOT_CONFIG_PATH", ots_dir.join("otsconfig.json"))
         .env("MUSIC_CONFIG_PATH", ots_dir.join("music_config.json"));
+    if let Some(port) = session_port {
+        // Phones join through the session gateway, at whatever LAN address the machine has then.
+        api.env("PUBLIC_URL", format!("http://{{lan_ip}}:{port}"));
+    }
     let api = match Process::spawn("backend", ports.api, api, children) {
         Ok(api) => api,
         Err(e) => {
@@ -210,7 +234,7 @@ mod tests {
         std::env::set_var("MODELS_DIR", root.join("models"));
         std::env::set_var("CACHE_DIR", root.join("cache").join("aligner"));
         let ports = Ports { onthespot: free_port().unwrap(), api: free_port().unwrap() };
-        let mut running = start(&python, &root, ports, &ChildProcesses::default()).await.unwrap();
+        let mut running = start(&python, &root, ports, None, &ChildProcesses::default()).await.unwrap();
         let addr = ports.base().trim_start_matches("http://").to_string();
         let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
         let request = format!("GET /music/services HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
