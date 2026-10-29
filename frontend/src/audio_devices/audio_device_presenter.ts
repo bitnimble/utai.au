@@ -15,10 +15,8 @@ const LEVEL_EPSILON = 0.01;
  * monitor lifecycle, output volume/routing, and localStorage persistence.
  *
  * The mic is a live monitor whenever an input other than {@link NONE_DEVICE_ID}
- * is selected and permission is granted (a karaoke app keeps the mic hot);
- * muting/volume only scale the audible gain, capture stays running so the meter
- * still reads. Kept store + presenter so the logic is unit-testable against a
- * mocked backend.
+ * is selected and permission is granted; muting/volume only scale the audible
+ * gain, capture stays running so the meter still reads.
  */
 export class AudioDevicePresenter {
   private readonly store: AudioDeviceStore;

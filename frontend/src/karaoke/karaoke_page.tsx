@@ -2,7 +2,7 @@ import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
 import { ChevronDown, Pause, Play, Settings, Square } from 'lucide-react';
 import React from 'react';
-import { nativeAudioEngine, playbackEngine } from 'src/editing/playback/player';
+import { nativeAudioOutput, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
 import { activeLineIndexAt, lineSpanSec } from 'src/lyrics/lrc';
 import { formatPlayheadTime } from 'src/editing/playback/playhead_label';
@@ -45,10 +45,8 @@ import {
 } from 'src/music_source/music_source_contexts';
 import { MusicSourcePresenter } from 'src/music_source/music_source_presenter';
 import { MusicSourceStore } from 'src/music_source/music_source_store';
-import { isTauri } from '@tauri-apps/api/core';
 import { AudioDeviceStore } from 'src/audio_devices/audio_device_store';
 import { AudioDevicePresenter } from 'src/audio_devices/audio_device_presenter';
-import { NONE_DEVICE_ID } from 'src/audio_devices/audio_io_backend';
 import { WebAudioBackend } from 'src/audio_devices/web_audio_backend';
 import { NativeAudioBackend } from 'src/audio_devices/native_audio_backend';
 import {
@@ -130,11 +128,11 @@ type Session = {
   videoPresenter: VideoPresenter;
   skipSegments: SkipSegmentsStore;
   skipSegmentsPresenter: SkipSegmentsPresenter;
-  sessionHost: SessionHostStore | undefined;
-  sessionHostPresenter: SessionHostPresenter | undefined;
 };
 
-function buildSession(hostSession: HostSession | undefined): Session {
+type SessionHost = { sessionHost: SessionHostStore; sessionHostPresenter: SessionHostPresenter };
+
+function buildSession(): Session {
   const song = new SongStore();
   const viewport = new ViewportStore();
   const viewConfig = new ViewConfig();
@@ -150,14 +148,9 @@ function buildSession(hostSession: HostSession | undefined): Session {
   const musicPresenter = new MusicSourcePresenter(musicSource, (track) =>
     queuePresenter.add({ kind: 'streaming', track }),
   );
-  // Desktop app defaults the mic to the system device; web + mobile default to
-  // None so the browser never prompts for the mic on load (the user opts in).
-  const isDesktopApp = isTauri() && !__IS_MOBILE__;
-  const audioDevice = new AudioDeviceStore(isDesktopApp ? '' : NONE_DEVICE_ID);
-  // Desktop routes the mic/device backend to the one native engine; web uses
-  // the Web Audio backend.
-  const audioBackend = nativeAudioEngine
-    ? new NativeAudioBackend(nativeAudioEngine)
+  const audioDevice = new AudioDeviceStore();
+  const audioBackend = nativeAudioOutput
+    ? new NativeAudioBackend(nativeAudioOutput)
     : new WebAudioBackend();
   const audioDevicePresenter = new AudioDevicePresenter(audioDevice, audioBackend);
   const scoring = new ScoringStore();
@@ -176,19 +169,6 @@ function buildSession(hostSession: HostSession | undefined): Session {
   const videoPresenter = new VideoPresenter(videoStore);
   const skipSegments = new SkipSegmentsStore(song, playbackEngine);
   const skipSegmentsPresenter = new SkipSegmentsPresenter(skipSegments, videoStore, playbackEngine);
-  const sessionHost = hostSession && new SessionHostStore(hostSession, appSettingsStore, window.location.origin);
-  const sessionHostPresenter =
-    sessionHost &&
-    new SessionHostPresenter(sessionHost, {
-      queue,
-      queuePresenter,
-      song,
-      karaoke: presenter,
-      transport: playbackEngine,
-      audioDevice,
-      audioDevicePresenter,
-      searchTracks,
-    });
   return {
     song,
     viewport,
@@ -210,13 +190,29 @@ function buildSession(hostSession: HostSession | undefined): Session {
     videoPresenter,
     skipSegments,
     skipSegmentsPresenter,
-    sessionHost,
-    sessionHostPresenter,
   };
 }
 
+function buildSessionHost(hostSession: HostSession, session: Session): SessionHost {
+  const sessionHost = new SessionHostStore(hostSession, appSettingsStore, window.location.origin);
+  const sessionHostPresenter = new SessionHostPresenter(sessionHost, {
+    queue: session.queue,
+    queuePresenter: session.queuePresenter,
+    song: session.song,
+    karaoke: session.presenter,
+    transport: playbackEngine,
+    audioDevice: session.audioDevice,
+    audioDevicePresenter: session.audioDevicePresenter,
+    searchTracks,
+  });
+  return { sessionHost, sessionHostPresenter };
+}
+
 export const KaraokePage = observer(function KaraokePage({ hostSession }: { hostSession?: HostSession }) {
-  const [session] = React.useState(() => buildSession(hostSession));
+  const [session] = React.useState(buildSession);
+  const host = React.useMemo(() => hostSession && buildSessionHost(hostSession, session), [hostSession, session]);
+  const sessionHost = host?.sessionHost;
+  const sessionHostPresenter = host?.sessionHostPresenter;
   const {
     song,
     viewport,
@@ -238,14 +234,12 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
     videoPresenter,
     skipSegments,
     skipSegmentsPresenter,
-    sessionHost,
-    sessionHostPresenter,
   } = session;
 
   // Open the native engine's telemetry stream on desktop (no-op on web).
   React.useEffect(() => {
-    nativeAudioEngine?.init();
-    return () => nativeAudioEngine?.dispose();
+    nativeAudioOutput?.init();
+    return () => nativeAudioOutput?.dispose();
   }, []);
 
   // Boot the audio-device layer (enumerate, restore prefs, resume a saved

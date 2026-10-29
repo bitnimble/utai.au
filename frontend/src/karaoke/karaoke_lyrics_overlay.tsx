@@ -53,6 +53,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     },
     get shownIdx(): number | undefined {
       const t = this.track;
+      if (playbackEngine.ended) return undefined;
       return t ? shownLineIdx(t.lines, this.lyricsTimeNow, t.offsetSec) : undefined;
     },
     get nextIdx(): number | undefined {

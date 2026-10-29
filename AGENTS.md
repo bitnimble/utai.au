@@ -44,7 +44,7 @@ and deno (yt-dlp's JS runtime for YouTube). The **Android** app reuses
 the same shell + frontend but has **no local backend** (no on-device Python/ML):
 it uses a remote one, same as the web build. Desktop-only Rust
 (local backend, capability install, live-mic pitch, portable paths, session
-server) is `#[cfg(desktop)]`-gated.
+gateway) is `#[cfg(desktop)]`-gated.
 
 ### Sessions
 
@@ -57,12 +57,14 @@ tracks the host's own search returned); the session server
 (`aligner/app/sessions.py`, in-memory, 1h idle expiry) is a dumb relay
 between host and remotes. Creating a session returns a host token, kept in
 localStorage, that a host socket must present; a host whose session the relay
-lost creates a new one and keeps its queue. The desktop app serves the same protocol, plus the
-remote page itself, from an in-process Rust server
-(`src-tauri/src/session_server.rs`, `0.0.0.0:7337`, `UTAI_SESSION_PORT`), so a
-desktop HTPC needs no container. Keep the two relays behaviour-identical.
-Advertised join URLs come from the backend's `PUBLIC_URL` (desktop: its LAN
-IP), overridable per host in the join dialog. The backend's GPU lock serves
+lost creates a new one and keeps its queue. On desktop the relay is the local
+backend's; phones reach it through the Rust LAN gateway
+(`src-tauri/src/session_gateway.rs`, `0.0.0.0:7337`, `UTAI_SESSION_PORT`), which
+serves the remote page and forwards only `/api/sessions*` to the loopback
+backend. The desktop host plays at once and attaches its session when its
+backend is up. Advertised join URLs come from the backend's `PUBLIC_URL`
+(`{lan_ip}` is filled in per request; desktop sets
+`http://{lan_ip}:<gateway port>`), overridable per host in the join dialog. The backend's GPU lock serves
 waiting jobs round-robin across sessions, keyed by the `X-Utai-Session`
 header `backendFetch` attaches.
 

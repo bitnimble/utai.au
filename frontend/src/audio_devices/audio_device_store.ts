@@ -1,5 +1,5 @@
 import { makeAutoObservable } from 'mobx';
-import type { AudioDevice, MicPermission } from './audio_io_backend';
+import { NONE_DEVICE_ID, type AudioDevice, type MicPermission } from './audio_io_backend';
 
 /**
  * Data-only store for audio I/O: the available input/output devices, the
@@ -11,15 +11,13 @@ export class AudioDeviceStore {
   inputs: AudioDevice[] = [];
   outputs: AudioDevice[] = [];
 
-  /** Selected devices; `''` = system default, {@link NONE_DEVICE_ID} = none.
-   *  The input default is platform-dependent (see the ctor param). */
-  selectedInputId: string;
+  /** Selected devices; `''` = system default, {@link NONE_DEVICE_ID} = none. */
+  selectedInputId = NONE_DEVICE_ID;
   selectedOutputId = '';
 
   permission: MicPermission = 'unknown';
 
-  /** Microphone monitor level in [0, 1] (how loud you hear yourself). Muted by
-   *  default on every platform, so the mic never goes out unprompted. */
+  /** Microphone monitor level in [0, 1] (how loud you hear yourself). */
   micVolume = 0.8;
   micMuted = true;
   /** Overall output level in [0, 1] (tracks + monitor). */
@@ -32,11 +30,7 @@ export class AudioDeviceStore {
   /** Whether the engine can route output to a chosen device. */
   outputSelectable = false;
 
-  /** `defaultInputId` seeds {@link selectedInputId} for a fresh install (no
-   *  saved pref): `''` (system default) on desktop, {@link NONE_DEVICE_ID} on
-   *  web, so the browser build never prompts for the mic unbidden. */
-  constructor(defaultInputId = '') {
-    this.selectedInputId = defaultInputId;
+  constructor() {
     makeAutoObservable(this);
   }
 

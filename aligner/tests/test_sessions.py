@@ -24,7 +24,8 @@ def clock(monkeypatch) -> FakeClock:
 
 
 @pytest.fixture
-def client(clock) -> TestClient:
+def client(clock, monkeypatch) -> TestClient:
+    monkeypatch.setattr(sessions.settings, "public_url", "")
     app = FastAPI()
     app.include_router(sessions.router)
     return TestClient(app)
@@ -67,6 +68,14 @@ def test_normalize_reads_ambiguous_letters_as_digits():
 def test_public_url_comes_from_settings(client, monkeypatch):
     monkeypatch.setattr(sessions.settings, "public_url", "https://karaoke.lan:5175")
     assert client.post("/sessions").json()["publicUrl"] == "https://karaoke.lan:5175"
+
+
+def test_public_url_fills_in_the_current_lan_address(client, monkeypatch):
+    monkeypatch.setattr(sessions.settings, "public_url", "http://{lan_ip}:7337")
+    monkeypatch.setattr(sessions, "_lan_ip", lambda: "192.168.1.20")
+    assert client.post("/sessions").json()["publicUrl"] == "http://192.168.1.20:7337"
+    monkeypatch.setattr(sessions, "_lan_ip", lambda: None)
+    assert client.post("/sessions").json()["publicUrl"] is None
 
 
 def test_creation_is_refused_past_the_session_cap(client, monkeypatch):

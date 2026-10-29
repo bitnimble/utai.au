@@ -81,6 +81,9 @@ pub struct Shared {
     /// the RT callbacks). The input callback owns the ring's producer; this is
     /// its consumer, swapped in on each (re)build. `None` when not capturing.
     pub capture_cons: Mutex<Option<Consumer<f32>>>,
+    /// Stereo mic frames for the monitor, drained by the output callback. Swapped
+    /// in with each input stream, so the input can be rebuilt without the output.
+    monitor_cons: Mutex<Option<Consumer<f32>>>,
 }
 
 impl Shared {
@@ -96,6 +99,7 @@ impl Shared {
             out_latency_ms: AtomicF32::new(0.0),
             in_latency_ms: AtomicF32::new(0.0),
             capture_cons: Mutex::new(None),
+            monitor_cons: Mutex::new(None),
         }
     }
 }
@@ -142,6 +146,9 @@ fn reresample_all(shared: &Shared) {
 /// the resample (the playhead is stored in frames, which the new rate rescales).
 fn retune(shared: &Shared, new_rate: u32) {
     let old_rate = shared.output_rate.load(Ordering::Relaxed);
+    if old_rate == new_rate {
+        return;
+    }
     let secs = if old_rate > 0 {
         shared.transport.position_secs(old_rate)
     } else {
@@ -155,22 +162,12 @@ fn retune(shared: &Shared, new_rate: u32) {
 }
 
 /// Which devices to run; `None` == system default. `capture == false` when the
-/// app selected mic "None" (no input stream at all).
-#[derive(Clone, Debug)]
+/// app selected mic "None" (no input stream at all), which is the default.
+#[derive(Clone, Debug, Default)]
 pub struct DeviceSelection {
     pub input: Option<String>,
     pub output: Option<String>,
     pub capture: bool,
-}
-
-impl Default for DeviceSelection {
-    fn default() -> Self {
-        Self {
-            input: None,
-            output: None,
-            capture: true,
-        }
-    }
 }
 
 enum EngineCmd {
@@ -347,72 +344,57 @@ pub fn list_devices() -> (Vec<String>, Vec<String>) {
     (inputs, outputs)
 }
 
-/// The cpal streams, kept alive on the audio thread for their lifetime.
-struct Streams {
-    _out: Option<Stream>,
-    _inp: Option<Stream>,
-}
-
 fn audio_thread(shared: Arc<Shared>, cmd_rx: Receiver<EngineCmd>) {
     let host = cpal::default_host();
     let mut sel = DeviceSelection::default();
-    let mut streams = build_streams(&host, &shared, &sel);
+    let mut out = open_output(&host, &shared, &sel);
+    let mut inp = open_input(&host, &shared, &sel);
     while let Ok(cmd) = cmd_rx.recv() {
         match cmd {
             EngineCmd::SetDevices(new_sel) => {
+                // Release the old devices before opening the newly-selected ones.
+                drop(inp.take());
+                // Only a new output device interrupts playback; mic changes (e.g. scoring
+                // turning capture on) leave the output stream running.
+                if new_sel.output != sel.output || out.is_none() {
+                    drop(out.take());
+                    out = open_output(&host, &shared, &new_sel);
+                }
+                inp = open_input(&host, &shared, &new_sel);
                 sel = new_sel;
-                streams = rebuild(&host, &shared, &sel, streams);
             }
             EngineCmd::Shutdown => break,
         }
     }
-    drop(streams);
 }
 
-/// Release the old devices (drop `old`) before opening the newly-selected ones.
-fn rebuild(host: &Host, shared: &Arc<Shared>, sel: &DeviceSelection, old: Streams) -> Streams {
-    drop(old);
-    build_streams(host, shared, sel)
-}
-
-fn build_streams(host: &Host, shared: &Arc<Shared>, sel: &DeviceSelection) -> Streams {
-    // One ring per (re)build: input callback (producer) → output callback
-    // (consumer). ~1s of stereo headroom absorbs jitter between the streams.
-    let (prod, cons) = RingBuffer::<f32>::new(192_000 * CHANNELS as usize);
-
-    let out = pick_device(host, sel.output.as_deref(), false)
-        .and_then(|dev| build_output(&dev, shared, cons));
+fn open_output(host: &Host, shared: &Arc<Shared>, sel: &DeviceSelection) -> Option<Stream> {
+    let out = pick_device(host, sel.output.as_deref(), false).and_then(|dev| build_output(&dev, shared));
     if out.is_none() {
         log::warn!("[utai-audio] no usable output device");
     }
+    out
+}
 
-    // Mono mic-capture tap (input callback producer → pitch thread consumer),
-    // separate from the monitor ring above. ~2s of headroom at 48 kHz.
-    let (cap_prod, cap_cons) = RingBuffer::<f32>::new(96_000);
-
+/// Opens the input at the output rate, so after the output.
+fn open_input(host: &Host, shared: &Arc<Shared>, sel: &DeviceSelection) -> Option<Stream> {
+    *shared.monitor_cons.lock().unwrap() = None;
+    *shared.capture_cons.lock().unwrap() = None;
     let rate = shared.output_rate.load(Ordering::Relaxed);
-    let inp = if sel.capture && rate > 0 {
-        match pick_device(host, sel.input.as_deref(), true) {
-            Some(dev) => {
-                *shared.capture_cons.lock().unwrap() = Some(cap_cons);
-                build_input(&dev, shared, prod, cap_prod, rate)
-            }
-            None => {
-                log::warn!("[utai-audio] no usable input device");
-                *shared.capture_cons.lock().unwrap() = None;
-                None
-            }
-        }
-    } else {
-        drop(prod); // no capture (or no output rate): consumer stays empty → silence
-        *shared.capture_cons.lock().unwrap() = None;
-        None
-    };
-
-    Streams {
-        _out: out,
-        _inp: inp,
+    if !sel.capture || rate == 0 {
+        return None;
     }
+    let Some(dev) = pick_device(host, sel.input.as_deref(), true) else {
+        log::warn!("[utai-audio] no usable input device");
+        return None;
+    };
+    // Input callback → output callback; ~1s of stereo headroom absorbs jitter between the streams.
+    let (prod, cons) = RingBuffer::<f32>::new(192_000 * CHANNELS as usize);
+    // Mono pitch tap, input callback → pitch thread; ~2s of headroom at 48 kHz.
+    let (cap_prod, cap_cons) = RingBuffer::<f32>::new(96_000);
+    *shared.monitor_cons.lock().unwrap() = Some(cons);
+    *shared.capture_cons.lock().unwrap() = Some(cap_cons);
+    build_input(&dev, shared, prod, cap_prod, rate)
 }
 
 fn pick_device(host: &Host, name: Option<&str>, input: bool) -> Option<Device> {
@@ -441,7 +423,7 @@ fn pick_device(host: &Host, name: Option<&str>, input: bool) -> Option<Device> {
 
 /// Build the output stream at the device's own default rate + format + channels,
 /// setting the engine rate (and resampling the track) to match.
-fn build_output(dev: &Device, shared: &Arc<Shared>, cons: Consumer<f32>) -> Option<Stream> {
+fn build_output(dev: &Device, shared: &Arc<Shared>) -> Option<Stream> {
     let supported = dev
         .default_output_config()
         .map_err(|e| log::error!("[utai-audio] no output config: {e}"))
@@ -455,10 +437,10 @@ fn build_output(dev: &Device, shared: &Arc<Shared>, cons: Consumer<f32>) -> Opti
     retune(shared, supported.sample_rate().0);
 
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build_output_typed::<f32>(dev, &cfg, shared.clone(), cons, channels),
-        SampleFormat::I16 => build_output_typed::<i16>(dev, &cfg, shared.clone(), cons, channels),
-        SampleFormat::I32 => build_output_typed::<i32>(dev, &cfg, shared.clone(), cons, channels),
-        SampleFormat::U16 => build_output_typed::<u16>(dev, &cfg, shared.clone(), cons, channels),
+        SampleFormat::F32 => build_output_typed::<f32>(dev, &cfg, shared.clone(), channels),
+        SampleFormat::I16 => build_output_typed::<i16>(dev, &cfg, shared.clone(), channels),
+        SampleFormat::I32 => build_output_typed::<i32>(dev, &cfg, shared.clone(), channels),
+        SampleFormat::U16 => build_output_typed::<u16>(dev, &cfg, shared.clone(), channels),
         other => {
             log::error!("[utai-audio] unsupported output format {other:?}");
             None
@@ -475,7 +457,6 @@ fn build_output_typed<T>(
     dev: &Device,
     cfg: &StreamConfig,
     shared: Arc<Shared>,
-    mut cons: Consumer<f32>,
     out_ch: usize,
 ) -> Option<Stream>
 where
@@ -495,10 +476,15 @@ where
 
             let want = frames * 2;
             mic.clear();
-            while mic.len() < want {
-                match cons.pop() {
-                    Ok(s) => mic.push(s),
-                    Err(_) => break,
+            // try_lock: never block the RT callback; a block during an input swap goes without mic.
+            if let Ok(mut monitor) = shared.monitor_cons.try_lock() {
+                if let Some(cons) = monitor.as_mut() {
+                    while mic.len() < want {
+                        match cons.pop() {
+                            Ok(s) => mic.push(s),
+                            Err(_) => break,
+                        }
+                    }
                 }
             }
 

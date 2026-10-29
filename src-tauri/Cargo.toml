@@ -41,9 +41,8 @@ tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 # never pulls cpal/alsa; the `audio` module is additionally `#[cfg(desktop)]`.
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 utai-audio = { path = "crates/audio", features = ["device"] }
-# LAN session relay (`session_server`): phones join a desktop-hosted session.
-axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio", "ws"] }
-getrandom = "0.3"
+# LAN session gateway (`session_gateway`): phones join a desktop-hosted session.
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
 tokio = { version = "1", features = ["net"] }
 tauri-plugin-updater = "2"
 
@@ -55,5 +54,3 @@ wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 # a real webview. A dev-dep so the `test` feature never rides the shipped build
 # (resolver v2 keeps dev-dep features out of normal builds).
 tauri = { version = "2.11.3", features = ["test"] }
-tokio-tungstenite = "0.29"
-futures-util = "0.3"

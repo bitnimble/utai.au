@@ -329,6 +329,34 @@ test('karaoke counts a line in after a gap: a dot per beat of the bar above its 
   await expect(countIn).toHaveCount(0);
 });
 
+test('karaoke hides the lyrics once the song plays out, until the next seek', async ({ page }) => {
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(2),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await page.evaluate(() => {
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add(
+      [{ startSec: 1, text: 'only line', words: [{ startSec: 1, endSec: 1.5, text: 'only line' }] }],
+      { source: 'plaintext', sourceLabel: 'probe' },
+    );
+  });
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('karaoke-lyrics')).toBeVisible();
+  const ended = (): Promise<boolean> =>
+    page.evaluate(() => (window as unknown as { utai: { playbackEngine: { ended: boolean } } }).utai.playbackEngine.ended);
+  await expect.poll(ended, { timeout: 10_000 }).toBe(true);
+  const line = page.getByTestId('karaoke-line');
+  await expect(line).toHaveCount(0);
+
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(1.2));
+  await expect(line).toHaveText('only line');
+});
+
 test('karaoke view flags a song with no lyrics', async ({ page }) => {
   await page.goto(HOST_PATH);
   await page.getByTestId('view-menu').click();

@@ -41,7 +41,7 @@ export class AppSettingsStore {
    */
   alignerUrl: string = DEFAULT_ALIGNER_URL;
 
-  /** Origin phones open to join this device's session as a remote; empty = what the session server advertises. */
+  /** Origin phones open to join this device's session as a remote; empty = what the backend advertises. */
   remoteBaseUrl: string = '';
 
   /** Desktop app: the API base of the backend it runs itself. Not persisted. */
@@ -89,5 +89,4 @@ export class AppSettingsStore {
     const origin = this.alignerUrl.trim().replace(/\/+$/, '');
     if (origin.length === 0 && this.localApiBase != null) return this.localApiBase;
     return `${origin}/api`;
-  }
-}
+  }}

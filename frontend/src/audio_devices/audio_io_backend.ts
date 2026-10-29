@@ -1,10 +1,6 @@
 /**
- * The audio-I/O seam. Everything platform-specific, device enumeration, mic
- * capture, output routing, level metering, lives behind this interface so the
- * store, presenter, and components stay backend-neutral. Today only
- * {@link import('./web_audio_backend').WebAudioBackend} implements it; a native
- * low-latency backend (ASIO / WASAPI via the Tauri sidecar) can slot in later
- * without touching the store or the UI.
+ * Raw audio device I/O (enumeration, mic capture, output routing, level
+ * metering): Web Audio on web + Android, the Rust engine on desktop.
  */
 
 /** Selecting this for a channel means "no device": mic capture stops / output

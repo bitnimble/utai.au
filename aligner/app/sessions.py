@@ -16,8 +16,6 @@ Frames (JSON text):
 
 An unknown session closes the socket with 4404, a wrong host token with 4403. A
 session with no connected clients for an hour is dropped.
-
-`src-tauri/src/session_server.rs` serves the same protocol for the desktop app.
 """
 from __future__ import annotations
 
@@ -25,6 +23,7 @@ import asyncio
 import itertools
 import json
 import secrets
+import socket
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -43,6 +42,7 @@ MAX_FRAME_CHARS = 1_000_000
 CLOSE_NO_SESSION = 4404
 CLOSE_BAD_TOKEN = 4403
 CLOSE_REPLACED = 4000
+LAN_IP_PLACEHOLDER = "{lan_ip}"
 
 Role = Literal["host", "remote"]
 
@@ -141,7 +141,26 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 def _describe(session: Session) -> dict[str, Any]:
-    return {"id": session.id, "publicUrl": settings.public_url or None}
+    return {"id": session.id, "publicUrl": _public_url()}
+
+
+def _public_url() -> str | None:
+    url = settings.public_url
+    if LAN_IP_PLACEHOLDER in url:
+        # Per request, not at startup: the machine may since have joined or changed networks.
+        ip = _lan_ip()
+        url = url.replace(LAN_IP_PLACEHOLDER, ip) if ip is not None else ""
+    return url or None
+
+
+def _lan_ip() -> str | None:
+    # Connecting a UDP socket sends nothing; it only picks the outbound interface.
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(("8.8.8.8", 80))
+        except OSError:
+            return None
+        return s.getsockname()[0]
 
 
 @router.post("")

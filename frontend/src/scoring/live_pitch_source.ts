@@ -1,12 +1,7 @@
 /**
- * The live-pitch seam: where the singer's microphone pitch comes from, hidden
- * behind an interface so the store/presenter/UI stay platform-neutral (exactly
- * like {@link import('src/audio_devices/audio_io_backend').AudioIoBackend} does
- * for capture/monitor). Two impls slot in behind it:
- *   - web: SwiftF0 over onnxruntime-web on the mic PCM (AudioWorklet → WASM/WebGPU)
- *   - desktop: RMVPE in the Python sidecar, fed the native engine's mic frames
- * The presenter stamps each frame with the current song time, so a source only
- * reports pitch, not timing.
+ * The singer's live microphone pitch, model-agnostic: SwiftF0 in-browser or
+ * RMVPE in the desktop sidecar. The presenter stamps each frame with the current
+ * song time, so a source only reports pitch, not timing.
  */
 
 import { hzToMidi } from './scoring';
@@ -38,11 +33,10 @@ export function voicedFrameFromHz(hz: number, confidence: number): LivePitchFram
 export type LivePitchListener = (frame: LivePitchFrame) => void;
 
 export interface LivePitchSource {
-  /** Frames per second the source emits at (RMVPE 100, SwiftF0 62.5); the
-   *  presenter passes it to the scoring DSP for coverage + vibrato. */
+  /** Frames per second the source emits at; the scoring DSP needs it for coverage + vibrato. */
   readonly fps: number;
-  /** Begin emitting pitch frames for `inputId` (`''` = system default). Rejects
-   *  if capture / the model can't start. */
+  /** Begin emitting pitch frames for `inputId` (`''` = system default), capturing
+   *  it whether or not the monitor is on. Rejects if capture / the model can't start. */
   start(inputId: string): Promise<void>;
   /** Stop emitting and release capture. */
   stop(): void;

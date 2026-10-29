@@ -121,7 +121,8 @@ class Settings(BaseSettings):
     ]
 
     # Origin advertised in the join QR, e.g. `https://karaoke.lan:5175`;
-    # empty = the host's page origin.
+    # empty = the host's page origin. `{lan_ip}` is replaced per request with the
+    # machine's current LAN address (the desktop app's session gateway).
     public_url: str = ""
 
     # Which role this process is playing inside a multi-process deployment:

@@ -53,24 +53,16 @@ impl Transport {
             .store(frame.min(self.total_frames()), Ordering::Relaxed);
     }
 
-    /// Advance the playhead by up to `n` frames, but only while playing,
-    /// stopping (and pausing) at end-of-track. Returns the frame the block
-    /// should read *from* (the pre-advance position), so the caller mixes the
-    /// right slice.
+    /// Advance the playhead by `n` frames while playing, past the end of the
+    /// track too: ending the song is the frontend's call. Returns the frame the
+    /// block should read *from* (the pre-advance position), so the caller mixes
+    /// the right slice.
     pub fn advance_playing(&self, n: u64) -> u64 {
-        let start = self.frame.load(Ordering::Relaxed);
-        if !self.is_playing() {
-            return start;
-        }
-        let total = self.total_frames();
-        let next = start.saturating_add(n);
-        if next >= total {
-            self.frame.store(total, Ordering::Relaxed);
-            self.playing.store(false, Ordering::Relaxed);
+        if self.is_playing() {
+            self.frame.fetch_add(n, Ordering::Relaxed)
         } else {
-            self.frame.store(next, Ordering::Relaxed);
+            self.frame.load(Ordering::Relaxed)
         }
-        start
     }
 
     pub fn position_secs(&self, sample_rate: u32) -> f64 {
@@ -133,14 +125,14 @@ mod tests {
     }
 
     #[test]
-    fn advance_stops_at_end() {
+    fn advance_runs_past_end() {
         let t = Transport::new();
         t.set_total_frames(50);
         t.play();
         t.seek_frames(45);
         t.advance_playing(10);
-        assert_eq!(t.frame(), 50);
-        assert!(!t.is_playing());
+        assert_eq!(t.frame(), 55);
+        assert!(t.is_playing());
     }
 
     #[test]
