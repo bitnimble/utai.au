@@ -78,6 +78,9 @@ export class AppSettingsStore {
   /** Romaji under Japanese lyrics, below the text (furigana sits above). */
   showRomaji: boolean = false;
 
+  /** Play the vocal stem as a wide, reverberant backing vocal. */
+  vocalSurroundReverb: boolean = false;
+
   constructor() {
     makeAutoObservable(this);
   }

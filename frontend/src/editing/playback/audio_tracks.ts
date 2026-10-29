@@ -30,6 +30,7 @@ export class AudioTrack {
    *  `muted` forces silence without losing the volume setting. */
   volume = 1;
   muted = false;
+  surroundReverb = false;
 
   /** Vocal pitch contour, present on a `vocals` stem once the backend extracted
    *  it. Read imperatively at align time to map pitch onto words, never in a

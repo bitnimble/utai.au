@@ -3,7 +3,7 @@
 //! to call from the cpal output callback (and trivially unit-testable).
 //!
 //! The callback zeroes the block (`silence`), accumulates each track
-//! (`add_track`, per-track gain) and the mic (`add_mic`), then scales the sum
+//! (`add_track`, per-track gain) and the mic (`add_block`), then scales the sum
 //! by the master gain (`apply_master`). Splitting the mix into accumulate
 //! steps lets the caller loop over a variable track set without allocating a
 //! per-block collection.
@@ -33,18 +33,27 @@ pub fn add_track(out: &mut [f32], track: &[f32], start_frame: usize, gain: f32) 
     }
 }
 
-/// Add block-aligned mic frames (index 0..frames) into `out` at `gain`.
-pub fn add_mic(out: &mut [f32], mic: &[f32], gain: f32) {
+/// Copy one interleaved-stereo track's block starting at `start_frame` into
+/// `out`, silence past the track's end.
+pub fn read_track(out: &mut [f32], track: &[f32], start_frame: usize) {
+    silence(out);
+    let start = (start_frame * 2).min(track.len());
+    let n = out.len().min(track.len() - start);
+    out[..n].copy_from_slice(&track[start..start + n]);
+}
+
+/// Add block-aligned frames (the mic, an effected track) into `out` at `gain`.
+pub fn add_block(out: &mut [f32], block: &[f32], gain: f32) {
     if gain == 0.0 {
         return;
     }
     let frames = out.len() / 2;
     for i in 0..frames {
-        if i * 2 + 1 >= mic.len() {
+        if i * 2 + 1 >= block.len() {
             break;
         }
-        out[i * 2] += mic[i * 2] * gain;
-        out[i * 2 + 1] += mic[i * 2 + 1] * gain;
+        out[i * 2] += block[i * 2] * gain;
+        out[i * 2 + 1] += block[i * 2 + 1] * gain;
     }
 }
 
@@ -76,8 +85,18 @@ mod tests {
         for (t, g) in tracks {
             add_track(out, t, start, *g);
         }
-        add_mic(out, mic, mic_gain);
+        add_block(out, mic, mic_gain);
         apply_master(out, master);
+    }
+
+    #[test]
+    fn read_track_copies_from_start_frame_and_silences_past_the_end() {
+        let track = [0.1, 0.1, 0.2, 0.2, 0.3, 0.3];
+        let mut out = [9.0f32; 6];
+        read_track(&mut out, &track, 1);
+        assert_eq!(out, [0.2, 0.2, 0.3, 0.3, 0.0, 0.0]);
+        read_track(&mut out, &track, 5);
+        assert_eq!(out, [0.0; 6]);
     }
 
     #[test]

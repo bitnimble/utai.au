@@ -35,6 +35,7 @@ import {
   ActionMenuItem,
   DropdownButton,
   DropdownSection,
+  SubmenuItem,
   ToggleMenuItem,
 } from 'src/ui/dropdown/dropdown';
 import { Slider } from 'src/ui/slider/slider';
@@ -248,6 +249,11 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
     void audioDevicePresenter.init();
     return () => audioDevicePresenter.dispose();
   }, [audioDevicePresenter]);
+
+  React.useEffect(() => {
+    presenter.start();
+    return () => presenter.dispose();
+  }, [presenter]);
 
   React.useEffect(() => {
     skipSegmentsPresenter.start();
@@ -517,6 +523,7 @@ const Toolbar = observer(function Toolbar() {
         )}
       </DropdownButton>
       <ViewMenu />
+      <AudioMenu />
       <input
         ref={fileRef}
         type="file"
@@ -857,6 +864,33 @@ const ViewMenu = observer(function ViewMenu() {
         </>
       )}
     </DropdownButton>
+  );
+});
+
+const AudioMenu = observer(function AudioMenu() {
+  return (
+    <DropdownButton
+      label={<MenuLabel text="Audio" />}
+      className={styles.toolButton}
+      title="Audio effects"
+      testId="audio-menu"
+    >
+      {() => (
+        <SubmenuItem label="Vocal track effects">{() => <VocalEffectItems />}</SubmenuItem>
+      )}
+    </DropdownButton>
+  );
+});
+
+const VocalEffectItems = observer(function VocalEffectItems() {
+  return (
+    <ToggleMenuItem
+      label="Surround reverb"
+      active={appSettingsStore.vocalSurroundReverb}
+      onToggle={() => appSettingsPresenter.setVocalSurroundReverb(!appSettingsStore.vocalSurroundReverb)}
+      title="Widen and reverberate the vocal stem so it sits back like a backing vocal"
+      testId="vocal-surround-reverb"
+    />
   );
 });
 

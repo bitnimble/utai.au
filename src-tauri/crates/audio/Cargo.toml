@@ -19,6 +19,8 @@ rtrb = "0.3"
 # isomp4 are the patent-gated extras on top of the royalty-free defaults
 # (flac/ogg/vorbis/wav/pcm).
 symphonia = { version = "0.5", features = ["mp3", "aac", "isomp4"] }
+# FFT for the real-time partitioned convolution reverb.
+rustfft = "6.4"
 
 # The device layer (cpal I/O + arc-swap for the lock-free track hand-off + log)
 # is optional so the pure mixer/transport/decode/resample core builds and

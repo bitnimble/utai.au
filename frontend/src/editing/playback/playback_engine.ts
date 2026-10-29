@@ -20,6 +20,7 @@ export interface AudioOutput {
   addTrack(track: AudioTrack): Promise<void>;
   removeTrack(id: AudioTrackId): void;
   setTrackGain(id: AudioTrackId, gain: number): void;
+  setTrackSurroundReverb(id: AudioTrackId, on: boolean): void;
   start(fromSec: number): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
@@ -110,6 +111,13 @@ export class PlaybackEngine {
   setTrackPitchContour(id: AudioTrackId, contour: PitchContour): void {
     const track = this.audioTracks.get(id);
     if (track) track.pitchContour = contour;
+  }
+
+  setTrackSurroundReverb(id: AudioTrackId, on: boolean): void {
+    const track = this.audioTracks.get(id);
+    if (!track || track.surroundReverb === on) return;
+    track.surroundReverb = on;
+    this.output.setTrackSurroundReverb(id, on);
   }
 
   async play(): Promise<void> {

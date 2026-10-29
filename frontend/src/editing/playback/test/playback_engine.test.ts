@@ -50,6 +50,7 @@ class FakeOutput implements AudioOutput {
   async addTrack(): Promise<void> {}
   removeTrack(): void {}
   setTrackGain(): void {}
+  setTrackSurroundReverb(): void {}
   async start(fromSec: number): Promise<void> {
     this.startedFrom = fromSec;
     this.position = fromSec;

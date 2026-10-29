@@ -103,6 +103,10 @@ export class NativeAudioOutput implements AudioOutput {
     void this.transport.send('audio_set_track_gain', { id, gain });
   }
 
+  setTrackSurroundReverb(id: AudioTrackId, on: boolean): void {
+    void this.transport.send('audio_set_track_surround_reverb', { id, on });
+  }
+
   async start(fromSec: number): Promise<void> {
     this.playing = true;
     this.anchor = { playSec: fromSec, atMs: performance.now(), playing: false };

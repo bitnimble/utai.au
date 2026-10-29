@@ -1,5 +1,6 @@
-import { makeAutoObservable, runInAction } from 'mobx';
+import { comparer, makeAutoObservable, reaction, runInAction } from 'mobx';
 import { playbackEngine } from 'src/editing/playback/player';
+import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { AudioTrackId, AudioTrackRole } from 'src/editing/playback/audio_tracks';
 import type { PitchContour } from 'src/lyrics/pitch_contour';
 import {
@@ -18,14 +19,36 @@ import { SongMeta } from './song_schema';
  * the components call these instead of mutating stores directly.
  */
 export class KaraokePresenter {
+  private disposeVocalEffects: (() => void) | undefined;
+
   constructor(
     private readonly song: SongStore,
     private readonly viewport: ViewportStore,
   ) {
-    makeAutoObservable<this, 'song' | 'viewport'>(this, {
+    makeAutoObservable<this, 'song' | 'viewport' | 'disposeVocalEffects'>(this, {
       song: false,
       viewport: false,
+      disposeVocalEffects: false,
     });
+  }
+
+  start(): void {
+    this.disposeVocalEffects = reaction(
+      () => ({
+        on: appSettingsStore.vocalSurroundReverb,
+        ids: Array.from(playbackEngine.audioTracks.values())
+          .filter((t) => t.role === 'vocals')
+          .map((t) => t.id),
+      }),
+      ({ on, ids }) => {
+        for (const id of ids) playbackEngine.setTrackSurroundReverb(id, on);
+      },
+      { fireImmediately: true, equals: comparer.structural },
+    );
+  }
+
+  dispose(): void {
+    this.disposeVocalEffects?.();
   }
 
   // --- viewport ---

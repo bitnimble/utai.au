@@ -1,5 +1,6 @@
 import type { AudioTrack, AudioTrackId } from './audio_tracks';
 import type { AudioOutput } from './playback_engine';
+import { createSurroundReverb } from './surround_reverb';
 
 const SCHEDULE_LEAD_SECONDS = 0.05;
 /** Pad past `ctx.currentTime` so a scheduled `start()` never lands in the past. */
@@ -36,6 +37,10 @@ export class WebAudioOutput implements AudioOutput {
 
   setTrackGain(id: AudioTrackId, gain: number): void {
     this.controller?.setTrackGain(id, gain);
+  }
+
+  setTrackSurroundReverb(id: AudioTrackId, on: boolean): void {
+    this.controller?.setTrackSurroundReverb(id, on);
   }
 
   async start(fromSec: number): Promise<void> {
@@ -120,22 +125,25 @@ export class WebAudioOutput implements AudioOutput {
   }
 }
 
-/** Live playback slot for one track: a reusable gain node and the currently
- *  playing source (buffer sources are one-shot, so each start mints a fresh one). */
+/** Live playback slot for one track: reusable input + gain nodes, the effect
+ *  (built on first use) and the currently playing source (buffer sources are
+ *  one-shot, so each start mints a fresh one). */
 type ActiveAudioTrack = {
   id: AudioTrackId;
+  input: GainNode;
   gainNode: GainNode;
+  surroundReverb: AudioNode | undefined;
   buffer: AudioBuffer;
   source: AudioBufferSourceNode | undefined;
 };
 
 /** One `start()`'s track sources and gain nodes. Seek / pause stop the sources;
  *  a later `scheduleAll` starts fresh ones at the new offset. */
-class AudioTrackPlaybackController {
+export class AudioTrackPlaybackController {
   private active: Map<AudioTrackId, ActiveAudioTrack> = new Map();
 
   constructor(
-    private readonly ctx: AudioContext,
+    private readonly ctx: BaseAudioContext,
     private readonly destination: AudioNode,
   ) {}
 
@@ -147,6 +155,11 @@ class AudioTrackPlaybackController {
   setTrackGain(id: AudioTrackId, gain: number): void {
     const slot = this.active.get(id);
     if (slot) slot.gainNode.gain.value = gain;
+  }
+
+  setTrackSurroundReverb(id: AudioTrackId, on: boolean): void {
+    const slot = this.active.get(id);
+    if (slot) this.routeSlot(slot, on);
   }
 
   dropAudioTrack(id: AudioTrackId): void {
@@ -189,7 +202,7 @@ class AudioTrackPlaybackController {
     const when = Math.max(audioStartTime, this.ctx.currentTime + SCHEDULE_PAD_SEC);
     const source = this.ctx.createBufferSource();
     source.buffer = slot.buffer;
-    source.connect(slot.gainNode);
+    source.connect(slot.input);
     source.start(when, offset);
     slot.source = source;
   }
@@ -200,9 +213,27 @@ class AudioTrackPlaybackController {
     const gainNode = this.ctx.createGain();
     gainNode.gain.value = track.outputGain;
     gainNode.connect(this.destination);
-    const slot: ActiveAudioTrack = { id: track.id, gainNode, buffer: track.buffer, source: undefined };
+    const slot: ActiveAudioTrack = {
+      id: track.id,
+      input: this.ctx.createGain(),
+      gainNode,
+      surroundReverb: undefined,
+      buffer: track.buffer,
+      source: undefined,
+    };
+    this.routeSlot(slot, track.surroundReverb);
     this.active.set(track.id, slot);
     return slot;
+  }
+
+  private routeSlot(slot: ActiveAudioTrack, surroundReverb: boolean): void {
+    slot.input.disconnect();
+    if (!surroundReverb) {
+      slot.input.connect(slot.gainNode);
+      return;
+    }
+    slot.surroundReverb ??= createSurroundReverb(this.ctx, slot.gainNode);
+    slot.input.connect(slot.surroundReverb);
   }
 
   private stopSource(slot: ActiveAudioTrack): void {

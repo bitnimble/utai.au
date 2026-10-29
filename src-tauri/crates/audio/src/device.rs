@@ -10,6 +10,7 @@
 //! at the output rate in the mic's native format (works when in/out share a
 //! clock, e.g. an ASIO interface). WASAPI-exclusive + ASIO tuning are follow-ups.
 
+use crate::effect::SurroundReverb;
 use crate::transport::Transport;
 use crate::{decode::DecodedTrack, mixer, resample};
 use arc_swap::ArcSwap;
@@ -46,16 +47,21 @@ impl AtomicF32 {
 pub struct MixTrack {
     pub samples: Arc<Vec<f32>>,
     pub gain: f32,
+    /// Only the output callback locks it.
+    pub effect: Option<Arc<Mutex<SurroundReverb>>>,
 }
 
 /// One track as the control thread owns it: the decoded source (kept for
-/// re-resampling on an output-rate change), its resampled playback buffer, and
-/// its effective gain. Keyed by the frontend's track id.
+/// re-resampling on an output-rate change), its resampled playback buffer, its
+/// effective gain, and its effect (built for the output rate, so rebuilt with
+/// it). Keyed by the frontend's track id.
 struct SourceTrack {
     id: String,
     decoded: Arc<DecodedTrack>,
     resampled: Arc<Vec<f32>>,
     gain: f32,
+    surround_reverb: bool,
+    effect: Option<Arc<Mutex<SurroundReverb>>>,
 }
 
 /// State shared with the real-time callbacks. The callbacks touch only the
@@ -113,6 +119,7 @@ fn publish(shared: &Shared, sources: &[SourceTrack]) {
         .map(|s| MixTrack {
             samples: s.resampled.clone(),
             gain: s.gain,
+            effect: s.effect.clone(),
         })
         .collect();
     let total = sources
@@ -138,8 +145,13 @@ fn reresample_all(shared: &Shared) {
             s.decoded.sample_rate,
             rate,
         ));
+        s.effect = surround_reverb_effect(s.surround_reverb, rate);
     }
     publish(shared, &sources);
+}
+
+fn surround_reverb_effect(on: bool, rate: u32) -> Option<Arc<Mutex<SurroundReverb>>> {
+    (on && rate > 0).then(|| Arc::new(Mutex::new(SurroundReverb::new(rate))))
 }
 
 /// Switch to a new output rate, preserving the current playback *time* across
@@ -226,6 +238,8 @@ impl AudioEngine {
                 decoded,
                 resampled,
                 gain: 1.0,
+                surround_reverb: false,
+                effect: None,
             });
         }
         publish(&self.shared, &sources);
@@ -253,6 +267,19 @@ impl AudioEngine {
         }
     }
 
+    /// Turn one track's surround reverb on/off. No-op for an unknown id or an
+    /// unchanged state (so a running reverb tail isn't reset).
+    pub fn set_track_surround_reverb(&self, id: &str, on: bool) {
+        let mut sources = self.shared.sources.lock().unwrap();
+        // Under the lock: `retune` stores the new rate before rebuilding effects.
+        let rate = self.rate();
+        if let Some(s) = sources.iter_mut().find(|s| s.id == id && s.surround_reverb != on) {
+            s.surround_reverb = on;
+            s.effect = surround_reverb_effect(on, rate);
+            publish(&self.shared, &sources);
+        }
+    }
+
     fn rate(&self) -> u32 {
         self.shared.output_rate.load(Ordering::Relaxed)
     }
@@ -271,8 +298,15 @@ impl AudioEngine {
     pub fn pause(&self) {
         self.shared.transport.pause();
     }
+    /// Stop and rewind; effects restart empty, so the next play carries no old tail.
     pub fn stop(&self) {
         self.shared.transport.stop();
+        let rate = self.rate();
+        let mut sources = self.shared.sources.lock().unwrap();
+        for s in sources.iter_mut() {
+            s.effect = surround_reverb_effect(s.surround_reverb, rate);
+        }
+        publish(&self.shared, &sources);
     }
     pub fn seek_secs(&self, secs: f64) {
         self.shared.transport.seek_secs(secs, self.rate());
@@ -464,6 +498,7 @@ where
 {
     let mut mic = Vec::<f32>::new();
     let mut mix = Vec::<f32>::new();
+    let mut effected = Vec::<f32>::new();
     dev.build_output_stream(
         cfg,
         move |out: &mut [T], info: &cpal::OutputCallbackInfo| {
@@ -473,6 +508,7 @@ where
             }
             let frames = out.len() / out_ch;
             mix.resize(frames * 2, 0.0);
+            effected.resize(frames * 2, 0.0);
 
             let want = frames * 2;
             mic.clear();
@@ -496,10 +532,19 @@ where
             mixer::silence(&mut mix);
             if playing {
                 for t in tracks.iter() {
-                    mixer::add_track(&mut mix, t.samples.as_slice(), start, t.gain);
+                    // Processed even when muted so the tail decays instead of
+                    // freezing and replaying on unmute.
+                    match t.effect.as_ref().and_then(|fx| fx.try_lock().ok()) {
+                        Some(mut fx) => {
+                            mixer::read_track(&mut effected, t.samples.as_slice(), start);
+                            fx.process(&mut effected);
+                            mixer::add_block(&mut mix, &effected, t.gain);
+                        }
+                        None => mixer::add_track(&mut mix, t.samples.as_slice(), start, t.gain),
+                    }
                 }
             }
-            mixer::add_mic(&mut mix, &mic, shared.mic_gain.load());
+            mixer::add_block(&mut mix, &mic, shared.mic_gain.load());
             mixer::apply_master(&mut mix, shared.master_gain.load());
             write_interleaved(out, &mix, out_ch);
         },

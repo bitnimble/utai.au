@@ -6,6 +6,7 @@
 //! `device` feature) and the Tauri command wrappers land next.
 
 pub mod decode;
+pub mod effect;
 pub mod mixer;
 pub mod resample;
 pub mod transport;
