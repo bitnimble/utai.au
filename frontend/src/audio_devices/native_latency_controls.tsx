@@ -1,5 +1,5 @@
 import { observer } from 'mobx-react-lite';
-import { nativeAudioEngine } from 'src/editing/playback/player';
+import { nativeAudioOutput } from 'src/editing/playback/player';
 import styles from './audio_settings.module.css';
 
 /**
@@ -10,15 +10,14 @@ import styles from './audio_settings.module.css';
  * web/mobile (no native engine).
  */
 export const NativeLatencyControls = observer(function NativeLatencyControls() {
-  const engine = nativeAudioEngine;
-  if (engine == null) return null;
+  if (nativeAudioOutput == null) return null;
 
   return (
     <section className={styles.section} data-testid="native-latency">
       <span className={styles.sectionTitle}>Latency</span>
       <span className={styles.hint} data-testid="audio-latency-readout">
-        {engine.latencyMs > 0
-          ? `Measured round-trip: ~${engine.latencyMs.toFixed(1)} ms`
+        {nativeAudioOutput.latencyMs > 0
+          ? `Measured round-trip: ~${nativeAudioOutput.latencyMs.toFixed(1)} ms`
           : 'Measuring…'}
       </span>
       <span className={styles.hint}>

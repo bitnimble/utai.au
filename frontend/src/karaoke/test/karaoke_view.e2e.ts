@@ -316,7 +316,7 @@ test('karaoke counts a line in after a gap: a dot per beat of the bar above its 
   await expect(countIn).toHaveCount(0);
 });
 
-test('karaoke hides the lyrics once the song plays out, until the next play or seek', async ({ page }) => {
+test('karaoke hides the lyrics once the song plays out, until the next seek', async ({ page }) => {
   await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -333,6 +333,7 @@ test('karaoke hides the lyrics once the song plays out, until the next play or s
   await page.getByTestId('view-menu').click();
   await page.getByTestId('view-mode-karaoke').click();
   await page.keyboard.press('Escape');
+  await expect(page.getByTestId('karaoke-lyrics')).toBeVisible();
   const ended = (): Promise<boolean> =>
     page.evaluate(() => (window as unknown as { utai: { playbackEngine: { ended: boolean } } }).utai.playbackEngine.ended);
   await expect.poll(ended, { timeout: 10_000 }).toBe(true);

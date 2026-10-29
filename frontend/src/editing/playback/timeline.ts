@@ -4,9 +4,7 @@
  * Karaoke has no musical bar/tempo grid, so the timeline is ONE span
  * covering the whole song with the "1 beat == 1 second" collapse:
  * `audioSecToBeat(t)` (in `src/lyrics/store.ts`) returns `t`, and the
- * viewport's `pxPerBeat` is literally pixels-per-second. This shim keeps
- * the export names the copied consumers (`player`, `playhead`,
- * `playhead_label`, `lyric_layout`, `lyrics/store`) already import.
+ * viewport's `pxPerBeat` is literally pixels-per-second.
  */
 
 /** One bar's timing. The linear timeline has exactly one, spanning

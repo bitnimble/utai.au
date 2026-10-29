@@ -2,7 +2,7 @@ import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
 import { ChevronDown, Pause, Play, Settings, Square } from 'lucide-react';
 import React from 'react';
-import { nativeAudioEngine, playbackEngine } from 'src/editing/playback/player';
+import { nativeAudioOutput, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
 import { activeLineIndexAt, lineSpanSec } from 'src/lyrics/lrc';
 import { formatPlayheadTime } from 'src/editing/playback/playhead_label';
@@ -156,8 +156,8 @@ function buildSession(hostSession: HostSession | undefined): Session {
   const audioDevice = new AudioDeviceStore(isDesktopApp ? '' : NONE_DEVICE_ID);
   // Desktop routes the mic/device backend to the one native engine; web uses
   // the Web Audio backend.
-  const audioBackend = nativeAudioEngine
-    ? new NativeAudioBackend(nativeAudioEngine)
+  const audioBackend = nativeAudioOutput
+    ? new NativeAudioBackend(nativeAudioOutput)
     : new WebAudioBackend();
   const audioDevicePresenter = new AudioDevicePresenter(audioDevice, audioBackend);
   const scoring = new ScoringStore();
@@ -244,8 +244,8 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
 
   // Open the native engine's telemetry stream on desktop (no-op on web).
   React.useEffect(() => {
-    nativeAudioEngine?.init();
-    return () => nativeAudioEngine?.dispose();
+    nativeAudioOutput?.init();
+    return () => nativeAudioOutput?.dispose();
   }, []);
 
   // Boot the audio-device layer (enumerate, restore prefs, resume a saved

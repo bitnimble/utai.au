@@ -1,22 +1,21 @@
 import { autorun } from 'mobx';
-import type { NativeAudioEngine } from 'src/editing/playback/native_audio_engine';
+import type { NativeAudioOutput } from 'src/editing/playback/native_audio_output';
 import { NONE_DEVICE_ID, type AudioDevice, type AudioIoBackend, type MicPermission, type MonitorOptions } from './audio_io_backend';
 
 /**
  * Desktop {@link AudioIoBackend}: forwards device selection + gains to the one
- * Rust engine (via {@link NativeAudioEngine}), which already owns capture,
- * mixing, and output. The mic level arrives on the engine's telemetry, so the
- * monitor's `onLevel` is wired to the engine's `micLevel` observable.
+ * Rust engine (via {@link NativeAudioOutput}), which already owns capture,
+ * mixing, and output. The monitor's `onLevel` follows its `micLevel` observable.
  */
 export class NativeAudioBackend implements AudioIoBackend {
   readonly outputSelectable = true;
 
   private stopLevel: (() => void) | undefined;
 
-  constructor(private readonly engine: NativeAudioEngine) {}
+  constructor(private readonly native: NativeAudioOutput) {}
 
   async enumerate(): Promise<AudioDevice[]> {
-    return this.engine.listDevices();
+    return this.native.listDevices();
   }
 
   onDevicesChanged(): () => void {
@@ -35,27 +34,27 @@ export class NativeAudioBackend implements AudioIoBackend {
   }
 
   async startMonitor({ inputId, gain, onLevel }: MonitorOptions): Promise<void> {
-    this.engine.setInput(inputId);
-    this.engine.setMicGain(gain);
+    this.native.setInput(inputId);
+    this.native.setMicGain(gain);
     this.stopLevel?.();
-    this.stopLevel = autorun(() => onLevel(this.engine.micLevel));
+    this.stopLevel = autorun(() => onLevel(this.native.micLevel));
   }
 
   setMicGain(gain: number): void {
-    this.engine.setMicGain(gain);
+    this.native.setMicGain(gain);
   }
 
   stopMonitor(): void {
     this.stopLevel?.();
     this.stopLevel = undefined;
-    this.engine.setInput(NONE_DEVICE_ID);
+    this.native.setInput(NONE_DEVICE_ID);
   }
 
   setOutputVolume(volume: number): void {
-    this.engine.setOutputVolume(volume);
+    this.native.setOutputVolume(volume);
   }
 
   async setOutputSink(outputId: string): Promise<void> {
-    this.engine.setOutput(outputId);
+    this.native.setOutput(outputId);
   }
 }

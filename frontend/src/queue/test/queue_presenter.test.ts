@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { makeAutoObservable } from 'mobx';
-import type { PlayerState } from 'src/editing/playback/player';
+import type { PlayerState } from 'src/editing/playback/playback_engine';
 import type { PreparedSong } from 'src/karaoke/song_bundle';
 import type { TrackResult } from 'src/net/music_source_client';
 import type { SongIdentity } from 'src/song_identity/identify_song';
@@ -11,7 +11,7 @@ import { QueueStore } from '../queue_store';
 
 type Pending = { name: string; opts: PrepareOptions; resolve: () => void; reject: (err: Error) => void };
 
-/** Plays only when a song with audio is loaded, like the real engines. */
+/** Plays only when a song with audio is loaded, like the real engine. */
 class FakeTransport {
   state: PlayerState = 'idle';
   hasAudio = false;

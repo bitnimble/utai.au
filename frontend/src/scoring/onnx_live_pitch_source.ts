@@ -1,5 +1,5 @@
 import type * as Ort from 'onnxruntime-web';
-import { utaiPlayer } from 'src/editing/playback/player';
+import { webAudioOutput } from 'src/editing/playback/player';
 import { fetchRetrying, PUBLIC_API_RETRY } from 'src/net/fetch_retrying';
 import { frameFromHz, type LivePitchListener, type LivePitchSource } from './live_pitch_source';
 
@@ -58,7 +58,7 @@ export class OnnxLivePitchSource implements LivePitchSource {
         autoGainControl: false,
       },
     });
-    const ctx = utaiPlayer.getAudioContext();
+    const ctx = webAudioOutput.getAudioContext();
     if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
     const source = ctx.createMediaStreamSource(stream);
     const analyser = ctx.createAnalyser();

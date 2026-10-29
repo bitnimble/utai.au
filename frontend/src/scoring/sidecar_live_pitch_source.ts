@@ -1,4 +1,4 @@
-import type { NativeAudioEngine } from 'src/editing/playback/native_audio_engine';
+import type { NativeAudioOutput } from 'src/editing/playback/native_audio_output';
 import { voicedFrameFromHz, type LivePitchListener, type LivePitchSource } from './live_pitch_source';
 
 /**
@@ -14,20 +14,20 @@ export class SidecarLivePitchSource implements LivePitchSource {
   private readonly listeners = new Set<LivePitchListener>();
   private unsub: (() => void) | undefined;
 
-  constructor(private readonly engine: NativeAudioEngine) {}
+  constructor(private readonly native: NativeAudioOutput) {}
 
   async start(): Promise<void> {
     // The engine is already capturing the selected input for the monitor; the
     // pitch stream taps that same capture, so there's no device id to pass.
-    this.unsub = this.engine.onPitch((f) => {
+    this.unsub = this.native.onPitch((f) => {
       const frame = voicedFrameFromHz(f.hz, f.confidence);
       for (const l of this.listeners) l(frame);
     });
-    this.engine.startPitchStream();
+    this.native.startPitchStream();
   }
 
   stop(): void {
-    this.engine.stopPitchStream();
+    this.native.stopPitchStream();
     this.unsub?.();
     this.unsub = undefined;
   }
