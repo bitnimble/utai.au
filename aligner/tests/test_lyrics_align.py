@@ -13,17 +13,20 @@ from __future__ import annotations
 
 import pytest
 
+from app.pipeline.jp_romaji import JpToken, Reading
 from app.pipeline.lyrics_align import (
     InputLine,
     LyricLine,
     LyricWord,
     _detect_language_from_text,
+    _hear_readings,
     _iso1_to_iso3,
     _partition_words_by_line,
     _preprocess_lines,
     _resolve_cjk_lang,
     _resolve_cyrillic_lang,
     _stitch_lines,
+    _with_readings,
     lines_to_json,
 )
 
@@ -490,6 +493,103 @@ def test_stitch_lines_without_surfaces_uses_aligned_text():
     assert all(w.romaji is None for w in words)
 
 
+# --------------------------------------------------------------------
+# Picking the reading actually sung
+# --------------------------------------------------------------------
+
+
+class _LetterTokenizer:
+    """The CTC vocab subset `get_alignments_np` reads: blank + letters."""
+
+    pad_token_id = 0
+
+    def get_vocab(self) -> dict[str, int]:
+        return {"<blank>": 0, **{c: i + 1 for i, c in enumerate("aeikmnos")}}
+
+
+def _emissions(sung: str):
+    """Log-probs for audio that sings `sung` ("-" = blank), two frames per
+    symbol, plus the zero `<star>` column `generate_emissions_np` appends."""
+    import numpy as np
+
+    vocab = _LetterTokenizer().get_vocab()
+    frames = [c for c in sung for _ in range(2)]
+    em = np.full((len(frames), len(vocab) + 1), np.log(0.02), dtype=np.float32)
+    for f, c in enumerate(frames):
+        em[f, vocab["<blank>" if c == "-" else c]] = np.log(0.9)
+    em[:, -1] = 0.0
+    return em, len(frames) * 0.02
+
+
+def _spaced_preprocess(romaji: str, romanize: bool, language: str):
+    return (["<star>", " ".join(romaji), "<star>"], ["<star>", romaji, "<star>"])
+
+
+def _nama() -> JpToken:
+    return JpToken(
+        surface="生",
+        romaji="nama",
+        is_japanese=True,
+        readings=[Reading(kana="なま", romaji="nama"), Reading(kana="せい", romaji="sei")],
+    )
+
+
+def _hear(sung: str, **kwargs) -> dict[int, int]:
+    from app.pipeline.lyrics_onnx import get_alignments_np
+
+    emissions, seconds = _emissions(sung)
+    return _hear_readings(
+        [
+            {"text": "ka", "start": 0.0, "end": 0.12},
+            {"text": "nama", "start": 0.08, "end": 0.28},
+            {"text": "no", "start": 0.24, "end": seconds},
+        ],
+        [None, _nama(), None],
+        emissions=emissions,
+        audio_seconds=seconds,
+        all_tokens=["<star>", "k a", "<star>", "n a m a", "<star>", "n o", "<star>"],
+        all_text=["<star>", "ka", "<star>", "nama", "<star>", "no", "<star>"],
+        tokenizer=_LetterTokenizer(),
+        get_alignments=get_alignments_np,
+        preprocess_text=_spaced_preprocess,
+        **kwargs,
+    )
+
+
+def test_hear_readings_picks_the_reading_sung():
+    assert _hear("ka-sei-no") == {1: 1}
+
+
+def test_hear_readings_keeps_the_in_context_reading_when_sung():
+    assert _hear("ka-nama-no") == {1: 0}
+
+
+def test_hear_readings_keeps_the_in_context_reading_within_the_margin():
+    assert _hear("ka-sei-no", margin=1e6) == {1: 0}
+
+
+def test_hear_readings_keeps_the_in_context_reading_where_nothing_is_sung():
+    assert _hear("ka-----no") == {1: 0}
+
+
+def test_with_readings_swaps_in_the_heard_word():
+    tokens, text = _with_readings(
+        ["<star>", "k a", "<star>", "n a m a", "<star>"],
+        ["<star>", "ka", "<star>", "nama", "<star>"],
+        [None, _nama()],
+        {1: 1},
+        _spaced_preprocess,
+    )
+    assert tokens == ["<star>", "k a", "<star>", "s e i", "<star>"]
+    assert text == ["<star>", "ka", "<star>", "sei", "<star>"]
+
+
+def test_stitch_lines_carries_the_heard_reading_to_the_wire():
+    partitioned = [[{"text": "sei", "start": 0.0, "end": 0.5, "score": -0.2}]]
+    out = _stitch_lines(_lines("生"), [0], partitioned, [["生"]], [["せい"]])
+    assert lines_to_json(out)[0]["words"][0]["reading"] == "せい"
+
+
 class _RecordingPreprocess:
     """Stand-in for ctc_forced_aligner.preprocess_text. Returns one
     alignment word per call (wrapped in <star> on each side, mirroring
@@ -511,7 +611,7 @@ def test_preprocess_lines_mixed_threads_surfaces_and_counts():
     one display surface, in order. Japanese tokens carry their original
     surface; English tokens carry None (fall back to aligned text)."""
     pp = _RecordingPreprocess()
-    all_tokens, all_text, surfaces, counts, non_empty = _preprocess_lines(
+    all_tokens, all_text, jp_words, counts, non_empty = _preprocess_lines(
         _lines("君と dance"),
         use_jp_romaji=True,
         treat_kanji_as_japanese=True,
@@ -520,7 +620,7 @@ def test_preprocess_lines_mixed_threads_surfaces_and_counts():
     )
     assert counts == [3]
     assert non_empty == [0]
-    assert surfaces == ["君", "と", None]
+    assert [w.surface if w else None for w in jp_words] == ["君", "と", None]
 
 
 def test_preprocess_lines_feeds_romaji_as_english_not_charlevel():
@@ -548,7 +648,7 @@ def test_preprocess_lines_falls_back_when_tokenize_raises(monkeypatch):
 
     monkeypatch.setattr(jp, "tokenize", _boom)
     pp = _RecordingPreprocess()
-    _, _, surfaces, counts, _ = _preprocess_lines(
+    _, _, jp_words, counts, _ = _preprocess_lines(
         _lines("君と"),
         use_jp_romaji=True,
         treat_kanji_as_japanese=True,
@@ -556,7 +656,7 @@ def test_preprocess_lines_falls_back_when_tokenize_raises(monkeypatch):
         preprocess_text=pp,
     )
     assert pp.calls == [("君と", "jpn")]  # whole line, original text, iso3
-    assert all(s is None for s in surfaces)
+    assert all(w is None for w in jp_words)
     assert counts == [1]
 
 
@@ -564,7 +664,7 @@ def test_preprocess_lines_chinese_path_keeps_charlevel_and_no_surfaces():
     """Chinese is left on the existing char-level path: the whole line is
     one preprocess unit at language=iso3, and no surface overrides."""
     pp = _RecordingPreprocess()
-    _, _, surfaces, _, _ = _preprocess_lines(
+    _, _, jp_words, _, _ = _preprocess_lines(
         _lines("这是"),
         use_jp_romaji=False,
         treat_kanji_as_japanese=False,
@@ -572,4 +672,4 @@ def test_preprocess_lines_chinese_path_keeps_charlevel_and_no_surfaces():
         preprocess_text=pp,
     )
     assert pp.calls == [("这是", "chi")]
-    assert all(s is None for s in surfaces)
+    assert all(w is None for w in jp_words)

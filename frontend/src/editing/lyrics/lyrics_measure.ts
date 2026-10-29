@@ -336,9 +336,9 @@ export function lyricMeasureInputs(
 ): LyricLineMeasureInput[] {
   return positioned.map((p) => {
     const wp = p.wordPositions ?? [];
-    const texts = wp.map((w) => w.text);
-    const lineSegs = furiganaAnnotator.segmentsForWords(texts);
-    const romaji = opts.romaji ? furiganaAnnotator.romajiForWords(texts) : [];
+    const words = wp.map((w) => w.source);
+    const lineSegs = furiganaAnnotator.segmentsForWords(words);
+    const romaji = opts.romaji ? furiganaAnnotator.romajiForWords(words) : [];
     return {
       lineIdx: p.i,
       lineStartBeat: p.startBeat,

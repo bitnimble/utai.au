@@ -337,9 +337,8 @@ const LineGlyphs = observer(function LineGlyphs({
   countIn?: CountIn;
 }) {
   const segments = React.useMemo(() => lineSegments(line), [line]);
-  const texts = segments.map((s) => s.text);
-  const ruby = furiganaAnnotator.segmentsForWords(texts);
-  const romaji = appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords(texts) : [];
+  const ruby = furiganaAnnotator.segmentsForWords(segments);
+  const romaji = appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords(segments) : [];
   return segments.map((s, i) => {
     const countInHere = i === 0 ? countIn : undefined;
     return (
@@ -397,7 +396,7 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
     () =>
       positioned?.wordPositions != null &&
       furiganaAnnotator
-        .segmentsForWords(positioned.wordPositions.map((w) => w.text))
+        .segmentsForWords(positioned.wordPositions.map((w) => w.source))
         .some((segs) => segs.some((s) => s.reading != null)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [positioned, furiganaRevision],

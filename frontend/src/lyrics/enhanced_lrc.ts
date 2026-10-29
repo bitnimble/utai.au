@@ -19,16 +19,18 @@
  * (`LyricsTrack.offsetSec`). Unlike the standard tag we do NOT bake it
  * into the timestamps; it restores the row's nudge verbatim.
  *
- * Word text is backslash-escaped (`\` `<` `>`) since the model permits
- * those literally (e.g. a `<3`) and they would otherwise collide with
- * the tag delimiters. Plain-line text is written verbatim, mirroring the
- * line-level {@link parseLrc} contract.
+ * A word's heard `reading` rides along in Aozora Bunko ruby notation,
+ * `｜生《せい》`, which Japanese text tools already understand.
  *
- * Only the essential fields (text, startSec, endSec) are encoded; the
- * aligner's debug provenance (`rawStartSec` / `rawEndSec` / `endFallback`)
- * and the Japanese `romaji` surface are intentionally dropped, they
- * don't affect rendering or playback, and furigana is recomputed
- * client-side on load.
+ * Word text is backslash-escaped (`\` `<` `>` `｜` `《` `》`) since the
+ * model permits those literally (e.g. a `<3`) and they would otherwise
+ * collide with the tag and ruby delimiters. Plain-line text is written
+ * verbatim, mirroring the line-level {@link parseLrc} contract.
+ *
+ * Only the essential fields (text, startSec, endSec, reading) are encoded;
+ * the aligner's debug provenance (`rawStartSec` / `rawEndSec` /
+ * `endFallback`) and the Japanese `romaji` surface are intentionally
+ * dropped, they don't affect rendering or playback.
  */
 import { LyricLine, LyricWord, stripLyricNoise } from './lrc';
 
@@ -74,7 +76,12 @@ function stampPartsToSeconds(
 }
 
 function escapeWordText(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/</g, '\\<').replace(/>/g, '\\>');
+  return s.replace(/[\\<>｜《》]/g, '\\$&');
+}
+
+function encodeWord(w: LyricWord): string {
+  const text = escapeWordText(w.text);
+  return w.reading != null ? `｜${text}《${w.reading}》` : text;
 }
 
 /**
@@ -96,8 +103,7 @@ export function serializeEnhancedLrc(
     const stamp = secondsToStamp(line.startSec);
     if (line.words && line.words.length > 0) {
       const parts = line.words.map(
-        (w) =>
-          `<${secondsToStamp(w.startSec)}>${escapeWordText(w.text)}<${secondsToStamp(w.endSec)}>`,
+        (w) => `<${secondsToStamp(w.startSec)}>${encodeWord(w)}<${secondsToStamp(w.endSec)}>`,
       );
       out.push(`[${stamp}]${parts.join(' ')}`);
     } else {
@@ -107,16 +113,21 @@ export function serializeEnhancedLrc(
   return out.join('\n') + '\n';
 }
 
-type WordToken = { type: 'tag'; sec: number } | { type: 'text'; value: string };
+type WordToken = { type: 'tag'; sec: number } | { type: 'text'; value: string; reading?: string };
 
 /** Inline tag matched at the very start of the remaining string. */
 const WORD_TAG_RE = /^<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?>/;
 
+/** A text run that opens with `｜base《reading》`, closed before the next tag. */
+const RUBY_RE = /^｜((?:\\.|[^\\<《》])+)《([^\\<《》]+)》/;
+
 /** Split a word-aligned line's remainder (everything after the line
  *  stamp) into an alternating-ish stream of time tags and text runs.
- *  Text runs honour backslash escapes and stop at the next unescaped
- *  `<`; a stray unescaped `<` that isn't a valid tag is consumed as a
- *  literal character so the scan always makes progress. */
+ *  Text runs honour backslash escapes, lift a reading out of a leading
+ *  `｜base《reading》` (anywhere else those brackets are literal text), and
+ *  stop at the next unescaped `<`; a stray unescaped `<` that isn't a valid
+ *  tag is consumed as a literal character so the scan always makes
+ *  progress. */
 function tokenizeWordLine(s: string): WordToken[] {
   const tokens: WordToken[] = [];
   let i = 0;
@@ -134,6 +145,13 @@ function tokenizeWordLine(s: string): WordToken[] {
       }
     }
     let val = '';
+    let reading: string | undefined;
+    const ruby = RUBY_RE.exec(s.slice(i));
+    if (ruby) {
+      val = ruby[1].replace(/\\(.)/g, '$1');
+      reading = ruby[2];
+      i += ruby[0].length;
+    }
     while (i < n) {
       const c = s[i];
       if (c === '\\' && i + 1 < n) {
@@ -150,7 +168,7 @@ function tokenizeWordLine(s: string): WordToken[] {
       val = '<';
       i++;
     }
-    if (val !== '') tokens.push({ type: 'text', value: val });
+    if (val !== '') tokens.push({ type: 'text', value: val, reading });
   }
   return tokens;
 }
@@ -164,7 +182,7 @@ function tokenizeWordLine(s: string): WordToken[] {
  *  back to the next word's start, else `start + EPSILON_SEC`. */
 function parseWordSegments(remainder: string): LyricWord[] {
   const tokens = tokenizeWordLine(remainder);
-  const partial: { startSec: number; endSec?: number; text: string }[] = [];
+  const partial: { startSec: number; endSec?: number; text: string; reading?: string }[] = [];
   let j = 0;
   while (j < tokens.length) {
     const t = tokens[j];
@@ -175,9 +193,11 @@ function parseWordSegments(remainder: string): LyricWord[] {
     const startSec = t.sec;
     j++;
     let text = '';
+    let reading: string | undefined;
     const textTok = tokens[j];
     if (textTok && textTok.type === 'text') {
       text = textTok.value;
+      reading = textTok.reading;
       j++;
     }
     let endSec: number | undefined;
@@ -191,7 +211,7 @@ function parseWordSegments(remainder: string): LyricWord[] {
     }
     text = text.trim();
     if (text === '') continue;
-    partial.push({ startSec, endSec, text });
+    partial.push({ startSec, endSec, text, reading });
   }
 
   const words: LyricWord[] = [];
@@ -205,7 +225,7 @@ function parseWordSegments(remainder: string): LyricWord[] {
           ? nextStart
           : w.startSec + EPSILON_SEC;
     }
-    words.push({ startSec: w.startSec, endSec: end, text: w.text });
+    words.push({ startSec: w.startSec, endSec: end, text: w.text, ...(w.reading != null && { reading: w.reading }) });
   }
   return words;
 }

@@ -39,14 +39,19 @@ genuinely letter-free text falls back to a plain `en` default.
 
 from __future__ import annotations
 
+import dataclasses
+import functools
 import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.config import settings
 from app.lazy import Lazy
+
+if TYPE_CHECKING:
+    from app.pipeline.jp_romaji import JpToken
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +103,9 @@ class LyricWord:
     # UI debug tooltip show "displayed 君 / aligned kimi". None for
     # English / Chinese words, where `text` already is the aligned form.
     romaji: str | None = None
+    # Hiragana reading heard in the vocal, for a Japanese word the dictionary
+    # reads several ways (生: せい / なま). None when it has only one.
+    reading: str | None = None
 
 
 @dataclass
@@ -127,6 +135,12 @@ class InputLine:
 # convert frame counts to seconds in the audio-stats log without having
 # to read the original audio's sample rate.
 _AUDIO_SAMPLE_RATE = 16000
+
+_READING_MARGIN = 4.0
+# Per letter of a reading: CTC drops a weakly sung syllable for the price of a
+# few blank frames, so without it よ outscores the よる actually sung.
+_READING_LETTER_BONUS = 3.0
+_READING_MAX_LETTER_COST = 4.0
 
 # Simplified-Chinese-only characters whose Japanese equivalent uses a
 # visibly different glyph (e.g. simplified 爱 vs Japanese / traditional
@@ -317,12 +331,12 @@ class LyricsAligner:
             # Per-line preprocess pins the exact per-line word count the
             # aligner will emit (text_normalize strips punctuation, the
             # jp path expands a span into morphemes, etc.), so the
-            # downstream partition is always exact. `display_surfaces`
-            # rides along, length-locked to the emitted words.
+            # downstream partition is always exact. `jp_words` rides
+            # along, length-locked to the emitted words.
             (
                 all_tokens,
                 all_text,
-                display_surfaces,
+                jp_words,
                 line_word_counts,
                 non_empty_indices,
             ) = _preprocess_lines(
@@ -375,31 +389,39 @@ class LyricsAligner:
                         f"model={model_path or 'MMS-300m'} - likely numerical "
                         f"instability (load this head in fp32)"
                     )
-                segments, scores, blank_token = alignments_fn(
-                    emissions, all_tokens, tokenizer,
-                )
-                try:
-                    spans = get_spans(all_tokens, segments, blank_token)
-                except AssertionError as inner:
-                    _diagnose_get_spans_failure(
-                        all_tokens, segments, blank_token, inner,
-                    )
-                    raise
-                word_timestamps = postprocess_results(
-                    all_text, spans, stride, scores,
-                )
-                word_timestamps = _repair_low_score_words(
-                    word_timestamps,
+                align = functools.partial(
+                    _align_words,
                     emissions=emissions,
                     audio_seconds=audio_seconds,
-                    all_tokens=all_tokens,
-                    all_text=all_text,
                     tokenizer=tokenizer,
                     stride=stride,
                     get_alignments=alignments_fn,
                     get_spans=get_spans,
                     postprocess_results=postprocess_results,
                 )
+                word_timestamps = align(all_tokens, all_text)
+                try:
+                    heard = _hear_readings(
+                        word_timestamps,
+                        jp_words,
+                        emissions=emissions,
+                        audio_seconds=audio_seconds,
+                        all_tokens=all_tokens,
+                        all_text=all_text,
+                        tokenizer=tokenizer,
+                        get_alignments=alignments_fn,
+                        preprocess_text=preprocess_text,
+                    )
+                    if any(heard.values()):
+                        sung = align(
+                            *_with_readings(all_tokens, all_text, jp_words, heard, preprocess_text)
+                        )
+                        if len(sung) != len(word_timestamps):
+                            raise ValueError(f"{len(sung)} words, expected {len(word_timestamps)}")
+                        word_timestamps = sung
+                except Exception as exc:
+                    log.warning("lyrics: reading pass failed, keeping in-context readings: %s", exc)
+                    heard = {}
             except Exception as exc:
                 log.warning(
                     "lyrics: CTC forced alignment failed (language=%s), "
@@ -430,18 +452,29 @@ class LyricsAligner:
                     for line in input_lines
                 ]
 
-            # Partition `display_surfaces` with the same per-line counts.
-            # Guaranteed length-locked to `word_timestamps` once the
-            # partition above succeeded (both equal sum(line_word_counts)),
-            # so words map to surfaces 1:1.
+            # Partition the per-word surfaces + heard readings with the same
+            # per-line counts. Guaranteed length-locked to `word_timestamps`
+            # once the partition above succeeded (all equal
+            # sum(line_word_counts)), so words map to them 1:1.
+            surfaces = [tok.surface if tok else None for tok in jp_words]
+            readings = [
+                tok.readings[heard[i]].kana if tok and i in heard else None
+                for i, tok in enumerate(jp_words)
+            ]
             partitioned_surfaces: list[list[str | None]] = []
+            partitioned_readings: list[list[str | None]] = []
             cursor = 0
             for count in line_word_counts:
-                partitioned_surfaces.append(display_surfaces[cursor : cursor + count])
+                partitioned_surfaces.append(surfaces[cursor : cursor + count])
+                partitioned_readings.append(readings[cursor : cursor + count])
                 cursor += count
 
             return _stitch_lines(
-                input_lines, non_empty_indices, partitioned, partitioned_surfaces,
+                input_lines,
+                non_empty_indices,
+                partitioned,
+                partitioned_surfaces,
+                partitioned_readings,
             )
 
 def _resolve_cjk_lang(text: str) -> str:
@@ -622,6 +655,144 @@ def _detect_language_from_text(input_lines: list[InputLine]) -> str | None:
 # Helpers for the ctc-forced-aligner pipeline. Kept module-private so
 # tests can drive each transformation in isolation.
 # --------------------------------------------------------------------
+
+
+def _align_words(
+    all_tokens: list[str],
+    all_text: list[str],
+    *,
+    emissions: Any,
+    audio_seconds: float,
+    tokenizer: Any,
+    stride: float,
+    get_alignments: Any,
+    get_spans: Any,
+    postprocess_results: Any,
+) -> list[dict[str, Any]]:
+    """Global forced alignment of the token sequence, then the local repair
+    pass over its low-scoring words."""
+    segments, scores, blank_token = get_alignments(emissions, all_tokens, tokenizer)
+    try:
+        spans = get_spans(all_tokens, segments, blank_token)
+    except AssertionError as inner:
+        _diagnose_get_spans_failure(all_tokens, segments, blank_token, inner)
+        raise
+    word_timestamps = postprocess_results(all_text, spans, stride, scores)
+    return _repair_low_score_words(
+        word_timestamps,
+        emissions=emissions,
+        audio_seconds=audio_seconds,
+        all_tokens=all_tokens,
+        all_text=all_text,
+        tokenizer=tokenizer,
+        stride=stride,
+        get_alignments=get_alignments,
+        get_spans=get_spans,
+        postprocess_results=postprocess_results,
+    )
+
+
+def _hear_readings(
+    word_timestamps: list[dict[str, Any]],
+    jp_words: list[JpToken | None],
+    *,
+    emissions: Any,
+    audio_seconds: float,
+    all_tokens: list[str],
+    all_text: list[str],
+    tokenizer: Any,
+    get_alignments: Any,
+    preprocess_text: Any,
+    margin: float = _READING_MARGIN,
+) -> dict[int, int]:
+    """For each word with several candidate readings, the index into its
+    `readings` of the one the vocal sounds most like.
+
+    Each reading is force-aligned over the audio from the previous word's
+    start to the next word's end, between those two words, and scored by its
+    path log-probability; every reading explains the same frames, so the
+    scores compare directly. The in-context reading (index 0) keeps the word
+    unless another beats it by `margin` and is itself clearly sung: fitting
+    its letters in costs at most `_READING_MAX_LETTER_COST` each over the window
+    aligned without the word (a window the lyric was misaligned onto hears
+    nothing, where the shortest reading always wins)."""
+    word_token_idx = [i for i, t in enumerate(all_text) if t != "<star>"]
+    n_words = len(word_timestamps)
+    if len(word_token_idx) != n_words or len(jp_words) != n_words:
+        return {}
+    total_frames = int(emissions.shape[0])
+    frames_per_sec = total_frames / max(audio_seconds, 1e-9)
+
+    heard: dict[int, int] = {}
+    for i, tok in enumerate(jp_words):
+        if tok is None or not tok.readings:
+            continue
+        lo, hi = max(0, i - 1), min(n_words - 1, i + 1)
+        f_lo = max(0, int(float(word_timestamps[lo]["start"]) * frames_per_sec))
+        f_hi = min(total_frames, int(float(word_timestamps[hi]["end"]) * frames_per_sec) + 1)
+        before = [all_tokens[word_token_idx[j]] for j in range(lo, i)]
+        after = [all_tokens[word_token_idx[j]] for j in range(i + 1, hi + 1)]
+        window = emissions[f_lo:f_hi]
+        without = _path_score(window, [*before, *after], tokenizer, get_alignments)
+        fits: list[tuple[float, int]] = []
+        for reading in tok.readings:
+            word = _aligner_word(reading.romaji, preprocess_text)
+            fits.append(
+                (_path_score(window, [*before, word[0], *after], tokenizer, get_alignments), len(word[0].split()))
+                if word
+                else (float("-inf"), 1)
+            )
+        scores = [score + _READING_LETTER_BONUS * letters for score, letters in fits]
+        best = max(range(len(scores)), key=scores.__getitem__)
+        best_score, best_letters = fits[best]
+        if scores[best] - scores[0] < margin or (without - best_score) / best_letters > _READING_MAX_LETTER_COST:
+            best = 0
+        heard[i] = best
+        log.info(
+            "lyrics: reading %r -> %s (without=%.1f; %s)",
+            tok.surface,
+            tok.readings[best].kana,
+            without,
+            ", ".join(f"{r.romaji}={s:.1f}" for r, (s, _) in zip(tok.readings, fits, strict=True)),
+        )
+    return heard
+
+
+def _path_score(emissions: Any, tokens: list[str], tokenizer: Any, get_alignments: Any) -> float:
+    """Log-probability of the best alignment path of `tokens` (no `<star>`
+    between them: its emission column is a free log-prob 0, which would let
+    a short reading hand the rest of the window to it at no cost)."""
+    try:
+        _, scores, _ = get_alignments(emissions, tokens, tokenizer)
+    except Exception:
+        return float("-inf")
+    return float(scores.sum())
+
+
+def _aligner_word(romaji: str, preprocess_text: Any) -> tuple[str, str] | None:
+    """`(token, text)` the aligner sees for one romaji word."""
+    tokens, text = preprocess_text(romaji, romanize=True, language="eng")
+    words = [(tok, t) for tok, t in zip(tokens, text, strict=True) if t != "<star>"]
+    return words[0] if len(words) == 1 else None
+
+
+def _with_readings(
+    all_tokens: list[str],
+    all_text: list[str],
+    jp_words: list[JpToken | None],
+    heard: dict[int, int],
+    preprocess_text: Any,
+) -> tuple[list[str], list[str]]:
+    """The token sequence with each word's heard reading in place of the
+    in-context one."""
+    tokens, text = list(all_tokens), list(all_text)
+    word_token_idx = [i for i, t in enumerate(all_text) if t != "<star>"]
+    for i, k in heard.items():
+        tok = jp_words[i]
+        word = _aligner_word(tok.readings[k].romaji, preprocess_text) if tok and k else None
+        if word:
+            tokens[word_token_idx[i]], text[word_token_idx[i]] = word
+    return tokens, text
 
 
 def _repair_low_score_words(
@@ -993,18 +1164,19 @@ def _preprocess_lines(
     treat_kanji_as_japanese: bool,
     iso3: str,
     preprocess_text: Any,
-) -> tuple[list[str], list[str], list[str | None], list[int], list[int]]:
+) -> tuple[list[str], list[str], list[JpToken | None], list[int], list[int]]:
     """Build the flat aligner inputs from caller lyric lines.
 
-    Returns `(all_tokens, all_text, display_surfaces, line_word_counts,
+    Returns `(all_tokens, all_text, jp_words, line_word_counts,
     non_empty_indices)`:
 
       - `all_tokens` / `all_text`: concatenated `preprocess_text` output
         over every non-empty line (`all_text` keeps `<star>` markers).
-      - `display_surfaces`: flat list parallel to the NON-star words (one
-        entry per emitted alignment word, in order). A Japanese token
-        contributes its original surface (e.g. "君"); every other token
-        contributes `None`, meaning "display the aligned text as-is".
+      - `jp_words`: flat list parallel to the NON-star words (one entry per
+        emitted alignment word, in order). A Japanese token contributes its
+        `JpToken` (original surface, e.g. "君", plus candidate readings);
+        every other token contributes `None`, meaning "display the aligned
+        text as-is".
       - `line_word_counts` / `non_empty_indices`: per-line non-star word
         counts and their indices into `input_lines`, for partitioning.
 
@@ -1015,13 +1187,13 @@ def _preprocess_lines(
     Otherwise (Chinese, or the stack unavailable) the line takes the
     original whole-line path at `language=iso3` - char-level for `chi`.
 
-    The load-bearing invariant is that `display_surfaces` stays
-    length-locked to the emitted word list: each token extends it by
-    exactly the number of non-star words that token produced, so the
-    downstream partition maps words to surfaces 1:1."""
+    The load-bearing invariant is that `jp_words` stays length-locked to
+    the emitted word list: each token extends it by exactly the number of
+    non-star words that token produced, so the downstream partition maps
+    words to surfaces 1:1."""
     all_tokens: list[str] = []
     all_text: list[str] = []
-    display_surfaces: list[str | None] = []
+    jp_words: list[JpToken | None] = []
     line_word_counts: list[int] = []
     non_empty_indices: list[int] = []
 
@@ -1030,17 +1202,16 @@ def _preprocess_lines(
         if not t:
             continue
 
-        # `units` is a list of (text_for_aligner, display_surface, lang).
-        # display_surface is None for anything we want rendered as the
-        # aligned text (English, Chinese); the original kana/kanji for
-        # Japanese tokens.
-        units: list[tuple[str, str | None, str]]
+        # `units` is a list of (text_for_aligner, jp_token, lang). jp_token
+        # is None for anything we want rendered as the aligned text
+        # (English, Chinese).
+        units: list[tuple[str, JpToken | None, str]]
         if use_jp_romaji:
             try:
                 from app.pipeline.jp_romaji import tokenize
 
                 units = [
-                    (tok.romaji, tok.surface if tok.is_japanese else None, "eng")
+                    (tok.romaji, tok if tok.is_japanese else None, "eng")
                     for tok in tokenize(
                         t, treat_kanji_as_japanese=treat_kanji_as_japanese
                     )
@@ -1057,10 +1228,10 @@ def _preprocess_lines(
 
         line_tokens: list[str] = []
         line_text: list[str] = []
-        line_surfaces: list[str | None] = []
+        line_jp_words: list[JpToken | None] = []
         line_real = 0
         preprocess_failed = False
-        for unit_in, surface, lang in units:
+        for unit_in, jp_token, lang in units:
             try:
                 unit_tokens, unit_text = preprocess_text(
                     unit_in, romanize=True, language=lang,
@@ -1074,20 +1245,23 @@ def _preprocess_lines(
                 preprocess_failed = True
                 break
             unit_real = sum(1 for s in unit_text if s != "<star>")
+            if jp_token is not None and unit_real > 1:
+                # A reading swaps exactly one aligner word.
+                jp_token = dataclasses.replace(jp_token, readings=[])
             line_tokens.extend(unit_tokens)
             line_text.extend(unit_text)
-            line_surfaces.extend([surface] * unit_real)
+            line_jp_words.extend([jp_token] * unit_real)
             line_real += unit_real
 
         if preprocess_failed or line_real == 0:
             continue
         all_tokens.extend(line_tokens)
         all_text.extend(line_text)
-        display_surfaces.extend(line_surfaces)
+        jp_words.extend(line_jp_words)
         line_word_counts.append(line_real)
         non_empty_indices.append(idx)
 
-    return all_tokens, all_text, display_surfaces, line_word_counts, non_empty_indices
+    return all_tokens, all_text, jp_words, line_word_counts, non_empty_indices
 
 
 def _partition_words_by_line(
@@ -1121,6 +1295,7 @@ def _stitch_lines(
     non_empty_indices: list[int],
     partitioned: list[list[dict[str, Any]]],
     partitioned_surfaces: list[list[str | None]] | None = None,
+    partitioned_readings: list[list[str | None]] | None = None,
 ) -> list[LyricLine]:
     """Build the final {@link LyricLine} list, slotting word-level
     timings back into the non-empty positions and passing empty-text
@@ -1140,7 +1315,8 @@ def _stitch_lines(
     `text` is the surface and the aligned romaji is preserved on
     `romaji` for the debug tooltip; when absent (English / Chinese), the
     aligned text is rendered as-is and `romaji` stays None - the
-    pre-existing behavior.
+    pre-existing behavior. `partitioned_readings`, likewise parallel, carries
+    each word's heard reading.
     """
     by_input_idx = dict(zip(non_empty_indices, partitioned, strict=True))
     surf_by_idx: dict[int, list[str | None]] = {}
@@ -1148,6 +1324,9 @@ def _stitch_lines(
         surf_by_idx = dict(
             zip(non_empty_indices, partitioned_surfaces, strict=True)
         )
+    reading_by_idx: dict[int, list[str | None]] = {}
+    if partitioned_readings is not None:
+        reading_by_idx = dict(zip(non_empty_indices, partitioned_readings, strict=True))
     out: list[LyricLine] = []
     for idx, line in enumerate(input_lines):
         words = by_input_idx.get(idx)
@@ -1155,6 +1334,7 @@ def _stitch_lines(
             out.append(LyricLine(start_sec=line.start_sec, text=line.text, words=None))
             continue
         surfaces = surf_by_idx.get(idx)
+        readings = reading_by_idx.get(idx)
         lyric_words: list[LyricWord] = []
         for w_i, w in enumerate(words):
             start_sec = float(w.get("start", 0.0))
@@ -1194,6 +1374,7 @@ def _stitch_lines(
                     raw_end_sec=raw_end,
                     end_fallback=fallback,
                     romaji=romaji,
+                    reading=readings[w_i] if readings is not None else None,
                 )
             )
         refined_start = (
@@ -1230,6 +1411,8 @@ def _word_to_json(w: LyricWord) -> dict[str, Any]:
         entry["endFallback"] = w.end_fallback
     if w.romaji is not None:
         entry["romaji"] = w.romaji
+    if w.reading is not None:
+        entry["reading"] = w.reading
     return entry
 
 

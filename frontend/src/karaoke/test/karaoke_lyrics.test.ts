@@ -42,7 +42,16 @@ describe('lineSegments', () => {
     const line = { startSec: 0, text: 'Hello there', words: [word('hello'), word('there')] };
     expect(lineSegments(line)).toEqual([
       { text: 'hello', wordIdx: 0 },
-      { text: ' there', wordIdx: 1 },
+      { text: ' ', wordIdx: 0 },
+      { text: 'there', wordIdx: 1 },
+    ]);
+  });
+
+  test("a word's run carries its heard reading", () => {
+    const line = { startSec: 0, text: '生。', words: [{ ...word('生'), reading: 'せい' }] };
+    expect(lineSegments(line)).toEqual([
+      { text: '生', wordIdx: 0, reading: 'せい' },
+      { text: '。', wordIdx: 0 },
     ]);
   });
 

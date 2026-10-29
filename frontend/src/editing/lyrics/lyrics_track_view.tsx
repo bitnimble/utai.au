@@ -133,10 +133,10 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // `furiganaRevision`.
   const trackHasRuby = React.useMemo(() => {
     for (const p of positioned) {
-      const texts = p.wordPositions ? p.wordPositions.map((w) => w.text) : [p.text];
-      const lineSegs = furiganaAnnotator.segmentsForWords(texts);
+      const words = p.wordPositions ? p.wordPositions.map((w) => w.source) : [{ text: p.text }];
+      const lineSegs = furiganaAnnotator.segmentsForWords(words);
       if (lineSegs.some((wordSegs) => wordSegs.some((s) => s.reading != null))) return true;
-      if (showRomaji && furiganaAnnotator.romajiForWords(texts).some((r) => r !== '')) return true;
+      if (showRomaji && furiganaAnnotator.romajiForWords(words).some((r) => r !== '')) return true;
     }
     return false;
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -30,6 +30,9 @@
  * standalone (chip-local) tokenize. The same table reads the numeral +
  * counter compounds kuromoji splits apart (二人 → ふたり, not ににん).
  *
+ * A word whose `reading` the aligner picked from the vocal (生 sung せい,
+ * not なま) takes that reading instead; text alone can't tell.
+ *
  * This module's pure helpers (`hasKanji`, `fitFurigana`,
  * `annotateTokens`, `sliceLineSegments`, `expandCompounds`) carry the testable logic; the
  * singleton wires them to kuromoji + the split table + MobX.
@@ -38,6 +41,7 @@ import type { IpadicFeatures, Tokenizer } from '@sglkc/kuromoji';
 import { makeAutoObservable, runInAction } from 'mobx';
 import { loadFuriganaDict, type FuriganaDict } from './jmdict_furigana_loader';
 import { hasKana, isKanjiCp, toHiragana } from './kana';
+import type { LyricWord } from './lrc';
 import { kanaToRomaji } from './romaji';
 
 /** One run of base text with an optional reading. A reading is present
@@ -272,6 +276,16 @@ function sliceSpan(
     }
   }
   return out.length > 0 ? mergeBareRuns(out) : null;
+}
+
+export type FuriganaWord = Pick<LyricWord, 'text' | 'reading'>;
+
+/** A word's heard reading fitted onto its kanji, or null when it has none or
+ *  the reading doesn't fit the surface. */
+function heardSegments(word: FuriganaWord): RubySegment[] | null {
+  if (word.reading == null) return null;
+  const segs = fitFurigana(word.text, word.reading);
+  return segs.some((s) => s.reading != null) ? segs : null;
 }
 
 /** The kuromoji token fields {@link annotateTokens} reads. */
@@ -523,11 +537,16 @@ class FuriganaAnnotator {
    *  whole line: a display word holding several tokenized words reads as
    *  several (`kimi to`). One whose span cuts through a tokenized word (the
    *  aligner split 本当に into 本当 · に) romanizes its own furigana reading
-   *  instead. Empty strings until the dictionary resolves, and for
-   *  non-Japanese text. */
-  romajiForWords(words: readonly string[]): string[] {
+   *  instead, and one with a heard `reading` romanizes that. Empty strings
+   *  until the dictionary resolves, and for non-Japanese text. */
+  romajiForWords(words: readonly FuriganaWord[]): string[] {
+    const fromText = this.romajiFromText(words);
+    return words.map((w, i) => (w.reading != null ? kanaToRomaji(w.reading) : fromText[i]));
+  }
+
+  private romajiFromText(words: readonly FuriganaWord[]): string[] {
     void this.revision;
-    const line = words.join('');
+    const line = words.map((w) => w.text).join('');
     const empty = words.map(() => '');
     if (!hasKanji(line) && !hasKana(line)) return empty;
     const cached = this.cache.get(line);
@@ -537,8 +556,8 @@ class FuriganaAnnotator {
     }
     let start = 0;
     let wordSegs: RubySegment[][] | undefined;
-    return words.map((word, i) => {
-      const end = start + word.length;
+    return words.map(({ text }, i) => {
+      const end = start + text.length;
       const span = { start, end };
       start = end;
       const inSpan = cached.romaji.filter((w) => w.end > span.start && w.start < span.end);
@@ -559,18 +578,20 @@ class FuriganaAnnotator {
    *  in order. This is the path the word-aligned lyrics row uses: the
    *  forced aligner may split a compound across chips (実 / は), and
    *  tokenizing each chip alone reads 実 as the noun み instead of the
-   *  じつ of 実は. Reactivity rides on {@link segmentsFor}'s `revision`
-   *  read, so callers re-render in place when the dictionary resolves. */
-  segmentsForWords(words: readonly string[]): RubySegment[][] {
+   *  じつ of 実は. A word with a heard `reading` takes that instead.
+   *  Reactivity rides on {@link segmentsFor}'s `revision` read, so callers
+   *  re-render in place when the dictionary resolves. */
+  segmentsForWords(words: readonly FuriganaWord[]): RubySegment[][] {
     if (words.length === 0) return [];
-    const line = this.segmentsFor(words.join(''));
+    const texts = words.map((w) => w.text);
+    const line = this.segmentsFor(texts.join(''));
     // Pre-split any compound run a chip boundary cuts, using the
     // JmdictFurigana table, so the slice below finds clean per-kanji
     // boundaries (盲目的 → 盲/もう · 目/もく · 的/てき).
-    const expanded = expandCompounds(line, wordBoundaries(words), (b, r) =>
+    const expanded = expandCompounds(line, wordBoundaries(texts), (b, r) =>
       this.lookupSplit(b, r),
     );
-    const sliced = sliceLineSegments(expanded, words);
+    const sliced = sliceLineSegments(expanded, texts);
     // A remaining `null` slice means a reading run still straddles this
     // chip (the split table is unknown for this word, hasn't loaded yet, or
     // it's an indivisible jukujikun). Fall back to tokenizing the chip on
@@ -578,9 +599,11 @@ class FuriganaAnnotator {
     // and `segmentsFor` returns bare text when there's no fittable reading.
     let straddled = false;
     const out = sliced.map((segs, i) => {
+      const heard = heardSegments(words[i]);
+      if (heard) return heard;
       if (segs) return segs;
       straddled = true;
-      return this.segmentsFor(words[i]);
+      return this.segmentsFor(texts[i]);
     });
     // Lazy-load the split table on first straddle so the next render can
     // divide the compound instead of leaning on the standalone fallback.

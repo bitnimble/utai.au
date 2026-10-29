@@ -20,8 +20,9 @@ export function shownLineIdx(
 }
 
 /** A run of a line's display text, owned by one word. Text between words
- *  (spaces, punctuation) belongs to the preceding word. */
-export type LineSegment = { text: string; wordIdx: number };
+ *  (spaces, punctuation) belongs to the preceding word; a word's own run
+ *  carries its heard `reading`. */
+export type LineSegment = { text: string; wordIdx: number; reading?: string };
 
 /** Split a line's text into per-word runs, preserving its original spacing and
  *  punctuation (CJK lines have no spaces between words). A word-less line is
@@ -30,14 +31,15 @@ export type LineSegment = { text: string; wordIdx: number };
 export function lineSegments(line: LyricLine): LineSegment[] {
   const words = line.words;
   if (!words || words.length === 0) return [{ text: line.text, wordIdx: 0 }];
+  const wordRun = (wordIdx: number): LineSegment => ({ text: words[wordIdx].text, wordIdx, reading: words[wordIdx].reading });
   const segments: LineSegment[] = [];
   let cursor = 0;
   for (let wordIdx = 0; wordIdx < words.length; wordIdx++) {
     const text = words[wordIdx].text;
     const at = line.text.indexOf(text, cursor);
-    if (at < 0) return words.map((w, i) => ({ text: i > 0 ? ` ${w.text}` : w.text, wordIdx: i }));
+    if (at < 0) return words.flatMap((_, i) => (i > 0 ? [{ text: ' ', wordIdx: i - 1 }, wordRun(i)] : [wordRun(i)]));
     if (at > cursor) segments.push({ text: line.text.slice(cursor, at), wordIdx: Math.max(0, wordIdx - 1) });
-    segments.push({ text, wordIdx });
+    segments.push(wordRun(wordIdx));
     cursor = at + text.length;
   }
   if (cursor < line.text.length) segments.push({ text: line.text.slice(cursor), wordIdx: words.length - 1 });

@@ -71,6 +71,19 @@ Two wrinkles:
   utai.au (the name is Japanese; 歌う/唄 "to sing"). The frontend then
   renders **furigana** ruby over aligned Japanese (kuromoji +
   JmdictFurigana; see the frontend furigana stack).
+- **Heard readings.** Text alone can't settle a kanji word with several
+  readings (生: なま / せい, 尽くめ: ずくめ / つくめ), so each one carries
+  candidates: unidic's other entries for the same surface, plus the
+  readings JMdict gives its kanji before the same okurigana
+  (`aligner/app/data/kanji_readings.tsv`, built by
+  `scripts/build-kanji-readings.ts`). After the first alignment pass,
+  `_hear_readings` force-aligns each candidate between the word's
+  neighbours and keeps the in-context reading unless another beats it by
+  `_READING_MARGIN` (with a per-letter bonus offsetting CTC's cheap
+  deletions); any switch re-runs the alignment. The chosen reading goes
+  out as the word's `reading`, which the frontend's furigana and romaji
+  prefer over kuromoji's, and saved `.lrc` files keep it as Aozora ruby
+  (`｜生《せい》`).
 
 ## [3] CTC forced alignment (the core)
 

@@ -52,6 +52,10 @@ export type LyricWord = {
    *  / Chinese words, where `text` already is the aligned form. Debug-
    *  tooltip only; the renderer shows `text`. */
   romaji?: string;
+  /** Hiragana reading of `text` the aligner heard in the vocal, picked among
+   *  the dictionary's readings for a kanji word that has several (生: せい or
+   *  なま). Overrides the text-only furigana and romaji. */
+  reading?: string;
   /** Median voiced pitch over `startSec`..`endSec`, MIDI note number
    *  (69 = A4). Drives the word chip's vertical placement on the lyrics
    *  row. Absent when the word had no usable pitch (spoken / unvoiced)

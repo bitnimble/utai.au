@@ -72,7 +72,7 @@ async function maybeGunzip(buf: ArrayBuffer): Promise<ArrayBuffer> {
 /** Parse one `surface|len,reading;len,reading;…` line into a map entry, or
  *  null when malformed (defensive; the asset is generated, so this should
  *  not fire). */
-function parseLine(line: string): { surface: string; split: FuriganaSplit } | null {
+export function parseLine(line: string): { surface: string; split: FuriganaSplit } | null {
   const bar = line.indexOf('|');
   if (bar <= 0) return null;
   const surface = line.slice(0, bar);

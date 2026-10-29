@@ -1,0 +1,9 @@
+kanji_readings.tsv is derived from JmdictFurigana
+(https://github.com/Doublevil/JmdictFurigana), itself derived from
+JMdict/EDICT (https://www.edrdg.org/).
+
+Licensed under Creative Commons Attribution-ShareAlike (CC BY-SA),
+the same licence as JMdict. © James William Breen and the
+Electronic Dictionary Research and Development Group.
+
+Regenerate with scripts/build-kanji-readings.ts.

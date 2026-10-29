@@ -125,3 +125,39 @@ def test_tokenize_kanji_only_passthrough_when_flag_off():
     assert [(t.surface, t.romaji, t.is_japanese) for t in toks] == [
         ("心", "心", False),
     ]
+
+
+def test_tokenize_doubles_the_consonant_after_a_sokuon_stem():
+    toks = tokenize("分かってる", treat_kanji_as_japanese=True)
+    assert [t.romaji for t in toks] == ["wakat", "teru"]
+    assert all("っ" not in r.romaji for t in toks for r in t.readings)
+
+
+def _readings(text: str) -> dict[str, list[tuple[str, str]]]:
+    return {
+        t.surface: [(r.kana, r.romaji) for r in t.readings]
+        for t in tokenize(text, treat_kanji_as_japanese=True)
+    }
+
+
+def test_tokenize_offers_every_reading_of_a_homograph_in_context_first():
+    readings = _readings("上がっている、生。")["生"]
+    assert readings[0] == ("なま", "nama")
+    assert ("せい", "sei") in readings
+
+
+def test_tokenize_offers_the_kanji_readings_before_its_okurigana():
+    readings = _readings("どうして尽くめの毎日")["尽くめ"]
+    assert readings[0] == ("ずくめ", "zukume")
+    assert ("つくめ", "tsukume") in readings
+
+
+def test_tokenize_offers_no_readings_for_kana_or_a_single_reading_word():
+    readings = _readings("どうして尽くめの毎日")
+    assert readings["どう"] == []
+    assert readings["毎日"] == []
+
+
+def test_tokenize_reading_lookup_keeps_the_line_parse_intact():
+    toks = tokenize("君と", treat_kanji_as_japanese=True)
+    assert [(t.surface, t.romaji) for t in toks] == [("君", "kimi"), ("と", "to")]

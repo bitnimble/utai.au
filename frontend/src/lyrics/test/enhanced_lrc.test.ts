@@ -113,6 +113,27 @@ describe('parseEnhancedLrc', () => {
     expect(w[1].text).toBe('a\\b');
   });
 
+  test("round-trips a word's heard reading as Aozora ruby", () => {
+    const doc = '[00:01.000]<00:01.000>｜生《せい》<00:01.200> <00:01.300>。\\《\\》<00:01.500>\n';
+    const { lines } = parseEnhancedLrc(doc);
+    expect(lines[0].words!.map(({ text, reading }) => ({ text, reading }))).toEqual([
+      { text: '生', reading: 'せい' },
+      { text: '。《》', reading: undefined },
+    ]);
+    expect(reserialize(doc)).toBe(doc);
+  });
+
+  test('keeps ruby brackets outside a leading ｜base《reading》 as text', () => {
+    const { lines } = parseEnhancedLrc(
+      '[00:01.000]<00:01.000>《Title》<00:01.200> <00:01.300>前｜<00:01.500> <00:01.600>《open<00:01.800>\n',
+    );
+    expect(lines[0].words!.map(({ text, reading }) => ({ text, reading }))).toEqual([
+      { text: '《Title》', reading: undefined },
+      { text: '前｜', reading: undefined },
+      { text: '《open', reading: undefined },
+    ]);
+  });
+
   test('infers end times for start-only (foreign) enhanced LRC', () => {
     const { lines } = parseEnhancedLrc(
       '[00:01.000]<00:01.000>foo <00:01.500>bar\n',

@@ -39,6 +39,16 @@ async function loadJapaneseSong(page: Page): Promise<void> {
             { startSec: 17.5, endSec: 18, text: '二人' },
           ],
         },
+        {
+          startSec: 18.5,
+          text: '上がっている、生。',
+          words: [
+            { startSec: 18.5, endSec: 18.8, text: '上がっ' },
+            { startSec: 18.8, endSec: 19, text: 'て' },
+            { startSec: 19, endSec: 19.3, text: 'いる' },
+            { startSec: 19.3, endSec: 19.8, text: '生', reading: 'せい' },
+          ],
+        },
       ],
       { source: 'plaintext', sourceLabel: 'probe' },
     ),
@@ -92,6 +102,19 @@ test('furigana: reads numeral + counter compounds, 行った, repeated okurigana
   await expect(page.getByTestId('lyrics-line-2').locator('rt')).toHaveText(['きみ', 'ふたり', 'い'], DICT_TIMEOUT);
   await expect(page.getByTestId('lyrics-line-3').locator('rt')).toHaveText(['わら'], DICT_TIMEOUT);
   await expect(page.getByTestId('lyrics-line-4').locator('rt')).toHaveText(['わら', 'やつ'], DICT_TIMEOUT);
+});
+
+test("furigana + romaji: a word's heard reading wins over the dictionary's", async ({ page }) => {
+  await loadJapaneseSong(page);
+  await expect(page.getByTestId('lyrics-line-6').locator('rt')).toHaveText(['あ', 'せい'], DICT_TIMEOUT);
+
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('show-romaji').click();
+  await expect(page.getByTestId('lyrics-word-6-3').locator('rt[data-romaji]')).toHaveText('sei', DICT_TIMEOUT);
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(19.4));
+  await expect(page.getByTestId('karaoke-line').locator('rt:not([data-romaji])')).toHaveText(['あ', 'せい'], DICT_TIMEOUT);
 });
 
 test('furigana: karaoke view annotates word-aligned and line-level lyrics', async ({ page }) => {

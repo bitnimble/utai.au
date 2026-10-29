@@ -141,24 +141,17 @@ RUN uv pip install --index-url https://download.pytorch.org/whl/cu128 \
 # dependency (ctc-forced-aligner, librosa, onnxruntime, ...), keeping the
 # sandbox's deps in lockstep with the real service. Installed into
 # /opt/deps so the editable .pth points there and /sandbox stays pristine.
-# --extra-index-url keeps any transitive torch resolution on the cu128
-# wheels. The app source is deliberately NOT copied - this stays an empty
-# sandbox; bring your own scripts.
+# The app source is deliberately NOT copied - this stays an empty sandbox;
+# bring your own scripts.
 WORKDIR /opt/deps
 COPY aligner/pyproject.toml ./
 # The heavy deps live in PEP 735 dependency-groups (lean base); install
 # every group for full parity (dev adds ruff + pytest so the agent can
-# lint/test in-sandbox). Groups track aligner/pyproject.toml.
-RUN uv pip install --extra-index-url https://download.pytorch.org/whl/cu128 \
-        --group dev --group separation --group lyrics --group lyrics-ja -e .
-
-# The `music` group (librespot, for Spotify OAuth) resolves in its OWN step
-# WITHOUT the pytorch extra-index: librespot needs requests>=2.32.3, but the
-# cu128 flat index only carries requests 2.28.1 and uv's first-index rule would
-# pin requests to that index and fail to resolve. From PyPI it's fine (and just
-# upgrades the older requests the step above pulled in). Nothing here touches
-# the torch / CUDA wheels.
-RUN uv pip install --group music -e .
+# lint/test in-sandbox). Groups track aligner/pyproject.toml. PyPI only, no
+# pytorch extra-index: the torch layer above already satisfies the torch pins,
+# and uv's first-index rule would pin common deps (certifi, requests) to that
+# index's stale copies and fail to resolve.
+RUN uv pip install --group dev --group separation --group lyrics --group lyrics-ja --group music -e .
 
 # Models / weights caches. Pointed at /models (and HF/torch subdirs) so
 # audio-separator, HF transformers, and torch.hub reuse the same cache

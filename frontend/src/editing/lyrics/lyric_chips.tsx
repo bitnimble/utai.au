@@ -111,8 +111,8 @@ export const LyricLineChip = observer(
     // Memoised on `wordPositions` so each `LyricWordChip` receives a
     // stable array reference and its memo still bails across playhead
     // transitions (the word texts only change when the line re-positions).
-    const lineWordTexts = React.useMemo(
-      () => (wordPositions ? wordPositions.map((w) => w.text) : []),
+    const lineWords = React.useMemo(
+      () => (wordPositions ? wordPositions.map((w) => w.source) : []),
       [wordPositions],
     );
     return (
@@ -147,7 +147,7 @@ export const LyricLineChip = observer(
                   pitchPath={pitchPaths.get(key)}
                   sustain={placement?.sustain}
                   state={wordState(w.sourceIdx, activeWordIdx, activeWordEnded ?? false)}
-                  lineWordTexts={lineWordTexts}
+                  lineWords={lineWords}
                   wordPosIndex={i}
                   decoration={i === 0 ? firstWordDecoration : undefined}
                 />
@@ -169,7 +169,7 @@ const LyricWordChip = observer(
     pitchPath,
     sustain,
     state,
-    lineWordTexts,
+    lineWords,
     wordPosIndex,
     decoration,
   }: {
@@ -184,12 +184,12 @@ const LyricWordChip = observer(
     /** Where the pitch line shows past the text; undefined when there's no room. */
     sustain: SustainSpan | undefined;
     state: WordState;
-    /** Surfaces of every (in-range) word on this line, in render order;
-     *  the furigana annotator tokenizes them together for context. Stable
-     *  identity (memoised by the parent) so this `observer`+memo chip
-     *  still bails on word/playhead transitions. */
-    lineWordTexts: readonly string[];
-    /** This word's position within {@link lineWordTexts}. */
+    /** Every (in-range) word on this line, in render order; the furigana
+     *  annotator tokenizes them together for context. Stable identity
+     *  (memoised by the parent) so this `observer`+memo chip still bails on
+     *  word/playhead transitions. */
+    lineWords: readonly LyricWord[];
+    /** This word's position within {@link lineWords}. */
     wordPosIndex: number;
     decoration: React.ReactNode;
   }) => {
@@ -226,7 +226,7 @@ const LyricWordChip = observer(
           </svg>
         )}
         <span className={styles.lyricWordText}>
-          <WordText words={lineWordTexts} index={wordPosIndex} />
+          <WordText words={lineWords} index={wordPosIndex} />
           {ellipsis && <SvgText text={ELLIPSIS} />}
         </span>
       </span>
@@ -236,16 +236,16 @@ const LyricWordChip = observer(
 
 /** Renders a word's glyphs, stacking hiragana furigana over kanji runs
  *  when the annotator has a reading for the text. Takes the whole line's
- *  word surfaces plus this word's index (not the bare text) so the reading
+ *  words plus this word's index (not the bare text) so the reading
  *  is tokenized with sentence context: a chip the aligner split off a
  *  compound (実 out of 実は) reads correctly (じつ) instead of its lone-
  *  token reading (み). `segmentsForWords` is synchronous (bare text until
  *  the kuromoji dictionary resolves) and its `revision` read makes this
  *  `observer` re-render in place once readings arrive. */
 const WordText = observer(
-  ({ words, index }: { words: readonly string[]; index: number }) => (
+  ({ words, index }: { words: readonly LyricWord[]; index: number }) => (
     <RubyText
-      segments={furiganaAnnotator.segmentsForWords(words)[index] ?? [{ base: words[index] ?? '' }]}
+      segments={furiganaAnnotator.segmentsForWords(words)[index] ?? [{ base: words[index]?.text ?? '' }]}
       romaji={appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords(words)[index] : undefined}
     />
   ),
@@ -255,7 +255,7 @@ const WordText = observer(
 const LineText = observer(({ text }: { text: string }) => (
   <RubyText
     segments={furiganaAnnotator.segmentsFor(text)}
-    romaji={appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords([text])[0] : undefined}
+    romaji={appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords([{ text }])[0] : undefined}
   />
 ));
 
