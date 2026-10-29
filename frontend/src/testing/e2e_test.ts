@@ -10,7 +10,8 @@ export const HOST_PATH = `/session/${E2E_SESSION_ID}`;
  *  unless a spec routes them itself: the real ones are slow, flaky, and
  *  rate-limited, and a retried 503 outlasts a test's timeouts. The session
  *  relay is stubbed too, and the page holds the host token, so {@link HOST_PATH}
- *  hosts with no remotes. */
+ *  hosts with no remotes. A fresh page opens in the tracks view, one karaoke
+ *  line at a time. */
 export const test = base.extend({
   page: async ({ page }, use) => {
     const nothing = (body: unknown, status = 200) => (route: Route) =>
@@ -26,6 +27,11 @@ export const test = base.extend({
       ([id, token]) => localStorage.setItem('utai.sessionHostTokens', JSON.stringify([[id, token]])),
       [E2E_SESSION_ID, E2E_HOST_TOKEN],
     );
+    await page.addInitScript(() => {
+      if (localStorage.getItem('utai.settings') == null) {
+        localStorage.setItem('utai.settings', JSON.stringify({ viewMode: 'tracks', karaokeTwoLines: false }));
+      }
+    });
     await page.routeWebSocket(/\/api\/sessions\/[^/]+\/ws/, (ws) => {
       ws.send(JSON.stringify({ type: 'hello', clientId: 'c1', hostConnected: false, state: null }));
     });
