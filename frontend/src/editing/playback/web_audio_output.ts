@@ -1,6 +1,12 @@
 import type { AudioTrack, AudioTrackId } from './audio_tracks';
 import type { AudioOutput } from './playback_engine';
-import { createSurroundReverb, loadSurroundReverb } from './surround_reverb';
+import {
+  createTrackEffects,
+  endTrackEffects,
+  loadTrackEffects,
+  trackEffectMask,
+  type TrackEffect,
+} from './track_effects';
 
 const SCHEDULE_LEAD_SECONDS = 0.05;
 /** Pad past `ctx.currentTime` so a scheduled `start()` never lands in the past. */
@@ -39,8 +45,8 @@ export class WebAudioOutput implements AudioOutput {
     this.controller?.setTrackGain(id, gain);
   }
 
-  setTrackSurroundReverb(id: AudioTrackId, on: boolean): void {
-    this.controller?.setTrackSurroundReverb(id, on);
+  setTrackEffects(id: AudioTrackId, effects: readonly TrackEffect[]): void {
+    this.controller?.setTrackEffects(id, trackEffectMask(effects));
   }
 
   async start(fromSec: number): Promise<void> {
@@ -126,14 +132,14 @@ export class WebAudioOutput implements AudioOutput {
 }
 
 /** Live playback slot for one track: reusable input + gain nodes, the effect
- *  (built on first use) and the currently playing source (buffer sources are
- *  one-shot, so each start mints a fresh one). */
+ *  chain between them (rebuilt when its mask changes) and the currently playing
+ *  source (buffer sources are one-shot, so each start mints a fresh one). */
 type ActiveAudioTrack = {
   id: AudioTrackId;
   input: GainNode;
   gainNode: GainNode;
-  surroundReverbOn: boolean;
-  surroundReverb: AudioWorkletNode | undefined;
+  effectMask: number;
+  effects: { node: AudioWorkletNode; mask: number } | undefined;
   buffer: AudioBuffer;
   source: AudioBufferSourceNode | undefined;
 };
@@ -158,9 +164,9 @@ export class AudioTrackPlaybackController {
     if (slot) slot.gainNode.gain.value = gain;
   }
 
-  setTrackSurroundReverb(id: AudioTrackId, on: boolean): void {
+  setTrackEffects(id: AudioTrackId, mask: number): void {
     const slot = this.active.get(id);
-    if (slot) this.routeSlot(slot, on);
+    if (slot) this.applyEffects(slot, mask);
   }
 
   dropAudioTrack(id: AudioTrackId): void {
@@ -206,34 +212,44 @@ export class AudioTrackPlaybackController {
       id: track.id,
       input: this.ctx.createGain(),
       gainNode,
-      surroundReverbOn: false,
-      surroundReverb: undefined,
+      effectMask: 0,
+      effects: undefined,
       buffer: track.buffer,
       source: undefined,
     };
-    this.routeSlot(slot, track.surroundReverb);
+    this.applyEffects(slot, trackEffectMask(track.effects));
     this.active.set(track.id, slot);
     return slot;
   }
 
-  private routeSlot(slot: ActiveAudioTrack, surroundReverb: boolean): void {
-    slot.surroundReverbOn = surroundReverb;
-    slot.surroundReverb ??= surroundReverb ? createSurroundReverb(this.ctx, slot.gainNode) : undefined;
-    slot.input.disconnect();
-    if (surroundReverb && slot.surroundReverb != null) {
-      slot.input.connect(slot.surroundReverb);
-      return;
+  private applyEffects(slot: ActiveAudioTrack, mask: number): void {
+    slot.effectMask = mask;
+    if (slot.effects?.mask !== mask) {
+      this.endEffects(slot);
+      const node = mask !== 0 ? createTrackEffects(this.ctx, slot.gainNode, mask) : undefined;
+      if (node != null) slot.effects = { node, mask };
     }
-    slot.input.connect(slot.gainNode);
-    if (!surroundReverb) return;
-    void loadSurroundReverb(this.ctx).then(() => {
-      if (this.active.get(slot.id) === slot && slot.surroundReverbOn) this.routeSlot(slot, true);
-    });
+    slot.input.disconnect();
+    // Dry until the worklet has loaded.
+    slot.input.connect(slot.effects?.node ?? slot.gainNode);
+    if (mask === 0 || slot.effects != null) return;
+    loadTrackEffects(this.ctx)
+      .then(() => {
+        if (this.active.get(slot.id) === slot && slot.effectMask === mask) this.applyEffects(slot, mask);
+      })
+      .catch((err: unknown) => console.error('[audio-tracks] track effects failed to load', err));
+  }
+
+  private endEffects(slot: ActiveAudioTrack): void {
+    if (slot.effects == null) return;
+    endTrackEffects(slot.effects.node);
+    slot.effects = undefined;
   }
 
   private disconnectSlot(slot: ActiveAudioTrack): void {
     this.stopSource(slot);
-    slot.surroundReverb?.port.postMessage('dispose');
+    slot.input.disconnect();
+    this.endEffects(slot);
     try {
       slot.gainNode.disconnect();
     } catch (err) {

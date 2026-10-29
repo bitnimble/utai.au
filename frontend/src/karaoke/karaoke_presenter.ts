@@ -35,13 +35,13 @@ export class KaraokePresenter {
   start(): void {
     this.disposeVocalEffects = reaction(
       () => ({
-        on: appSettingsStore.vocalSurroundReverb,
+        effects: appSettingsStore.vocalSurroundReverb ? (['surround-reverb'] as const) : [],
         ids: Array.from(playbackEngine.audioTracks.values())
           .filter((t) => t.role === 'vocals')
           .map((t) => t.id),
       }),
-      ({ on, ids }) => {
-        for (const id of ids) playbackEngine.setTrackSurroundReverb(id, on);
+      ({ effects, ids }) => {
+        for (const id of ids) playbackEngine.setTrackEffects(id, effects);
       },
       { fireImmediately: true, equals: comparer.structural },
     );

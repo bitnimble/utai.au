@@ -2,6 +2,7 @@ import { makeAutoObservable } from 'mobx';
 import { WAVEFORM_PAINT_COLOR } from 'src/editing/utils/waveform_color';
 import type { PitchContour } from 'src/lyrics/pitch_contour';
 import { backendFetch } from 'src/net/backend_fetch';
+import type { TrackEffect } from './track_effects';
 
 /** Opaque per-track id. Every loaded track gets a fresh unique id. */
 export type AudioTrackId = string;
@@ -30,7 +31,7 @@ export class AudioTrack {
    *  `muted` forces silence without losing the volume setting. */
   volume = 1;
   muted = false;
-  surroundReverb = false;
+  effects: readonly TrackEffect[] = [];
 
   /** Vocal pitch contour, present on a `vocals` stem once the backend extracted
    *  it. Read imperatively at align time to map pitch onto words, never in a

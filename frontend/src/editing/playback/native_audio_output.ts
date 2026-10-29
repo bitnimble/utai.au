@@ -5,6 +5,7 @@ import { makeAutoObservable } from 'mobx';
 import { NONE_DEVICE_ID, type AudioDevice } from 'src/audio_devices/audio_io_backend';
 import type { AudioTrack, AudioTrackId } from './audio_tracks';
 import type { AudioOutput } from './playback_engine';
+import { trackEffectMask, type TrackEffect } from './track_effects';
 
 /** Streamed ~33 Hz. */
 type Telemetry = { playSec: number; playing: boolean; level: number; latencyMs: number };
@@ -103,8 +104,8 @@ export class NativeAudioOutput implements AudioOutput {
     void this.transport.send('audio_set_track_gain', { id, gain });
   }
 
-  setTrackSurroundReverb(id: AudioTrackId, on: boolean): void {
-    void this.transport.send('audio_set_track_surround_reverb', { id, on });
+  setTrackEffects(id: AudioTrackId, effects: readonly TrackEffect[]): void {
+    void this.transport.send('audio_set_track_effects', { id, effects: trackEffectMask(effects) });
   }
 
   async start(fromSec: number): Promise<void> {

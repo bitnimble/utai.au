@@ -1,35 +1,35 @@
-//! C ABI over [`SurroundReverb`] for the web build's AudioWorklet
-//! (`frontend/src/editing/playback/surround_reverb_worklet.ts`), so the browser
-//! runs this same DSP. Built by `scripts/build-effect-wasm.ts`.
+//! C ABI over [`EffectChain`] for the web build's AudioWorklet
+//! (`frontend/src/editing/playback/track_effects_worklet.ts`), so the browser
+//! runs this same DSP. Built by `scripts/build-effects-wasm.ts`.
 
-use crate::effect::SurroundReverb;
+use crate::effects::EffectChain;
 
-pub struct WasmSurroundReverb {
-    effect: SurroundReverb,
+pub struct WasmEffects {
+    chain: EffectChain,
     /// Interleaved stereo, filled and read back by the worklet in place.
     block: Vec<f32>,
 }
 
 #[no_mangle]
-pub extern "C" fn surround_reverb_new(sample_rate: u32, max_frames: usize) -> *mut WasmSurroundReverb {
-    Box::into_raw(Box::new(WasmSurroundReverb {
-        effect: SurroundReverb::new(sample_rate),
+pub extern "C" fn effects_new(mask: u32, sample_rate: u32, max_frames: usize) -> *mut WasmEffects {
+    Box::into_raw(Box::new(WasmEffects {
+        chain: EffectChain::new(mask, sample_rate),
         block: vec![0.0; max_frames * 2],
     }))
 }
 
 /// # Safety
-/// `fx` must come from [`surround_reverb_new`].
+/// `fx` must come from [`effects_new`].
 #[no_mangle]
-pub unsafe extern "C" fn surround_reverb_block(fx: *mut WasmSurroundReverb) -> *mut f32 {
+pub unsafe extern "C" fn effects_block(fx: *mut WasmEffects) -> *mut f32 {
     (*fx).block.as_mut_ptr()
 }
 
 /// # Safety
-/// `fx` must come from [`surround_reverb_new`].
+/// `fx` must come from [`effects_new`].
 #[no_mangle]
-pub unsafe extern "C" fn surround_reverb_process(fx: *mut WasmSurroundReverb, frames: usize) {
+pub unsafe extern "C" fn effects_process(fx: *mut WasmEffects, frames: usize) {
     let fx = &mut *fx;
     let len = (frames * 2).min(fx.block.len());
-    fx.effect.process(&mut fx.block[..len]);
+    fx.chain.process(&mut fx.block[..len]);
 }

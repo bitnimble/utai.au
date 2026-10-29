@@ -6,9 +6,10 @@
 //! `device` feature) and the Tauri command wrappers land next.
 
 pub mod decode;
-pub mod effect;
+pub mod effects;
 pub mod mixer;
 pub mod resample;
+pub mod surround_reverb;
 pub mod transport;
 
 #[cfg(feature = "device")]

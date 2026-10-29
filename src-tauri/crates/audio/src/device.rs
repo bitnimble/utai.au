@@ -10,7 +10,7 @@
 //! at the output rate in the mic's native format (works when in/out share a
 //! clock, e.g. an ASIO interface). WASAPI-exclusive + ASIO tuning are follow-ups.
 
-use crate::effect::SurroundReverb;
+use crate::effects::EffectChain;
 use crate::transport::Transport;
 use crate::{decode::DecodedTrack, mixer, resample};
 use arc_swap::ArcSwap;
@@ -48,20 +48,20 @@ pub struct MixTrack {
     pub samples: Arc<Vec<f32>>,
     pub gain: f32,
     /// Only the output callback locks it.
-    pub effect: Option<Arc<Mutex<SurroundReverb>>>,
+    pub effects: Option<Arc<Mutex<EffectChain>>>,
 }
 
 /// One track as the control thread owns it: the decoded source (kept for
 /// re-resampling on an output-rate change), its resampled playback buffer, its
-/// effective gain, and its effect (built for the output rate, so rebuilt with
-/// it). Keyed by the frontend's track id.
+/// effective gain, and its effect chain (built for the output rate, so rebuilt
+/// with it) with the mask it was built from. Keyed by the frontend's track id.
 struct SourceTrack {
     id: String,
     decoded: Arc<DecodedTrack>,
     resampled: Arc<Vec<f32>>,
     gain: f32,
-    surround_reverb: bool,
-    effect: Option<Arc<Mutex<SurroundReverb>>>,
+    effect_mask: u32,
+    effects: Option<Arc<Mutex<EffectChain>>>,
 }
 
 /// State shared with the real-time callbacks. The callbacks touch only the
@@ -119,7 +119,7 @@ fn publish(shared: &Shared, sources: &[SourceTrack]) {
         .map(|s| MixTrack {
             samples: s.resampled.clone(),
             gain: s.gain,
-            effect: s.effect.clone(),
+            effects: s.effects.clone(),
         })
         .collect();
     let total = sources
@@ -145,13 +145,13 @@ fn reresample_all(shared: &Shared) {
             s.decoded.sample_rate,
             rate,
         ));
-        s.effect = surround_reverb_effect(s.surround_reverb, rate);
+        s.effects = effect_chain(s.effect_mask, rate);
     }
     publish(shared, &sources);
 }
 
-fn surround_reverb_effect(on: bool, rate: u32) -> Option<Arc<Mutex<SurroundReverb>>> {
-    (on && rate > 0).then(|| Arc::new(Mutex::new(SurroundReverb::new(rate))))
+fn effect_chain(mask: u32, rate: u32) -> Option<Arc<Mutex<EffectChain>>> {
+    (mask != 0 && rate > 0).then(|| Arc::new(Mutex::new(EffectChain::new(mask, rate))))
 }
 
 /// Switch to a new output rate, preserving the current playback *time* across
@@ -238,8 +238,8 @@ impl AudioEngine {
                 decoded,
                 resampled,
                 gain: 1.0,
-                surround_reverb: false,
-                effect: None,
+                effect_mask: 0,
+                effects: None,
             });
         }
         publish(&self.shared, &sources);
@@ -267,15 +267,16 @@ impl AudioEngine {
         }
     }
 
-    /// Turn one track's surround reverb on/off. No-op for an unknown id or an
-    /// unchanged state (so a running reverb tail isn't reset).
-    pub fn set_track_surround_reverb(&self, id: &str, on: bool) {
+    /// Set one track's effects (an [`EffectKind`](crate::effects::EffectKind)
+    /// mask). No-op for an unknown id or an unchanged mask (so a running tail
+    /// isn't reset).
+    pub fn set_track_effects(&self, id: &str, mask: u32) {
         let mut sources = self.shared.sources.lock().unwrap();
         // Under the lock: `retune` stores the new rate before rebuilding effects.
         let rate = self.rate();
-        if let Some(s) = sources.iter_mut().find(|s| s.id == id && s.surround_reverb != on) {
-            s.surround_reverb = on;
-            s.effect = surround_reverb_effect(on, rate);
+        if let Some(s) = sources.iter_mut().find(|s| s.id == id && s.effect_mask != mask) {
+            s.effect_mask = mask;
+            s.effects = effect_chain(mask, rate);
             publish(&self.shared, &sources);
         }
     }
@@ -301,10 +302,10 @@ impl AudioEngine {
     /// Stop and rewind; effects restart empty, so the next play carries no old tail.
     pub fn stop(&self) {
         self.shared.transport.stop();
-        let rate = self.rate();
         let mut sources = self.shared.sources.lock().unwrap();
+        let rate = self.rate();
         for s in sources.iter_mut() {
-            s.effect = surround_reverb_effect(s.surround_reverb, rate);
+            s.effects = effect_chain(s.effect_mask, rate);
         }
         publish(&self.shared, &sources);
     }
@@ -533,7 +534,7 @@ where
             for t in tracks.iter() {
                 // Processed even when muted or paused so the tail decays, as the
                 // web AudioWorklet's does, instead of freezing and replaying later.
-                match t.effect.as_ref().and_then(|fx| fx.try_lock().ok()) {
+                match t.effects.as_ref().and_then(|fx| fx.try_lock().ok()) {
                     Some(mut fx) => {
                         if playing {
                             mixer::read_track(&mut effected, t.samples.as_slice(), start);

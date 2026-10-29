@@ -3,7 +3,7 @@ import { strToU8, zipSync } from 'fflate';
 import { HOST_PATH, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
-type Track = { role: string; surroundReverb: boolean };
+type Track = { role: string; effects: readonly string[] };
 type UtaiWindow = { utai?: { playbackEngine?: { audioTracks?: Map<string, Track> } } };
 type ResultWindow = { moduleResult?: Promise<unknown> };
 
@@ -28,10 +28,10 @@ function stemBundle(): { name: string; mimeType: string; buffer: Buffer } {
   return { name: 'Stems.utai.zip', mimeType: 'application/zip', buffer: Buffer.from(zip) };
 }
 
-function surroundByRole(page: Page): Promise<Record<string, boolean>> {
+function effectsByRole(page: Page): Promise<Record<string, readonly string[]>> {
   return page.evaluate(() => {
     const tracks = (window as unknown as UtaiWindow).utai?.playbackEngine?.audioTracks;
-    return Object.fromEntries(Array.from(tracks?.values() ?? []).map((t) => [t.role, t.surroundReverb]));
+    return Object.fromEntries(Array.from(tracks?.values() ?? []).map((t) => [t.role, [...t.effects]]));
   });
 }
 
@@ -47,18 +47,18 @@ async function moduleResult<T>(page: Page, body: string): Promise<T> {
 test('audio menu: surround reverb switches on the vocal stem only, and back off', async ({ page }) => {
   await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept=".zip,application/zip"]').setInputFiles(stemBundle());
-  await expect.poll(() => surroundByRole(page), { timeout: 15_000 }).toEqual({ backing: false, vocals: false });
+  await expect.poll(() => effectsByRole(page), { timeout: 15_000 }).toEqual({ backing: [], vocals: [] });
 
   await page.getByTestId('audio-menu').click();
   await page.getByRole('button', { name: 'Vocal track effects' }).click();
   const toggle = page.getByTestId('vocal-surround-reverb');
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  expect(await surroundByRole(page)).toEqual({ backing: false, vocals: true });
+  expect(await effectsByRole(page)).toEqual({ backing: [], vocals: ['surround-reverb'] });
 
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
-  expect(await surroundByRole(page)).toEqual({ backing: false, vocals: false });
+  expect(await effectsByRole(page)).toEqual({ backing: [], vocals: [] });
 });
 
 test('surround reverb: a centred impulse comes out direct, then wide, then as a decorrelated tail', async ({
@@ -73,14 +73,14 @@ test('surround reverb: a centred impulse comes out direct, then wide, then as a 
   }>(
     page,
     `
-      import { createSurroundReverb, loadSurroundReverb } from '/src/editing/playback/surround_reverb.ts';
+      import { createTrackEffects, loadTrackEffects, trackEffectMask } from '/src/editing/playback/track_effects.ts';
       const rate = 48000;
       const ctx = new OfflineAudioContext(2, rate * 2, rate);
-      await loadSurroundReverb(ctx);
+      await loadTrackEffects(ctx);
       const impulse = ctx.createBuffer(1, 1, rate);
       impulse.getChannelData(0)[0] = 1;
       const source = new AudioBufferSourceNode(ctx, { buffer: impulse });
-      source.connect(createSurroundReverb(ctx, ctx.destination));
+      source.connect(createTrackEffects(ctx, ctx.destination, trackEffectMask(['surround-reverb'])));
       source.start();
       window.moduleResult = ctx.startRendering().then((out) => {
         const l = out.getChannelData(0);
@@ -106,7 +106,7 @@ test('surround reverb: a centred impulse comes out direct, then wide, then as a 
   expect(ir.directL).toBeCloseTo(0.35, 5);
   expect(ir.directR).toBeCloseTo(0.35, 5);
   expect(ir.sideDiff).toBeCloseTo(SIDE_DIFF, 5);
-  // effect.rs's IMPULSE_TAIL_ENERGY: off means the committed WASM is stale (`bun run wasm:build`).
+  // surround_reverb.rs's IMPULSE_TAIL_ENERGY: off means the committed WASM is stale (`bun run wasm:build`).
   expect(ir.tailEnergy / IMPULSE_TAIL_ENERGY).toBeCloseTo(1, 3);
   expect(Math.abs(ir.tailCorrelation)).toBeLessThan(0.5);
 });
@@ -117,10 +117,10 @@ test('surround reverb: switching a playing track on reroutes it through the effe
     `
       import { AudioTrack } from '/src/editing/playback/audio_tracks.ts';
       import { AudioTrackPlaybackController } from '/src/editing/playback/web_audio_output.ts';
-      import { loadSurroundReverb } from '/src/editing/playback/surround_reverb.ts';
+      import { loadTrackEffects, trackEffectMask } from '/src/editing/playback/track_effects.ts';
       const rate = 48000;
       const ctx = new OfflineAudioContext(2, rate, rate);
-      await loadSurroundReverb(ctx);
+      await loadTrackEffects(ctx);
       const buffer = ctx.createBuffer(1, rate, rate);
       buffer.getChannelData(0)[0] = 1;
       buffer.getChannelData(0)[rate / 2] = 1;
@@ -128,7 +128,7 @@ test('surround reverb: switching a playing track on reroutes it through the effe
       const controller = new AudioTrackPlaybackController(ctx, ctx.destination);
       controller.scheduleAll([track], 0, 0);
       void ctx.suspend(0.25).then(() => {
-        controller.setTrackSurroundReverb('v', true);
+        controller.setTrackEffects('v', trackEffectMask(['surround-reverb']));
         void ctx.resume();
       });
       window.moduleResult = ctx.startRendering().then((rendered) => {
@@ -150,4 +150,32 @@ test('surround reverb: switching a playing track on reroutes it through the effe
   expect(out).toMatchObject({ dryL: 1, dryR: 1 });
   expect(out.wetL).toBeCloseTo(0.35, 2);
   expect(out.wetSideDiff).toBeCloseTo(SIDE_DIFF, 1);
+});
+
+test('track effects: an ended chain stops its processor even once its track is cut off', async ({ page }) => {
+  const out = await moduleResult<{ stopped: boolean }>(
+    page,
+    `
+      import { createTrackEffects, endTrackEffects, loadTrackEffects, trackEffectMask } from '/src/editing/playback/track_effects.ts';
+      const rate = 48000;
+      const ctx = new OfflineAudioContext(2, rate, rate);
+      await loadTrackEffects(ctx);
+      const trackGain = new GainNode(ctx);
+      trackGain.connect(ctx.destination);
+      const node = createTrackEffects(ctx, trackGain, trackEffectMask(['surround-reverb']));
+      let stopped = false;
+      node.port.addEventListener('message', () => (stopped = true));
+      node.port.start();
+      void ctx.suspend(0.25).then(() => {
+        endTrackEffects(node);
+        trackGain.disconnect();
+        void ctx.resume();
+      });
+      window.moduleResult = ctx
+        .startRendering()
+        .then(() => new Promise((resolve) => setTimeout(() => resolve({ stopped }), 100)));
+    `,
+  );
+
+  expect(out.stopped).toBe(true);
 });

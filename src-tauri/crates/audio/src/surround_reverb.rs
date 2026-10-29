@@ -1,7 +1,5 @@
 //! Surround reverb: pushes a vocal out to the sides and into a wide reverb so
 //! it sits back like a backing vocal. Real-time and allocation-free once built.
-//! The web build runs this too, as WASM in an AudioWorklet (see `wasm.rs`);
-//! after changing it, rebuild that with `bun run wasm:build`.
 
 use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};

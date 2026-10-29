@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, expect, test } from 'bun:test';
 import { AudioTrack } from '../audio_tracks';
 import { AudioOutput, PlaybackEngine } from '../playback_engine';
+import type { TrackEffect } from '../track_effects';
 
 const timers = new Map<number, { cb: () => void; ms: number }>();
 const frames = new Map<number, () => void>();
@@ -50,7 +51,10 @@ class FakeOutput implements AudioOutput {
   async addTrack(): Promise<void> {}
   removeTrack(): void {}
   setTrackGain(): void {}
-  setTrackSurroundReverb(): void {}
+  effectCalls: Array<readonly TrackEffect[]> = [];
+  setTrackEffects(_id: string, effects: readonly TrackEffect[]): void {
+    this.effectCalls.push(effects);
+  }
   async start(fromSec: number): Promise<void> {
     this.startedFrom = fromSec;
     this.position = fromSec;
@@ -188,4 +192,15 @@ test('a stop while the output is starting wins over the start', async () => {
   expect(engine.state).toBe('idle');
   expect(timers.size).toBe(0);
   expect(output.stops).toBe(stopsBeforeStartLands + 1);
+});
+
+test('track effects reach the output only when they change', () => {
+  const { engine, output } = loadedEngine();
+  engine.setTrackEffects('t', ['surround-reverb']);
+  engine.setTrackEffects('t', ['surround-reverb']);
+  engine.setTrackEffects('t', []);
+  engine.setTrackEffects('missing', ['surround-reverb']);
+
+  expect(output.effectCalls).toEqual([['surround-reverb'], []]);
+  expect(engine.audioTracks.get('t')?.effects).toEqual([]);
 });

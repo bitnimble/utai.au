@@ -120,7 +120,7 @@ pub fn run() {
             audio::audio_load_track,
             audio::audio_remove_track,
             audio::audio_set_track_gain,
-            audio::audio_set_track_surround_reverb,
+            audio::audio_set_track_effects,
             audio::audio_play,
             audio::audio_pause,
             audio::audio_stop,

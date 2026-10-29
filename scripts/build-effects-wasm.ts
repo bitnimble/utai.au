@@ -1,14 +1,14 @@
 // Builds the native audio crate's effects (src-tauri/crates/audio, `wasm.rs`)
 // to WASM for the web build's AudioWorklet, and writes it next to the worklet.
 // The .wasm is committed so web builds need no Rust toolchain; rerun after
-// changing the effect. Needs `rustup target add wasm32-unknown-unknown`.
+// changing an effect. Needs `rustup target add wasm32-unknown-unknown`.
 import { copyFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const targetDir = join(root, 'tmp', 'wasm-target');
-const dest = join(root, 'frontend', 'src', 'editing', 'playback', 'surround_reverb.wasm');
+const dest = join(root, 'frontend', 'src', 'editing', 'playback', 'track_effects.wasm');
 
 const build = Bun.spawnSync(
   [
@@ -38,4 +38,4 @@ const build = Bun.spawnSync(
 if (build.exitCode !== 0) process.exit(build.exitCode ?? 1);
 
 await copyFile(join(targetDir, 'wasm32-unknown-unknown', 'release', 'utai_audio.wasm'), dest);
-console.log(`[effect-wasm] wrote ${dest}`);
+console.log(`[effects-wasm] wrote ${dest}`);

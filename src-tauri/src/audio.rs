@@ -112,8 +112,8 @@ pub fn audio_set_track_gain(id: String, gain: f32, state: State<'_, AudioState>)
 }
 
 #[tauri::command]
-pub fn audio_set_track_surround_reverb(id: String, on: bool, state: State<'_, AudioState>) {
-    state.0.set_track_surround_reverb(&id, on);
+pub fn audio_set_track_effects(id: String, effects: u32, state: State<'_, AudioState>) {
+    state.0.set_track_effects(&id, effects);
 }
 
 #[tauri::command]

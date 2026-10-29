@@ -8,6 +8,7 @@ import {
   decodeAudioTrackUrl,
 } from './audio_tracks';
 import { buildLinearTimeline, EMPTY_TIMELINE, UtaiTimeline } from './timeline';
+import { trackEffectMask, type TrackEffect } from './track_effects';
 import { waveformWorker } from './waveform_worker_client';
 
 export type PlayerState = 'idle' | 'loading' | 'playing' | 'paused';
@@ -20,7 +21,7 @@ export interface AudioOutput {
   addTrack(track: AudioTrack): Promise<void>;
   removeTrack(id: AudioTrackId): void;
   setTrackGain(id: AudioTrackId, gain: number): void;
-  setTrackSurroundReverb(id: AudioTrackId, on: boolean): void;
+  setTrackEffects(id: AudioTrackId, effects: readonly TrackEffect[]): void;
   start(fromSec: number): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
@@ -113,11 +114,11 @@ export class PlaybackEngine {
     if (track) track.pitchContour = contour;
   }
 
-  setTrackSurroundReverb(id: AudioTrackId, on: boolean): void {
+  setTrackEffects(id: AudioTrackId, effects: readonly TrackEffect[]): void {
     const track = this.audioTracks.get(id);
-    if (!track || track.surroundReverb === on) return;
-    track.surroundReverb = on;
-    this.output.setTrackSurroundReverb(id, on);
+    if (!track || trackEffectMask(track.effects) === trackEffectMask(effects)) return;
+    track.effects = effects;
+    this.output.setTrackEffects(id, effects);
   }
 
   async play(): Promise<void> {
