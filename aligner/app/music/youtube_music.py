@@ -15,12 +15,52 @@ _RESULTS_PER_KIND = 10
 _SAME_WORD_RATIO = 0.8
 _COMBINING_DIACRITICS = re.compile("[̀-ͯ]")
 _WORD = re.compile(r"[^\W_]+")
+_OFFICIAL_MUSIC_VIDEO = "MUSIC_VIDEO_TYPE_OMV"
+_MUSIC_VIDEO_WORDS = {"video", "mv", "pv"}
+_OTHER_VERSION_WORDS = {
+    "live", "cover", "remix", "karaoke", "instrumental", "acoustic", "reaction",
+    "lyric", "lyrics", "audio", "visualizer", "visualiser", "teaser", "trailer", "dance",
+    "slowed", "sped", "reverb", "nightcore", "performance", "concert", "tutorial",
+}
 
 
 def rank_by_query(results: list[TrackResult], query: str) -> list[TrackResult]:
     """Most query words found in the title + artists first; ties keep their order."""
     words = _tokens(query)
     return sorted(results, key=lambda t: -_matched_count(words, _tokens(f"{t.title} {t.artists}")))
+
+
+def music_videos_first(songs: list[Any], videos: list[Any]) -> list[Any]:
+    """Each song's own music video (official first) right before it, the remaining videos after the songs."""
+    remaining = list(videos)
+    out: list[Any] = []
+    for row in songs:
+        song = _normalize_one(row)
+        if song is None:
+            out.append(row)
+            continue
+        own = [v for v in remaining if _is_music_video_of(v, song)]
+        own.sort(key=lambda v: v.get("videoType") != _OFFICIAL_MUSIC_VIDEO)
+        remaining = [v for v in remaining if v not in own]
+        out += [*own, row]
+    return [*out, *remaining]
+
+
+def _is_music_video_of(row: Any, song: TrackResult) -> bool:
+    video = _normalize_one(row)
+    # Same id = the song row itself, which keeps its catalogue metadata only if it stays first.
+    if video is None or video.id == song.id:
+        return False
+    words = _tokens(f"{video.title} {video.artists}")
+    song_words = _tokens(f"{song.title} {song.artists}")
+    extra_words = set(words) - set(song_words)
+    is_music_video = row.get("videoType") == _OFFICIAL_MUSIC_VIDEO or bool(_MUSIC_VIDEO_WORDS & extra_words)
+    return (
+        is_music_video
+        and bool(song_words)
+        and _matched_count(song_words, words) == len(song_words)
+        and not (_OTHER_VERSION_WORDS & extra_words)
+    )
 
 
 def _matched_count(words: list[str], candidate: list[str]) -> int:
@@ -46,7 +86,7 @@ class YoutubeMusicSearch(Protocol):
 
 
 class YtMusicSearch:
-    """Songs (catalogue tracks) first, then videos (music videos, uploads)."""
+    """Songs (catalogue tracks), each led by its own music video, then the other videos."""
 
     def __init__(self) -> None:
         from ytmusicapi import YTMusic
@@ -59,7 +99,7 @@ class YtMusicSearch:
     def _search(self, query: str) -> list[TrackResult]:
         songs = self._yt.search(query, filter="songs")[:_RESULTS_PER_KIND]
         videos = self._yt.search(query, filter="videos")[:_RESULTS_PER_KIND]
-        return normalize_results([*songs, *videos])
+        return normalize_results(music_videos_first(songs, videos))
 
 
 def normalize_results(rows: list[dict[str, Any]]) -> list[TrackResult]:
