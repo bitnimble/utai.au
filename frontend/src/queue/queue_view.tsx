@@ -1,5 +1,5 @@
 import classNames from 'classnames';
-import { EllipsisVertical, GripVertical, ListMusic, ListStart, SkipForward, Trash2, X } from 'lucide-react';
+import { EllipsisVertical, GripVertical, ListMusic, ListPlus, ListStart, SkipForward, Trash2, X } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { MusicSearchPanel } from 'src/music_source/music_search_panel';
@@ -72,6 +72,7 @@ export const QueueLoadingScreen = observer(function QueueLoadingScreen() {
 const SIDEBAR_TABS: ReadonlyArray<TabOption<QueueSidebarTab>> = [
   { value: 'current', label: 'Current', testId: 'queue-tab-current' },
   { value: 'search', label: 'Search', testId: 'queue-tab-search' },
+  { value: 'history', label: 'History', testId: 'queue-tab-history' },
 ];
 
 export const QueueSidebar = observer(function QueueSidebar() {
@@ -101,8 +102,57 @@ export const QueueSidebar = observer(function QueueSidebar() {
           <X size={16} aria-hidden="true" />
         </button>
       </header>
-      {store.sidebarTab === 'current' ? <CurrentQueue /> : <MusicSearchPanel />}
+      <SidebarPanel tab={store.sidebarTab} />
     </aside>
+  );
+});
+
+const SidebarPanel = ({ tab }: { tab: QueueSidebarTab }): React.ReactElement => {
+  switch (tab) {
+    case 'current':
+      return <CurrentQueue />;
+    case 'search':
+      return <MusicSearchPanel />;
+    case 'history':
+      return <PlayedHistory />;
+  }
+};
+
+const PlayedHistory = observer(function PlayedHistory() {
+  const store = React.useContext(QueueStoreContext)!;
+  const presenter = React.useContext(QueuePresenterContext)!;
+  if (store.history.length === 0) {
+    return (
+      <p className={styles.empty} data-testid="queue-history-empty">
+        Nothing played yet.
+      </p>
+    );
+  }
+  return (
+    <ol className={styles.list}>
+      {store.history.map(({ title, artist, source }, index) => (
+        <li key={index} className={styles.item} data-testid="queue-history-item">
+          <div className={styles.itemText}>
+            <span className={styles.itemTitle} data-testid="queue-history-item-title">
+              {title}
+            </span>
+            {artist && <span className={styles.itemArtist}>{artist}</span>}
+          </div>
+          {source && (
+            <button
+              type="button"
+              className={styles.iconButton}
+              onClick={() => presenter.add(source)}
+              aria-label={`Add ${title} to the queue`}
+              title="Add to the queue"
+              data-testid="queue-history-add"
+            >
+              <ListPlus size={16} aria-hidden="true" />
+            </button>
+          )}
+        </li>
+      ))}
+    </ol>
   );
 });
 
@@ -122,7 +172,7 @@ const CurrentQueue = observer(function CurrentQueue() {
       {store.items.map((item, index) => (
         <li
           key={item.id}
-          className={classNames(styles.item, draggingId === item.id && styles.itemDragging)}
+          className={classNames(styles.item, styles.itemDraggable, draggingId === item.id && styles.itemDragging)}
           draggable
           onDragStart={(e) => {
             e.dataTransfer.effectAllowed = 'move';

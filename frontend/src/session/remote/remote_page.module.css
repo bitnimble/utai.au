@@ -157,6 +157,15 @@
     border-bottom: 1px solid var(--color-border-soft);
 }
 
+.result {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 8px 10px 16px;
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-text-strong);
+}
+
 .itemText {
     flex: 1 1 auto;
     display: flex;
@@ -191,6 +200,7 @@
 
 .iconButton {
     composes: ghost from '../../ui/button/button.module.css';
+    flex: 0 0 auto;
     justify-content: center;
     width: 40px;
     height: 40px;

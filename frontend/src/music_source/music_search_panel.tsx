@@ -97,7 +97,7 @@ const ResultsView = observer(function ResultsView({
   );
 });
 
-export const ResultRow = observer(function ResultRow({
+const ResultRow = observer(function ResultRow({
   result,
   selected,
   onPick,
@@ -115,33 +115,40 @@ export const ResultRow = observer(function ResultRow({
         onClick={onPick}
         data-testid={`music-search-result-${result.id}`}
       >
-        <span className={styles.thumbnail}>
-          <Music size={24} aria-hidden="true" />
-          {result.coverUrl != null && (
-            <img
-              src={result.coverUrl}
-              alt=""
-              loading="lazy"
-              referrerPolicy="no-referrer"
-              onError={(e) => {
-                e.currentTarget.hidden = true;
-              }}
-            />
-          )}
-        </span>
-        <span className={styles.resultText}>
-          <span className={styles.resultTitle}>{result.title}</span>
-          {result.artists && <span className={styles.resultArtist}>{result.artists}</span>}
-          <span className={styles.resultSecondary}>
-            {serviceLabel(result.service)}
-            {result.album ? ` · ${result.album}` : ''}
-            {typeof result.durationSec === 'number' ? ` · ${formatDuration(result.durationSec)}` : ''}
-          </span>
-        </span>
+        <ResultSummary result={result} />
       </button>
     </li>
   );
 });
+
+/** A fragment, for the caller to lay out in a row. */
+export const ResultSummary = ({ result }: { result: TrackResult }): React.ReactElement => (
+  <>
+    <span className={styles.thumbnail}>
+      <Music size={24} aria-hidden="true" />
+      {result.coverUrl != null && (
+        <img
+          src={result.coverUrl}
+          alt=""
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={(e) => {
+            e.currentTarget.hidden = true;
+          }}
+        />
+      )}
+    </span>
+    <span className={styles.resultText}>
+      <span className={styles.resultTitle}>{result.title}</span>
+      {result.artists && <span className={styles.resultArtist}>{result.artists}</span>}
+      <span className={styles.resultSecondary}>
+        {serviceLabel(result.service)}
+        {result.album ? ` · ${result.album}` : ''}
+        {typeof result.durationSec === 'number' ? ` · ${formatDuration(result.durationSec)}` : ''}
+      </span>
+    </span>
+  </>
+);
 
 const QueueFooter = observer(function QueueFooter({
   store,

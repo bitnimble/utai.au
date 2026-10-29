@@ -19,7 +19,12 @@ export type QueueItem = {
   readonly status: QueueItemStatus;
 };
 
-export type QueueSidebarTab = 'current' | 'search';
+export type PlayedSong = Pick<QueueItem, 'title' | 'artist'> & {
+  /** Unset for a local file played before the page reloaded. */
+  readonly source: QueueSource | undefined;
+};
+
+export type QueueSidebarTab = 'current' | 'search' | 'history';
 
 /**
  * Upcoming songs, in play order (the current song isn't in here), plus the
@@ -28,6 +33,8 @@ export type QueueSidebarTab = 'current' | 'search';
  */
 export class QueueStore {
   items: QueueItem[] = [];
+  /** Most recently played first. */
+  history: PlayedSong[] = [];
   sidebarOpen = false;
   sidebarTab: QueueSidebarTab = 'current';
   /** The next song starts the moment it's ready. */
@@ -38,7 +45,7 @@ export class QueueStore {
   constructor() {
     // Shallow: items hold large prepared songs (stems, word-timed lyrics) that
     // must not be deep-converted into observables.
-    makeAutoObservable(this, { items: observable.shallow });
+    makeAutoObservable(this, { items: observable.shallow, history: observable.shallow });
   }
 
   /** The song that plays next; failed items are passed over. */

@@ -2,6 +2,7 @@ import classNames from 'classnames';
 import {
   ArrowDown,
   ArrowUp,
+  ListPlus,
   ListStart,
   Music,
   Pause,
@@ -14,7 +15,7 @@ import {
 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
-import { formatDuration, ResultRow } from 'src/music_source/music_search_panel';
+import { formatDuration, ResultSummary } from 'src/music_source/music_search_panel';
 import { statusLabel } from 'src/queue/queue_view';
 import { Modal, ModalBody, ModalHeader } from 'src/ui/modal/modal';
 import { Slider } from 'src/ui/slider/slider';
@@ -72,11 +73,7 @@ export const RemotePage = observer(function RemotePage({ sessionId, apiBase }: {
       <div className={styles.tabs}>
         <Tabs options={TABS} value={store.tab} onChange={(tab) => presenter.setTab(tab)} ariaLabel="Remote" />
       </div>
-      {store.tab === 'queue' ? (
-        <RemoteQueue store={store} presenter={presenter} />
-      ) : (
-        <RemoteSearch store={store} presenter={presenter} />
-      )}
+      <RemoteTabPanel store={store} presenter={presenter} />
       <ToastContainer />
     </div>
   );
@@ -85,6 +82,7 @@ export const RemotePage = observer(function RemotePage({ sessionId, apiBase }: {
 const TABS: ReadonlyArray<TabOption<RemoteTab>> = [
   { value: 'queue', label: 'Queue', testId: 'remote-tab-queue' },
   { value: 'search', label: 'Add songs', testId: 'remote-tab-search' },
+  { value: 'history', label: 'History', testId: 'remote-tab-history' },
 ];
 
 const ShareModal = observer(function ShareModal({ store, presenter }: Props) {
@@ -97,6 +95,17 @@ const ShareModal = observer(function ShareModal({ store, presenter }: Props) {
       </ModalBody>
     </Modal>
   );
+});
+
+const RemoteTabPanel = observer(function RemoteTabPanel({ store, presenter }: Props) {
+  switch (store.tab) {
+    case 'queue':
+      return <RemoteQueue store={store} presenter={presenter} />;
+    case 'search':
+      return <RemoteSearch store={store} presenter={presenter} />;
+    case 'history':
+      return <RemoteHistory store={store} presenter={presenter} />;
+  }
 });
 
 const ConnectionStatus = observer(function ConnectionStatus({ store }: { store: RemoteStore }) {
@@ -266,6 +275,52 @@ const RemoteQueue = observer(function RemoteQueue({ store, presenter }: Props) {
   );
 });
 
+const RemoteHistory = observer(function RemoteHistory({ store, presenter }: Props) {
+  const history = store.host?.history ?? [];
+  if (history.length === 0) {
+    return (
+      <p className={styles.empty} data-testid="remote-history-empty">
+        Nothing played yet.
+      </p>
+    );
+  }
+  return (
+    <ol className={styles.list}>
+      {history.map(({ title, artist, track }, index) => (
+        <li key={index} className={styles.item} data-testid="remote-history-item">
+          <div className={styles.itemText}>
+            <span className={styles.itemTitle} data-testid="remote-history-item-title">
+              {title}
+            </span>
+            {artist && <span className={styles.itemArtist}>{artist}</span>}
+          </div>
+          {track && <AddButton title={title} onAdd={() => presenter.add(track)} testId="remote-history-add" />}
+        </li>
+      ))}
+    </ol>
+  );
+});
+
+const AddButton = ({
+  title,
+  onAdd,
+  testId,
+}: {
+  title: string;
+  onAdd: () => void;
+  testId: string;
+}): React.ReactElement => (
+  <button
+    type="button"
+    className={styles.iconButton}
+    onClick={onAdd}
+    aria-label={`Add ${title} to the queue`}
+    data-testid={testId}
+  >
+    <ListPlus size={18} aria-hidden="true" />
+  </button>
+);
+
 const RemoteSearch = observer(function RemoteSearch({ store, presenter }: Props) {
   const phase = store.searchPhase;
   const searching = phase.kind === 'searching';
@@ -274,7 +329,7 @@ const RemoteSearch = observer(function RemoteSearch({ store, presenter }: Props)
     presenter.search();
   };
   let placeholder: string | undefined;
-  if (phase.kind === 'idle') placeholder = 'Search for a song, then tap it to queue it.';
+  if (phase.kind === 'idle') placeholder = 'Search for a song, then add it to the queue.';
   else if (phase.kind === 'searching') placeholder = 'Searching…';
   else if (phase.kind === 'no-results') placeholder = 'No tracks found.';
   else if (phase.kind === 'error') placeholder = `Search failed: ${phase.message}`;
@@ -306,7 +361,10 @@ const RemoteSearch = observer(function RemoteSearch({ store, presenter }: Props)
       ) : (
         <ul className={styles.list} data-testid="remote-search-results">
           {store.results.map((result) => (
-            <ResultRow key={result.id} result={result} selected={false} onPick={() => presenter.add(result)} />
+            <li key={result.id} className={styles.result} data-testid={`music-search-result-${result.id}`}>
+              <ResultSummary result={result} />
+              <AddButton title={result.title} onAdd={() => presenter.add(result)} testId="remote-search-add" />
+            </li>
           ))}
         </ul>
       )}

@@ -8,7 +8,9 @@ import type { SongIdentity } from 'src/song_identity/identify_song';
 import type { IdentifyTrack } from 'src/song_identity/identify_track';
 import { toastStore } from 'src/ui/toasts/toasts';
 import type { PrepareSong, PrepareStage, QueueSource } from './prepare_song';
-import { QueueItem, QueueItemId, QueueSidebarTab, QueueStore } from './queue_store';
+import { PlayedSong, QueueItem, QueueItemId, QueueSidebarTab, QueueStore } from './queue_store';
+
+const MAX_HISTORY_LENGTH = 100;
 
 type SongLoader = Pick<SongIoPresenter, 'loadPreparedSong' | 'clearSong'>;
 type Transport = Pick<PlaybackEngine, 'state' | 'play' | 'onEnded'>;
@@ -123,6 +125,11 @@ export class QueuePresenter {
     if (this.preparing?.id === id) this.preparing.controller.abort();
   }
 
+  /** Appends songs played before this page loaded. */
+  restoreHistory(history: PlayedSong[]): void {
+    this.store.history = [...this.store.history, ...history].slice(0, MAX_HISTORY_LENGTH);
+  }
+
   /** Drop the current song; the next one starts as soon as it's ready. */
   skip(): void {
     if (!this.store.canSkip) return;
@@ -155,11 +162,16 @@ export class QueuePresenter {
     try {
       await this.songIo.loadPreparedSong(item.status.song);
       await this.transport.play();
+      if (this.transport.state === 'playing') this.recordPlayed(item);
     } catch (err) {
       toastStore.showError(`Could not play ${item.title}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       this.finishStart();
     }
+  }
+
+  private recordPlayed({ title, artist, source }: QueueItem): void {
+    this.store.history = [{ title, artist, source }, ...this.store.history].slice(0, MAX_HISTORY_LENGTH);
   }
 
   private finishStart(): void {

@@ -6,7 +6,7 @@ import { remotePath } from '../app_route';
 import type { SocketStatus } from '../session_client';
 import type { HostState } from '../session_protocol';
 
-export type RemoteTab = 'queue' | 'search';
+export type RemoteTab = 'queue' | 'search' | 'history';
 
 const POSITION_TICK_MS = 250;
 

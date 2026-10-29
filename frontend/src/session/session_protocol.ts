@@ -35,6 +35,14 @@ const remoteQueueItemSchema = z.object({
 });
 export type RemoteQueueItem = z.infer<typeof remoteQueueItemSchema>;
 
+const remotePlayedSongSchema = z.object({
+  title: z.string(),
+  artist: z.string(),
+  /** Streaming songs only: what a remote re-adds, and a reloaded host restores. */
+  track: trackResultSchema.optional(),
+});
+export type RemotePlayedSong = z.infer<typeof remotePlayedSongSchema>;
+
 export const hostStateSchema = z.object({
   nowPlaying: z
     .object({
@@ -48,6 +56,7 @@ export const hostStateSchema = z.object({
   positionSec: z.number(),
   outputVolume: z.number(),
   queue: z.array(remoteQueueItemSchema),
+  history: z.array(remotePlayedSongSchema).default([]),
   waitingForId: z.string().optional(),
   canSkip: z.boolean(),
 });

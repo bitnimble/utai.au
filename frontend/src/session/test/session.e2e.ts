@@ -7,8 +7,9 @@ const REMOTE_PATH = `${HOST_PATH}/remote`;
 class FakeRelay {
   private host: WebSocketRoute | undefined;
   private readonly remotes = new Map<string, WebSocketRoute>();
-  private state: unknown = null;
   private nextClient = 1;
+
+  constructor(private state: unknown = null) {}
 
   async attach(page: Page): Promise<void> {
     await page.routeWebSocket(/\/api\/sessions\/[^/]+\/ws/, (ws) => this.connect(ws));
@@ -106,7 +107,7 @@ test('landing: joining checks the code, then opens the remote', async ({ page })
   await expect(page.getByTestId('remote-page')).toBeVisible();
 });
 
-test('remote: searches through the host, queues, removes, and drives playback', async ({ page, context }) => {
+test('remote: searches through the host, queues, removes, drives playback, and sees it in history', async ({ page, context }) => {
   const relay = new FakeRelay();
   await relay.attach(page);
   await page.route('**/api/music/search?*', (route) =>
@@ -136,7 +137,7 @@ test('remote: searches through the host, queues, removes, and drives playback', 
   await remote.getByTestId('remote-tab-search').click();
   await remote.getByTestId('remote-search-input').fill('pick');
   await remote.getByTestId('remote-search-submit').click();
-  await remote.getByTestId('music-search-result-t1').click();
+  await remote.getByTestId('music-search-result-t1').getByTestId('remote-search-add').click();
 
   await remote.getByTestId('remote-tab-queue').click();
   await expect(remote.getByTestId('remote-queue-item-title')).toHaveText(['Remote Pick']);
@@ -159,6 +160,15 @@ test('remote: searches through the host, queues, removes, and drives playback', 
   await expect(remote.getByTestId('remote-play')).toHaveAttribute('aria-label', 'Play');
   await remote.getByTestId('remote-play').click();
   await expect.poll(() => hostPlayerState(page)).toBe('playing');
+
+  await remote.getByTestId('remote-tab-history').click();
+  await expect(remote.getByTestId('remote-history-item-title')).toHaveText(['Imported']);
+  await page.getByTestId('queue-open').click();
+  await page.getByTestId('queue-tab-history').click();
+  await expect(page.getByTestId('queue-history-item-title')).toHaveText(['Imported']);
+  await expect(remote.getByTestId('remote-history-add')).toHaveCount(0);
+  await page.getByTestId('queue-history-add').click();
+  await expect.poll(() => hostQueueLength(page)).toBe(1);
 });
 
 test('host: another device can take over hosting, and this one can take it back',async ({ page, context }) => {
@@ -202,6 +212,44 @@ test('host: a session the relay lost is swapped for a new one', async ({ page })
   await live?.close({ code: 1012 });
   await expect(page.getByTestId('session-code')).toHaveText('NEW111');
   await expect(page).toHaveURL('/session/NEW111');
+});
+
+test('host: a reloaded host picks its song history back up, and a remote can re-add from it', async ({
+  page,
+  context,
+}) => {
+  const relay = new FakeRelay({
+    nowPlaying: null,
+    playback: 'idle',
+    positionSec: 0,
+    outputVolume: 1,
+    queue: [],
+    history: [
+      {
+        title: 'Second',
+        artist: 'B',
+        track: { id: 't2', service: 'deezer', title: 'Second', artists: 'B', sourceUrl: 'u2', uploaderTitled: false },
+      },
+      { title: 'First', artist: 'A' },
+    ],
+    canSkip: false,
+  });
+  await relay.attach(page);
+  await page.route('**/api/music/fetch', (route) => route.fulfill({ status: 500, json: { detail: 'no audio here' } }));
+  await page.goto(HOST_PATH);
+  await page.getByTestId('queue-open').click();
+  await page.getByTestId('queue-tab-history').click();
+  await expect(page.getByTestId('queue-history-item-title')).toHaveText(['Second', 'First']);
+  await expect(page.getByTestId('queue-history-add')).toHaveCount(1);
+
+  const remote = await context.newPage();
+  await relay.attach(remote);
+  await remote.goto(REMOTE_PATH);
+  await remote.getByTestId('remote-tab-history').click();
+  await expect(remote.getByTestId('remote-history-item-title')).toHaveText(['Second', 'First']);
+  await expect(remote.getByTestId('remote-history-add')).toHaveCount(1);
+  await remote.getByTestId('remote-history-add').click();
+  await expect.poll(() => hostQueueLength(page)).toBe(1);
 });
 
 test('host: a session this browser did not create offers to join it as a remote', async ({ page }) => {

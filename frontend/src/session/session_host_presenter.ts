@@ -7,7 +7,7 @@ import type { SongStore } from 'src/karaoke/song_store';
 import { sessionLane } from 'src/net/backend_fetch';
 import type { TrackResult } from 'src/net/music_source_client';
 import type { QueuePresenter } from 'src/queue/queue_presenter';
-import type { QueueItem, QueueStore } from 'src/queue/queue_store';
+import type { PlayedSong, QueueItem, QueueStore } from 'src/queue/queue_store';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { hostPath } from './app_route';
 import { createSession, type HostSession, SessionSocket, type SocketStatus } from './session_client';
@@ -18,6 +18,7 @@ import {
   type RelayFrame,
   type RemoteCommand,
   remoteCommandSchema,
+  type RemotePlayedSong,
   type RemoteQueueItem,
 } from './session_protocol';
 import type { SessionHostStore } from './session_host_store';
@@ -28,7 +29,7 @@ type Transport = Pick<PlaybackEngine, 'state' | 'currentTime' | 'pause'>;
 
 export type SessionHostDeps = {
   queue: QueueStore;
-  queuePresenter: Pick<QueuePresenter, 'add' | 'remove' | 'move' | 'playNext' | 'skip'>;
+  queuePresenter: Pick<QueuePresenter, 'add' | 'remove' | 'move' | 'playNext' | 'skip' | 'restoreHistory'>;
   song: SongStore;
   karaoke: Pick<KaraokePresenter, 'togglePlay' | 'seek'>;
   transport: Transport;
@@ -48,7 +49,7 @@ export class SessionHostPresenter {
   private disposed = false;
   private replacedSinceOpen = false;
   private searches = 0;
-  /** Search results sent to remotes, keyed by `sourceUrl`: the only tracks a remote may add. */
+  /** Search results sent to remotes, keyed by `sourceUrl`: with played songs, the only tracks a remote may add. */
   private readonly offered = new Map<string, TrackResult>();
   private disposers: Array<() => void> = [];
 
@@ -187,7 +188,9 @@ export class SessionHostPresenter {
     if (this.restored) return;
     this.restored = true;
     const parsed = hostStateSchema.safeParse(state);
-    if (!parsed.success || this.deps.queue.items.length > 0) return;
+    if (!parsed.success) return;
+    this.deps.queuePresenter.restoreHistory(parsed.data.history.map(fromRemotePlayed));
+    if (this.deps.queue.items.length > 0) return;
     for (const item of parsed.data.queue) {
       if (item.track) this.deps.queuePresenter.add({ kind: 'streaming', track: item.track });
     }
@@ -213,7 +216,7 @@ export class SessionHostPresenter {
         this.deps.audioDevicePresenter.setOutputVolume(command.volume);
         return;
       case 'add': {
-        const track = this.offered.get(command.track.sourceUrl);
+        const track = this.offered.get(command.track.sourceUrl) ?? this.playedTrack(command.track.sourceUrl);
         if (track == null || this.deps.queue.items.length >= MAX_REMOTE_QUEUE_LENGTH) return;
         queuePresenter.add({ kind: 'streaming', track });
         return;
@@ -263,6 +266,13 @@ export class SessionHostPresenter {
     }
   }
 
+  private playedTrack(sourceUrl: string): TrackResult | undefined {
+    for (const { source } of this.deps.queue.history) {
+      if (source?.kind === 'streaming' && source.track.sourceUrl === sourceUrl) return source.track;
+    }
+    return undefined;
+  }
+
   private reply(to: string, reply: HostReply): void {
     this.socket?.send({ type: 'reply', to, reply });
   }
@@ -287,6 +297,7 @@ export class SessionHostPresenter {
       playback: transport.state === 'playing' || transport.state === 'paused' ? transport.state : 'idle',
       outputVolume: audioDevice.outputVolume,
       queue: queue.items.map(toRemoteItem),
+      history: queue.history.map(toRemotePlayed),
       waitingForId: queue.waitingFor?.id,
       canSkip: queue.canSkip,
     };
@@ -301,6 +312,14 @@ function toRemoteItem(item: QueueItem): RemoteQueueItem {
     status: item.status.kind === 'ready' ? { kind: 'ready' } : item.status,
     track: item.source.kind === 'streaming' ? item.source.track : undefined,
   };
+}
+
+function toRemotePlayed({ title, artist, source }: PlayedSong): RemotePlayedSong {
+  return { title, artist, track: source?.kind === 'streaming' ? source.track : undefined };
+}
+
+function fromRemotePlayed({ title, artist, track }: RemotePlayedSong): PlayedSong {
+  return { title, artist, source: track ? { kind: 'streaming', track } : undefined };
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -50,10 +50,10 @@ gateway) is `#[cfg(desktop)]`-gated.
 
 The website's `/` offers Create a session or Join one as a remote. `/session/<ID>`
 is the playback host (the full player); `/session/<ID>/remote` is a phone
-remote (queue, search, transport, volume). The desktop and Android apps skip
+remote (queue, search, history, transport, volume). The desktop and Android apps skip
 the landing page and host their own session at launch. The host owns the queue
 and playback and does all backend work (search included; remotes may only add
-tracks the host's own search returned); the session server
+tracks the host's own search returned or it already played); the session server
 (`aligner/app/sessions.py`, in-memory, 1h idle expiry) is a dumb relay
 between host and remotes. Creating a session returns a host token, kept in
 localStorage, that a host socket must present; a host whose session the relay

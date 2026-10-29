@@ -222,6 +222,30 @@ describe('QueuePresenter', () => {
     expect(h.store.waitingFor).toBeUndefined();
   });
 
+  test('history lists played songs, most recent first, and not songs that never started', async () => {
+    const h = setup();
+    await playFirst(h, 'a');
+    h.add('b');
+    h.add('silent');
+    h.add('c');
+    h.pending[1].reject(new Error('bad file'));
+    await flush();
+    h.pending[2].resolve();
+    h.transport.end();
+    await flush();
+    h.pending[3].resolve();
+    await flush();
+    expect(h.loaded).toEqual(['a', 'silent', 'c']);
+    expect(h.store.history.map((s) => s.title)).toEqual(['c', 'a']);
+  });
+
+  test('restored history goes below songs already played here', async () => {
+    const h = setup();
+    await playFirst(h, 'a');
+    h.presenter.restoreHistory([{ title: 'old', artist: '', source: undefined }]);
+    expect(h.store.history.map((s) => s.title)).toEqual(['a', 'old']);
+  });
+
   test('a song that fails to start does not stall the queue', async () => {
     const h = setup();
     h.add('silent');
