@@ -1,6 +1,15 @@
 {
   "worktree": {
-    "setup": "bun install\ncp $PASEO_SOURCE_CHECKOUT_PATH/.env $PASEO_WORKTREE_PATH/.env"
+    "setup": [
+      "bun install",
+      "cp $PASEO_SOURCE_CHECKOUT_PATH/.env $PASEO_WORKTREE_PATH/.env",
+      "ln -s $PASEO_SOURCE_CHECKOUT_PATH/aligner/.venv $PASEO_WORKTREE_PATH/aligner/.venv"
+    ]
+  },
+  "scripts": {
+    "release": {
+      "command": "bun run release"
+    }
   },
   "metadataGeneration": {
     "branchName": {

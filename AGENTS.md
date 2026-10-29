@@ -115,6 +115,14 @@ header `backendFetch` attaches.
   - **Python**: `scripts/check-py [pytest args]` (ruff `--fix` + pytest in
     `aligner/`, from `aligner/.venv`); `scripts/test-py` (pytest only). Never
     invoke pytest/ruff directly (denied in `.claude/settings.json`).
+- **In a paseo worktree, `aligner/.venv` is a symlink to the main checkout's
+  venv, shared by every worktree.** Never `uv sync`/`uv add`/`pip install`
+  into it: that changes it for all of them. If your branch needs different
+  deps, delete the symlink and build a fresh venv in the worktree
+  (`cd aligner && uv sync`). Its editable `utai-aligner` install points at
+  the main checkout's `aligner/`: `scripts/check-py` still tests the
+  worktree's code (pytest puts the worktree's `aligner/` first on
+  `sys.path`), but importing `app` from outside `aligner/` gets main's copy.
 - **Don't run `bun run dev`** (human-only watch). For a compile smoke test
   use **`bun run build`**.
 - **Any front-end change reruns the e2e suite.** After touching `src/**` or
