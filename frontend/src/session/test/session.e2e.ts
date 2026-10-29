@@ -61,6 +61,11 @@ class FakeRelay {
     });
   }
 
+  /** As if a remote had sent it, bypassing the remote page's UI. */
+  sendToHost(command: Record<string, unknown>): void {
+    if (this.host) send(this.host, { type: 'command', from: 'forged', command });
+  }
+
   private broadcast(message: Record<string, unknown>): void {
     for (const remote of this.remotes.values()) send(remote, message);
   }
@@ -241,6 +246,11 @@ test('host: a reloaded host picks its song history back up, and a remote can re-
   await page.getByTestId('queue-tab-history').click();
   await expect(page.getByTestId('queue-history-item-title')).toHaveText(['Second', 'First']);
   await expect(page.getByTestId('queue-history-add')).toHaveCount(1);
+
+  relay.sendToHost({
+    kind: 'add',
+    track: { id: 'x', service: 'deezer', title: 'Never offered', artists: 'X', sourceUrl: 'ux', uploaderTitled: false },
+  });
 
   const remote = await context.newPage();
   await relay.attach(remote);
