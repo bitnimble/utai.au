@@ -29,7 +29,7 @@
     pointer-events: auto;
     max-width: min(420px, 90vw);
     padding: 8px 14px;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-xl);
     border: 1px solid transparent;
     box-shadow: var(--shadow-lg);
     cursor: pointer;

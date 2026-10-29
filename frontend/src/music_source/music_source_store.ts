@@ -35,14 +35,6 @@ export class MusicSourceStore {
     return this.results.find((r) => r.id === this.selectedId);
   }
 
-  /** Whether search will query anything: at least one connected (configured)
-   *  service. Drives the search panel's "set one up" prompt. Anonymous services
-   *  (YouTube Music) always count, so this is only false before the catalog
-   *  loads. */
-  get anyServiceConfigured(): boolean {
-    return this.services.some((s) => s.configured);
-  }
-
   /** The service catalog reordered by the current priority (unknown-to-priority
    *  services appended in catalog order), for the settings priority list. */
   get orderedServices(): ServiceInfo[] {
