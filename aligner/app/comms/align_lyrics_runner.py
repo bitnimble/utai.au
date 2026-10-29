@@ -75,9 +75,6 @@ class AlignLyricsRunner:
                     raise RuntimeError("vocals separator produced no vocals stem")
                 vocals_path = vocals
                 cancel.check()
-            # Pitch is not attached here: it's extracted once at separation time
-            # (a property of the vocal stem) and mapped onto these words by the
-            # frontend, so alignment never re-runs the f0 model.
             lines = get_aligner().realign_text(vocals_path, input_lines, language)
             return lines_to_json(lines)
         finally:

@@ -30,6 +30,7 @@ def test_prepends_trt_before_cuda(trt_ready):
     out = np_inference._with_tensorrt([CUDA, CPU])
     assert _heads(out) == [TRT, CUDA, CPU]
     assert out[0][1]["trt_engine_cache_enable"] is True
+    assert out[0][1]["trt_context_memory_sharing_enable"] is True
 
 
 def test_optout_env_disables(trt_ready, monkeypatch):

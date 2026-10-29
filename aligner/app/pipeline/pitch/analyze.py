@@ -3,9 +3,9 @@
 `extract_pitch_contour` runs the offline f0 extractor (RMVPE -- octave-robust on
 separated stems) once over the whole stem, cleans the contour, scans it for
 vibrato, and returns a JSON-serializable per-frame contour. Pitch is a property
-of the vocal stem, so this runs right after separation; the frontend then maps
-the contour onto aligned words (median / melisma / vibrato per word) locally,
-and alignment never re-runs the f0 model.
+of the vocal stem, so this runs once per stem (the `extractPitch` job /
+`/music/pitch`); the frontend then maps the contour onto aligned words (median /
+melisma / vibrato per word) locally, and alignment never re-runs the f0 model.
 
 Best-effort: if the f0 model isn't provisioned (a `separation`-only install
 without the `pitch` capability), it logs and returns None. SwiftF0 (fast,
@@ -42,12 +42,12 @@ def extract_pitch_contour(vocals_path: str | Path) -> dict | None:
     yield any frames."""
     extractor = _get_extractor()
     if extractor is None:
-        log.info("pitch: f0 model not provisioned; stem left pitch-less")
+        log.info("pitch: f0 model not provisioned; no contour")
         return None
     from app.pipeline.lyrics_onnx import load_audio_np
 
     audio = load_audio_np(vocals_path)
-    contour = extractor.extract(audio)
+    contour = extractor.extract(audio, release_memory=True)
     if contour.ts.shape[0] == 0:
         log.info("pitch: stem too short; no f0 frames")
         return None
@@ -81,8 +81,8 @@ def _nan_to_none(arr: np.ndarray) -> list[float | None]:
 
 def warm_extractor() -> bool:
     """Eagerly build the RMVPE session at startup so the first pitch pass pays no
-    model-load latency (keeps the f0 model hot alongside the separator). Returns
-    whether the f0 model was available; best-effort, never raises."""
+    model-load latency. Returns whether the f0 model was available; best-effort,
+    never raises."""
     try:
         return _get_extractor() is not None
     except Exception:
@@ -97,7 +97,8 @@ def _get_extractor() -> Rmvpe | None:
             path = _pitch_model_path()
             if path is None:
                 return None
-            _extractor = Rmvpe(path)
+            # CPU: keeps the weights + a whole-song activation peak off the GPU.
+            _extractor = Rmvpe(path, providers=["CPUExecutionProvider"])
         return _extractor
 
 

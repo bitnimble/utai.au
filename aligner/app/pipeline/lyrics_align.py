@@ -37,16 +37,9 @@ script with letters routes to the MMS + uroman path, and only
 genuinely letter-free text falls back to a plain `en` default.
 
 Models are loaded **lazily** on the first /music/align request rather
-than eagerly at startup; the existing separator stack already eats most
-of the GPU's wake-up budget, and lyrics alignment is an optional, on-
-demand feature. The aligner keeps the loaded models around for
-subsequent requests so warm-call latency drops to inference time only.
-
-Memory budget on a 6 GB consumer GPU (e.g. GTX 1660 Super): the
-separator pipeline unloads its model between stages, so when alignment
-runs the GPU has effectively ~5 GB free. MMS-300m at fp16 peaks at
-~600 MB and the English wav2vec2-large-robust head at ~650 MB, both
-comfortably within that budget.
+than eagerly at startup; lyrics alignment is an optional, on-demand
+feature. The aligner keeps the loaded models around for subsequent
+requests so warm-call latency drops to inference time only.
 """
 
 from __future__ import annotations
@@ -58,7 +51,6 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
-from app.pipeline.pitch.features import PitchSegment
 
 log = logging.getLogger(__name__)
 
@@ -110,15 +102,6 @@ class LyricWord:
     # UI debug tooltip show "displayed 君 / aligned kimi". None for
     # English / Chinese words, where `text` already is the aligned form.
     romaji: str | None = None
-    # Vocal pitch over `start_sec`..`end_sec`. Alignment leaves these None; the
-    # frontend fills them by mapping the vocal stem's pitch contour (extracted at
-    # separation, see `pitch.analyze.extract_pitch_contour`) onto each word.
-    # Retained on the wire type so a caller that DOES carry pitch (or a future
-    # server-side attach) round-trips through `_word_to_json` unchanged. `midi` is
-    # the median voiced pitch; `pitch_segments` are the held notes within the word
-    # (>1 == melisma), each optionally carrying vibrato.
-    midi: float | None = None
-    pitch_segments: list[PitchSegment] | None = None
 
 
 @dataclass
@@ -148,11 +131,6 @@ class InputLine:
 # convert frame counts to seconds in the audio-stats log without having
 # to read the original audio's sample rate.
 _AUDIO_SAMPLE_RATE = 16000
-# Batch size handed to ctc_forced_aligner.generate_emissions: how many
-# chunks of audio are pushed through the model in parallel. Each chunk
-# is ~30 s, so batch_size=4 keeps peak VRAM bounded while still being
-# faster than serial. Tune up if VRAM headroom exists.
-_CTC_BATCH_SIZE = 4
 
 # Simplified-Chinese-only characters whose Japanese equivalent uses a
 # visibly different glyph (e.g. simplified 爱 vs Japanese / traditional
@@ -374,9 +352,7 @@ class LyricsAligner:
             _log_token_sequence(all_tokens, all_text)
 
             try:
-                emissions, stride = aligner.generate_emissions(
-                    audio_waveform, batch_size=_CTC_BATCH_SIZE,
-                )
+                emissions, stride = aligner.generate_emissions(audio_waveform)
                 # `stride`'s unit is package-internal (seen as ms or samples
                 # per frame depending on version) so it's not safe to use
                 # for our diagnostic time axis. Derive sec/frame from the
@@ -1271,24 +1247,6 @@ def _word_to_json(w: LyricWord) -> dict[str, Any]:
         entry["endFallback"] = w.end_fallback
     if w.romaji is not None:
         entry["romaji"] = w.romaji
-    if w.midi is not None:
-        entry["midi"] = round(w.midi, 2)
-    if w.pitch_segments:
-        entry["pitchSegments"] = [_segment_to_json(s) for s in w.pitch_segments]
-    return entry
-
-
-def _segment_to_json(s: PitchSegment) -> dict[str, Any]:
-    entry: dict[str, Any] = {
-        "startSec": s.start_sec,
-        "endSec": s.end_sec,
-        "midi": round(s.midi, 2),
-    }
-    if s.vibrato is not None:
-        entry["vibrato"] = {
-            "rateHz": round(s.vibrato.rate_hz, 1),
-            "extentSemitones": round(s.vibrato.extent_semitones, 2),
-        }
     return entry
 
 

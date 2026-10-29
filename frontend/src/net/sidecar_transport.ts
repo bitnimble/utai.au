@@ -22,6 +22,7 @@ import { mkdir, readFile, remove, writeFile } from '@tauri-apps/plugin-fs';
 import {
   buildAlignLyricsRequest,
   buildAnalyzeBeatsRequest,
+  buildExtractPitchRequest,
   buildFetchVideoRequest,
   buildSeparateStemsRequest,
   newRequestId,
@@ -34,7 +35,7 @@ import type { AlignLyricsOptions, AlignLyricsRequest } from 'src/lyrics/forced_a
 import type { SeparatedStems, SeparateStemsOptions } from 'src/lyrics/separate_stems';
 import type { AnalyzeBeatsOptions } from 'src/editing/beats/analyze_beats_client';
 import { parseBeatAnalysis, type BeatAnalysis } from 'src/editing/beats/beat_analysis';
-import { parsePitchContour } from 'src/lyrics/pitch_contour';
+import { parsePitchContour, type PitchContour } from 'src/lyrics/pitch_contour';
 import type { LyricLine } from 'src/lyrics/lrc';
 
 /** True only on the Tauri desktop build, where the Rust `run_job`/`cancel_job`
@@ -156,9 +157,31 @@ function extractLines(data: unknown): LyricLine[] {
   return [];
 }
 
-/** Pull the raw `data.pitch` contour payload out of a separate `result` frame,
- *  for {@link parsePitchContour}; undefined when the sidecar shipped no pitch. */
-function extractPitch(data: unknown): unknown {
+/**
+ * Extract a vocals stem's pitch contour through the desktop sidecar. Same
+ * contract as {@link import('src/lyrics/extract_pitch').extractPitch}.
+ */
+export async function extractPitchSidecar(
+  vocals: File,
+  signal?: AbortSignal,
+): Promise<PitchContour | undefined> {
+  const id = newRequestId();
+  const audioPath = await writeTempAudio(id, vocals);
+  try {
+    const result = await runJob(id, buildExtractPitchRequest(id, { kind: 'path', path: audioPath }), { signal });
+    return parsePitchContour(extractPitchPayload(result.data));
+  } finally {
+    try {
+      await remove(audioPath);
+    } catch {
+      // already gone / unwritable
+    }
+  }
+}
+
+/** Pull the raw `data.pitch` payload out of a terminal `result` frame, for
+ *  {@link parsePitchContour}; undefined when the sidecar shipped no pitch. */
+function extractPitchPayload(data: unknown): unknown {
   if (data != null && typeof data === 'object') return (data as { pitch?: unknown }).pitch;
   return undefined;
 }
@@ -184,8 +207,7 @@ export async function separateStemsSidecar(
     });
     const vocals = await readStemArtifact(result.artifacts, 'vocals');
     const backing = await readStemArtifact(result.artifacts, 'accompaniment');
-    const pitchContour = parsePitchContour(extractPitch(result.data));
-    return { vocals, backing, pitchContour };
+    return { vocals, backing };
   } finally {
     try {
       await remove(audioPath);

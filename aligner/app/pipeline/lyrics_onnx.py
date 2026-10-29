@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from app.pipeline.audio_io import load_samples
+from app.pipeline.onnx_cuda import release_arena_run_options
 
 SR = 16000
 
@@ -195,8 +196,14 @@ def _time_to_frame(t: float) -> int:
     return int(t * (1000 / 20))  # 20 ms stride -> 50 fps
 
 
+# Chunks (~34 s each) per model run. Keep at 1: at batch 4 cuDNN 9 has no kernel
+# for wav2vec2's fp16 grouped pos_conv (HEURISTIC_QUERY_FAILED), and ORT silently
+# re-creates the session on CPU (~6x slower alignment).
+_BATCH_SIZE = 1
+
+
 def generate_emissions_np(session, audio: np.ndarray, *, window_length=30, context_length=2,
-                          batch_size=4):
+                          batch_size=_BATCH_SIZE):
     """Numpy port of `ctc_forced_aligner.generate_emissions`; returns `(emissions, stride)`.
     `emissions` is `(T, vocab+1)` log-probs (star token appended)."""
     window = int(window_length * SR)
@@ -213,9 +220,15 @@ def generate_emissions_np(session, audio: np.ndarray, *, window_length=30, conte
         chunks = np.stack([padded[i * window : i * window + chunk_len] for i in range(n_chunks)])
 
     name = session.get_inputs()[0].name
+    step = max(batch_size, 1)
+    starts = range(0, chunks.shape[0], step)
     outs = [
-        session.run(None, {name: chunks[i : i + batch_size]})[0]
-        for i in range(0, chunks.shape[0], max(batch_size, 1))
+        session.run(
+            None,
+            {name: chunks[i : i + step]},
+            release_arena_run_options(session) if i == starts[-1] else None,
+        )[0]
+        for i in starts
     ]
     emissions = np.concatenate(outs, axis=0)  # (n_chunks, frames, vocab)
     if context > 0:
@@ -267,8 +280,8 @@ class OnnxCtcAligner:
         self.session = _ort_session(onnx_path, providers)
         self.tokenizer = tokenizer
 
-    def generate_emissions(self, audio, *, batch_size=4):
-        return generate_emissions_np(self.session, audio, batch_size=batch_size)
+    def generate_emissions(self, audio):
+        return generate_emissions_np(self.session, audio)
 
     def get_alignments(self, emissions, tokens):
         return get_alignments_np(emissions, tokens, self.tokenizer)

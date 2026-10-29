@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
+from app.pipeline.onnx_cuda import default_providers, log_bound_ep, release_arena_run_options
 from app.pipeline.pitch.features import SR, F0Contour
 
 N_FFT = 1024
@@ -32,29 +33,23 @@ _CENTS = np.pad(20.0 * np.arange(360) + 1997.3794084376191, (4, 4))
 DEFAULT_THRED = 0.03
 
 
-def _ort_session(onnx_path: str | Path):
-    import onnxruntime as ort
-
-    from app.pipeline.onnx_cuda import default_providers, log_bound_ep
-
-    # GPU-first: there is VRAM headroom to keep every model resident, so the f0
-    # pass rides CUDA alongside separation + the CTC aligner rather than being
-    # pinned to CPU. Falls back to CPU where no GPU EP binds (still ~35x realtime).
-    sess = ort.InferenceSession(str(onnx_path), providers=default_providers())
-    log_bound_ep(sess, onnx_path)
-    return sess
-
-
 class Rmvpe:
     """An ORT RMVPE session + its mel front-end. `extract` takes 16 kHz mono
     float32 audio and returns per-frame f0 (0 Hz on unvoiced frames)."""
 
-    def __init__(self, onnx_path: str | Path) -> None:
-        self._sess = _ort_session(onnx_path)
+    def __init__(self, onnx_path: str | Path, providers=None) -> None:
+        import onnxruntime as ort
+
+        self._sess = ort.InferenceSession(str(onnx_path), providers=providers or default_providers())
+        log_bound_ep(self._sess, onnx_path)
         self._input_name = self._sess.get_inputs()[0].name
         self._mel_basis: np.ndarray | None = None  # built lazily (needs librosa)
 
-    def extract(self, audio_16k_mono: np.ndarray, *, thred: float = DEFAULT_THRED) -> F0Contour:
+    def extract(
+        self, audio_16k_mono: np.ndarray, *, thred: float = DEFAULT_THRED, release_memory: bool = False
+    ) -> F0Contour:
+        """`release_memory` hands the run's activation memory back afterwards: worth it
+        for a whole-song pass (grows with song length), not per live window."""
         audio = np.ascontiguousarray(np.reshape(audio_16k_mono, -1), dtype=np.float32)
         if audio.shape[0] < N_FFT:
             empty = np.zeros(0, dtype=np.float64)
@@ -64,7 +59,8 @@ class Rmvpe:
         # The DeepUnet downsamples by 32, so T must be a multiple of 32.
         pad = 32 * ((n - 1) // 32 + 1) - n
         mel_p = np.pad(mel, ((0, 0), (0, pad)), mode="constant") if pad else mel
-        salience = self._sess.run(None, {self._input_name: mel_p[None]})[0][0][:n]  # [T, 360]
+        run_options = release_arena_run_options(self._sess) if release_memory else None
+        salience = self._sess.run(None, {self._input_name: mel_p[None]}, run_options)[0][0][:n]  # [T, 360]
         hz, confidence = _decode(salience, thred)
         ts = np.arange(n) * HOP / SR
         return F0Contour(ts=ts, hz=hz, confidence=confidence, fps=FPS)

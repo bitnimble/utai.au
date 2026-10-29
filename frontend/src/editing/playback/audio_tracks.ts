@@ -45,7 +45,7 @@ export class AudioTrack {
   volume = 1;
   muted = false;
 
-  /** Vocal pitch contour, present on a `vocals` stem once separation extracted
+  /** Vocal pitch contour, present on a `vocals` stem once the backend extracted
    *  it. Read imperatively at align time to map pitch onto words, never in a
    *  render/hot path, so it's deliberately non-observable (the per-frame arrays
    *  are large and would be pointless to deep-observe). */

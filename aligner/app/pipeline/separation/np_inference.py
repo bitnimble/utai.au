@@ -26,6 +26,7 @@ import yaml
 from scipy import signal
 
 from app.pipeline.audio_io import load_samples
+from app.pipeline.onnx_cuda import release_arena_run_options
 
 from . import np_stft
 from ._chunking import (
@@ -214,7 +215,11 @@ def _with_tensorrt(providers):
 
     if not preload_tensorrt_libs():  # TRT runtime not installed -> stay on CUDA
         return providers
-    opts = {"trt_engine_cache_enable": True, "trt_timing_cache_enable": True}
+    opts: dict[str, bool | str] = {
+        "trt_engine_cache_enable": True,
+        "trt_timing_cache_enable": True,
+        "trt_context_memory_sharing_enable": True,
+    }
     cache = _trt_cache_dir()
     if cache:
         opts["trt_engine_cache_path"] = cache
@@ -305,26 +310,26 @@ class _RoformerFold:
         # CUDA_VISIBLE_DEVICES pins which physical GPU that is).
         self._devid = 0
 
-    def run(self, part: np.ndarray) -> np.ndarray:
+    def run(self, part: np.ndarray, run_options=None) -> np.ndarray:
         """part [s, chunk] -> stems, matching bs_unpack(...)[0]: [n, s, chunk] for
         multi-stem, [s, chunk] when n_stems == 1 (bs_unpack collapses the stem axis)."""
         io_f = self._fwd.io_binding()
         io_f.bind_cpu_input("audio", part[None].astype(np.float32))
         io_f.bind_output("stft_repr", device_type="cuda", device_id=self._devid)
-        self._fwd.run_with_iobinding(io_f)
+        self._fwd.run_with_iobinding(io_f, run_options)
         stft_repr = io_f.get_outputs()[0]  # resident in VRAM
 
         io_m = self._model.io_binding()
         io_m.bind_ortvalue_input(self._model_in, stft_repr)
         io_m.bind_output(self._model_out, device_type="cuda", device_id=self._devid)
-        self._model.run_with_iobinding(io_m)
+        self._model.run_with_iobinding(io_m, run_options)
         mask = io_m.get_outputs()[0]  # resident in VRAM
 
         io_i = self._inv.io_binding()
         io_i.bind_ortvalue_input("stft_repr", stft_repr)  # reuse the resident forward output
         io_i.bind_ortvalue_input("mask", mask)
         io_i.bind_output("out", device_type="cuda", device_id=self._devid)
-        self._inv.run_with_iobinding(io_i)
+        self._inv.run_with_iobinding(io_i, run_options)
         out = io_i.get_outputs()[0].numpy()  # [1,n,s,chunk] d->h
         return (out[:, 0] if self._n == 1 else out)[0]
 
@@ -357,24 +362,24 @@ class _RoformerFoldFrames:
         self._n, self._s = n_stems, channels
         self._devid = 0
 
-    def run(self, part: np.ndarray) -> np.ndarray:
+    def run(self, part: np.ndarray, run_options=None) -> np.ndarray:
         io_f = self._fwd.io_binding()
         io_f.bind_cpu_input("audio", part[None].astype(np.float32))
         io_f.bind_output("stft_repr", device_type="cuda", device_id=self._devid)
-        self._fwd.run_with_iobinding(io_f)
+        self._fwd.run_with_iobinding(io_f, run_options)
         stft_repr = io_f.get_outputs()[0]  # resident in VRAM
 
         io_m = self._model.io_binding()
         io_m.bind_ortvalue_input(self._model_in, stft_repr)
         io_m.bind_output(self._model_out, device_type="cuda", device_id=self._devid)
-        self._model.run_with_iobinding(io_m)
+        self._model.run_with_iobinding(io_m, run_options)
         mask = io_m.get_outputs()[0]  # resident in VRAM
 
         io_i = self._inv.io_binding()
         io_i.bind_ortvalue_input("stft_repr", stft_repr)  # reuse the resident forward output
         io_i.bind_ortvalue_input("mask", mask)
         io_i.bind_output("frames", device_type="cpu")
-        self._inv.run_with_iobinding(io_i)
+        self._inv.run_with_iobinding(io_i, run_options)
         frames = io_i.get_outputs()[0].numpy()  # [n*s, T, n_fft] d->h
         audio = np_stft.overlap_add(frames, self._n_fft, self._hop, self._window)
         stems = audio.reshape(self._n, self._s, -1)
@@ -402,12 +407,12 @@ class _RoformerFoldMac:
         self._n_fft, self._hop, self._window = n_fft, hop, window
         self._n, self._s = n_stems, channels
 
-    def run(self, part: np.ndarray) -> np.ndarray:
+    def run(self, part: np.ndarray, run_options=None) -> np.ndarray:
         """part [s, chunk] -> stems, matching bs_unpack(...)[0] (stem axis collapsed
         when n_stems == 1)."""
         stft_repr = bs_pack(part[None], self._n_fft, self._hop, self._window)  # numpy framing + FFT
-        mask = self._model.run(None, {self._model_in: stft_repr})[0]
-        frames = self._inv.run(None, {"stft_repr": stft_repr, "mask": mask})[0]  # [n*s,T,n_fft] on ANE
+        mask = self._model.run(None, {self._model_in: stft_repr}, run_options)[0]
+        frames = self._inv.run(None, {"stft_repr": stft_repr, "mask": mask}, run_options)[0]  # [n*s,T,n_fft] on ANE
         audio = np_stft.overlap_add(frames, self._n_fft, self._hop, self._window)  # [n*s, samples] numpy
         stems = audio.reshape(self._n, self._s, -1)
         return stems[0] if self._n == 1 else stems
@@ -441,14 +446,11 @@ class NumpySeparator:
         self._fold_verified = False
         self._fold_off = False
 
-    def _run(self, x: np.ndarray) -> np.ndarray:
-        return self.session.run(None, {self._in: x})[0]
-
-    def _numpy_chunk(self, part, n_fft, hop, window, channels, n_stems) -> np.ndarray:
+    def _numpy_chunk(self, part, n_fft, hop, window, channels, n_stems, run_options=None) -> np.ndarray:
         """The numpy pre/post for one roformer chunk (the fold's fallback +
         parity reference). part [s, chunk] -> stems [n, s, chunk]."""
         stft_repr = bs_pack(part[None], n_fft, hop, window)
-        mask = self._run(stft_repr)
+        mask = self.session.run(None, {self._in: stft_repr}, run_options)[0]
         return bs_unpack(bs_apply_mask(stft_repr, mask), n_fft, hop, window, channels, n_stems)[0]
 
     def _build_fold(self, n_fft, hop, n_frames, n_stems, channels, window):
@@ -536,18 +538,19 @@ class NumpySeparator:
             if at_tail:
                 part = mix[:, -chunk_size:]
                 length = chunk_size
+            ro = release_arena_run_options(self.session) if done == len(starts) - 1 else None
             if fold is None:
-                x = self._numpy_chunk(part, n_fft, hop, window, audio_channels, num_stems)
+                x = self._numpy_chunk(part, n_fft, hop, window, audio_channels, num_stems, ro)
             else:
                 try:
-                    x = fold.run(part)  # (n, s, chunk)
+                    x = fold.run(part, ro)  # (n, s, chunk)
                 except Exception:
                     log.exception("folded STFT/iSTFT failed; reverting to the numpy path")
                     self._fold, self._fold_off, fold = None, True, None
-                    x = self._numpy_chunk(part, n_fft, hop, window, audio_channels, num_stems)
+                    x = self._numpy_chunk(part, n_fft, hop, window, audio_channels, num_stems, ro)
                 else:
                     if not self._fold_verified:  # one-time parity self-check vs numpy
-                        ref = self._numpy_chunk(part, n_fft, hop, window, audio_channels, num_stems)
+                        ref = self._numpy_chunk(part, n_fft, hop, window, audio_channels, num_stems, ro)
                         d = float(np.abs(x - ref).max())
                         # loose vs peak: residual GPU fp rounding is ~1e-3, a wiring
                         # bug gives O(1). Catches the latter, not the former. (The

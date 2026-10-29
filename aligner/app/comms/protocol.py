@@ -48,16 +48,15 @@ class Artifact(BaseModel):
     name: str | None = None
 
 
-Op = Literal["alignLyrics", "separateStems", "analyzeBeats", "fetchVideo"]
+Op = Literal["alignLyrics", "separateStems", "extractPitch", "analyzeBeats", "fetchVideo"]
 
 
 # ---- client -> backend ----------------------------------------------------
 
 
 class RequestArgs(BaseModel):
-    # Optional: the audio ops (alignLyrics / separateStems / analyzeBeats) each
-    # require it and raise if it's missing, but fetchVideo has no audio input
-    # (the id rides in `params`).
+    # Optional: the audio ops require it and raise if it's missing, but
+    # fetchVideo has no audio input (the id rides in `params`).
     audio: SourceRef | None = None
     params: dict[str, object] = Field(default_factory=dict)
 

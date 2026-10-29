@@ -17,6 +17,7 @@ import {
 } from 'src/karaoke/song_bundle';
 import type { SongMeta } from 'src/karaoke/song_schema';
 import { parseSongFilename, pickConfidentMatch } from 'src/lyrics/auto_lyrics';
+import { extractPitch } from 'src/lyrics/extract_pitch';
 import { alignLyricsForced } from 'src/lyrics/forced_align';
 import { LyricLine, parseLrc, shiftLines } from 'src/lyrics/lrc';
 import { LrclibMatch, searchLrclib } from 'src/lyrics/lrclib';
@@ -148,8 +149,8 @@ type KnownMusic = { durationSec: number; startSec: number; durationSlackSec: num
 
 type SyncedLyrics = { lines: LyricLine[]; trackName: string; artistName: string };
 
-/** Separate and beat-track a full mix, then align the lyrics once both the
- *  vocal stem and `lyricsSearch` are in. */
+/** Separate and beat-track a full mix, then align the lyrics (once both the
+ *  vocal stem and `lyricsSearch` are in) alongside the vocal pitch pass. */
 async function prepareMix(
   mix: File,
   meta: SongMeta,
@@ -176,11 +177,22 @@ async function prepareMix(
   ]);
   signal.throwIfAborted();
 
+  if (match) onStage({ kind: 'aligning' });
+  const [aligned, pitchContour] = await Promise.all([
+    match && alignWords(match.lines, music.startSec, mix, stems, songLabel, signal),
+    stems &&
+      extractPitch(stems.vocals, signal).catch((err: unknown) => {
+        if (!signal.aborted && !isBackendUnreachable(err)) console.warn('[pitch] extraction failed:', message(err));
+        return undefined;
+      }),
+  ]);
+  signal.throwIfAborted();
+
   const lyrics: LoadedLyrics[] = [];
   if (match) {
-    onStage({ kind: 'aligning' });
+    if (aligned && pitchContour) attachPitchToLines(pitchContour, aligned);
     lyrics.push({
-      lines: await alignWords(match.lines, music.startSec, mix, stems, songLabel, signal),
+      lines: aligned ? shiftLines(aligned, -music.startSec) : match.lines,
       source: 'lrclib',
       sourceLabel: `LRCLIB · ${match.trackName} - ${match.artistName}`,
       offsetSec: music.startSec,
@@ -196,7 +208,7 @@ async function prepareMix(
     stems: stems
       ? [
           { role: 'backing', file: stems.backing },
-          { role: 'vocals', file: stems.vocals, pitchContour: stems.pitchContour },
+          { role: 'vocals', file: stems.vocals, pitchContour },
         ]
       : [{ role: 'full-mix', file: mix }],
     lyrics,
@@ -204,9 +216,8 @@ async function prepareMix(
   };
 }
 
-/** Upgrade line-timed lyrics to word timings (plus the vocal pitch, when
- *  separation extracted it). Falls back to the line-timed input on failure.
- *  `lines` and the result are relative to `offsetSec` into the audio. */
+/** Upgrade line-timed lyrics to word timings, in audio time (`lines` are
+ *  relative to `offsetSec` into the audio). Undefined when nothing aligned. */
 async function alignWords(
   lines: LyricLine[],
   offsetSec: number,
@@ -214,7 +225,7 @@ async function alignWords(
   stems: SeparatedStems | undefined,
   songLabel: string,
   signal: AbortSignal,
-): Promise<LyricLine[]> {
+): Promise<LyricLine[] | undefined> {
   try {
     const aligned = await alignLyricsForced(
       {
@@ -224,13 +235,11 @@ async function alignWords(
       },
       { signal },
     );
-    if (aligned.length === 0) return lines;
-    if (stems?.pitchContour) attachPitchToLines(stems.pitchContour, aligned);
-    return shiftLines(aligned, -offsetSec);
+    return aligned.length > 0 ? aligned : undefined;
   } catch (err) {
     signal.throwIfAborted();
     if (!isBackendUnreachable(err)) toastStore.showError(`${songLabel}: lyrics align failed: ${message(err)}`);
-    return lines;
+    return undefined;
   }
 }
 

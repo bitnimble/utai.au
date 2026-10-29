@@ -1,9 +1,9 @@
 """Runner registry.
 
 `alignLyrics` -> {@link AlignLyricsRunner}, `separateStems` ->
-{@link SeparateStemsRunner}, `analyzeBeats` -> {@link AnalyzeBeatsRunner},
-`fetchVideo` -> {@link FetchVideoRunner}. `EchoRunner` remains as a plumbing
-stub for tests.
+{@link SeparateStemsRunner}, `extractPitch` -> {@link ExtractPitchRunner},
+`analyzeBeats` -> {@link AnalyzeBeatsRunner}, `fetchVideo` ->
+{@link FetchVideoRunner}. `EchoRunner` remains as a plumbing stub for tests.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import asyncio
 from .align_lyrics_runner import AlignLyricsRunner
 from .analyze_beats_runner import AnalyzeBeatsRunner
 from .core import CancelToken, EmitProgress, Registry, RunnerResult
+from .extract_pitch_runner import ExtractPitchRunner
 from .fetch_video_runner import FetchVideoRunner
 from .protocol import Artifact, PathRef, RequestMessage
 from .separate_stems_runner import SeparateStemsRunner
@@ -44,6 +45,7 @@ def build_registry() -> Registry:
     return {
         "alignLyrics": AlignLyricsRunner(separator),
         "separateStems": SeparateStemsRunner(separator),
+        "extractPitch": ExtractPitchRunner(),
         "analyzeBeats": AnalyzeBeatsRunner(),
         "fetchVideo": FetchVideoRunner(),
     }

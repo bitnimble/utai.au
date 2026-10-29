@@ -29,6 +29,10 @@ import glob
 import logging
 import os
 import sysconfig
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import onnxruntime as ort
 
 log = logging.getLogger(__name__)
 
@@ -36,8 +40,15 @@ _done = False
 # Keeps the os.add_dll_directory handles alive (closing them drops the dir).
 _dll_dirs: list = []
 
+_CUDA_OPTIONS = {
+    # default kNextPowerOfTwo reserves up to ~2x the real activation peak
+    "arena_extend_strategy": "kSameAsRequested",
+    # default 1 lets cuDNN park GBs of conv workspace in the arena (wav2vec2, RMVPE)
+    "cudnn_conv_use_max_workspace": "0",
+}
 
-def default_providers() -> list[str]:
+
+def default_providers() -> list[str | tuple[str, dict[str, str]]]:
     """Preferred ONNX execution providers when the caller hasn't pinned one.
 
     CUDA first, and the TensorRT EP dropped entirely. TensorRT builds a per-input-
@@ -56,7 +67,21 @@ def default_providers() -> list[str]:
     avail = [p for p in ort.get_available_providers() if p not in skip]
     # CUDA to the front, CPU to the back.
     avail.sort(key=lambda p: (p != "CUDAExecutionProvider", p == "CPUExecutionProvider"))
-    return avail
+    return [(p, dict(_CUDA_OPTIONS)) if p == "CUDAExecutionProvider" else p for p in avail]
+
+
+def release_arena_run_options(session) -> ort.RunOptions:
+    """RunOptions for a job's final `run` on `session`: returns the arena memory the
+    run no longer holds once it ends. Without it every resident model keeps its
+    worst-case activations reserved for the process lifetime."""
+    import onnxruntime as ort
+
+    devices = ["cpu:0"]
+    if "CUDAExecutionProvider" in session.get_providers():
+        devices.append("gpu:0")
+    opts = ort.RunOptions()
+    opts.add_run_config_entry("memory.enable_memory_arena_shrinkage", ";".join(devices))
+    return opts
 
 
 def log_bound_ep(session, onnx_path) -> None:

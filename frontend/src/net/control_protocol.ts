@@ -31,7 +31,7 @@ export type Artifact = {
   name?: string;
 };
 
-export type Op = 'alignLyrics' | 'separateStems' | 'analyzeBeats' | 'fetchVideo';
+export type Op = 'alignLyrics' | 'separateStems' | 'extractPitch' | 'analyzeBeats' | 'fetchVideo';
 
 // ---- client -> backend -----------------------------------------------------
 
@@ -121,6 +121,19 @@ export function buildSeparateStemsRequest(id: string, audio: PathRef): RequestMe
     type: 'request',
     id,
     op: 'separateStems',
+    args: { audio, params: {} },
+  };
+}
+
+/** Build the `extractPitch` request frame. `audio` is the local vocals stem
+ *  {@link PathRef}; the sidecar returns the contour in the result `data.pitch`
+ *  payload (no file artifacts). */
+export function buildExtractPitchRequest(id: string, audio: PathRef): RequestMessage {
+  return {
+    v: PROTOCOL_VERSION,
+    type: 'request',
+    id,
+    op: 'extractPitch',
     args: { audio, params: {} },
   };
 }

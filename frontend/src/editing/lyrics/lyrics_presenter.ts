@@ -278,8 +278,6 @@ export class LyricsPresenter {
       toastStore.showError(`No lyrics were aligned (the aligner found no speech in ${meta.label}).`);
       return;
     }
-    // Pitch is a property of the vocal stem, extracted at separation; map that
-    // contour onto the freshly-aligned words here rather than re-running f0.
     if (track.pitchContour) attachPitchToLines(track.pitchContour, result);
     runInAction(() => {
       lyricsStore.replace(targetTrackId, shiftLines(result, -offsetSec), {

@@ -113,9 +113,10 @@ runs from the vendored torch-free build.
 
 ## [5] Vocal pitch (f0) overlay
 
-After alignment, `pitch.analyze.attach_pitch` runs an f0 extractor over the
-*same vocals stem* to give each word a pitch, so the frontend can lay words
-out vertically like notes. **Two models, one wire shape** (`pitch/`):
+`pitch.analyze.extract_pitch_contour` runs an f0 extractor over the separated
+vocals stem (its own job: sidecar `extractPitch` / HTTP `/music/pitch`, which the
+frontend runs alongside alignment once the stem exists), so the frontend can lay
+words out vertically like notes. **Two models, one wire shape** (`pitch/`):
 
 - **Offline stem pass -> RMVPE** (`pitch/rmvpe.py`; RVC-community `rmvpe.onnx`,
   MIT). A DeepUnet+GRU that takes a log-mel `[1,128,T]` and emits a 360-bin
@@ -146,10 +147,11 @@ synthetic contours):
   (not just band energy, which fires on transitions/noise); emit rate +
   extent when periodic. Straight-tone passages correctly yield none.
 
-Per word the aligner attaches `midi` (median voiced pitch) and
-`pitchSegments` (held notes, each with optional `vibrato`), serialized
-alongside the existing word fields. Best-effort: if the f0 model isn't
-provisioned it no-ops, leaving alignment untouched.
+The backend returns the cleaned per-frame contour; the frontend
+(`lyrics/pitch_contour.ts::attachPitchToLines`) slices it onto each aligned
+word as `midi` (median voiced pitch) and `pitchSegments` (held notes, each with
+optional `vibrato`). Best-effort: if the f0 model isn't provisioned the job
+returns no contour, leaving alignment untouched.
 
 **Capability-scoped like the rest:** a `pitch` capability (dep-group +
 `provision._capability_assets`) composes separation and pulls the two f0
@@ -176,6 +178,15 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   `add_dll_directory` on Windows). `default_providers()` is CUDA-first and
   drops TensorRT for **variable-length** audio (the CTC aligner) -- a
   per-shape engine rebuild would dominate.
+- **VRAM**: models stay loaded (a reload costs 40 s+), so only activation memory
+  is trimmed. CUDA sessions get `arena_extend_strategy=kSameAsRequested` and
+  `cudnn_conv_use_max_workspace=0` (`onnx_cuda._CUDA_OPTIONS`); every model passes
+  `release_arena_run_options` on a job's final run, so ORT hands the run's
+  activations back instead of holding each model's peak for the process lifetime.
+  The CTC aligner runs one ~34 s chunk per batch: at batch 4 cuDNN has no kernel
+  for wav2vec2's fp16 grouped pos_conv and ORT silently falls back to CPU. The TRT
+  separator shares one context buffer across its subgraphs. Measured on a 3080
+  (both test songs, both aligners loaded): ~2.7 GB resident, ~3.5 GB peak.
 - **TensorRT** (separation only, `np_inference._with_tensorrt`): the vocals
   body runs a **fixed** 8s chunk, so its engine builds once and is cached
   (`settings.cache_dir/tensorrt`) -- the ~100x-realtime path (vs ~8-18x on

@@ -194,8 +194,6 @@ async def _run_startup_provision(app: FastAPI, status: ProvisionStatus) -> None:
         await asyncio.to_thread(separator.load)
         app.state.separator = separator
         if "pitch" in caps:
-            # Keep the f0 model hot too (VRAM headroom): build its GPU session now
-            # so the first /music/separate pitch pass doesn't pay load latency.
             from app.pipeline.pitch.analyze import warm_extractor
 
             await asyncio.to_thread(warm_extractor)
@@ -572,9 +570,6 @@ async def _stream_lyrics_align(
                 input_lines,
                 language,
             )
-            # Pitch is extracted once at separation time (a property of the vocal
-            # stem, see /music/separate) and mapped onto these words by the
-            # frontend, so alignment never re-runs the f0 model.
             lines_json = lines_to_json(lines)
             # Populate the alignment-result cache so an identical repeat
             # request skips this whole GPU path. Best-effort: a write
@@ -634,54 +629,24 @@ def _existing_stems(stems_dir: Path) -> bool:
     return all((stems_dir / name).is_file() for name in _STEM_FILES)
 
 
-def _write_stems_pitch(stem_id: str, vocals_path: Path) -> None:
-    """Extract the vocal pitch contour and cache it beside the stems as
-    `pitch.json`. Best-effort: an unprovisioned f0 model or any failure just
-    leaves the stems pitch-less (the frontend then renders no pitch)."""
-    try:
-        from app.pipeline.pitch.analyze import extract_pitch_contour
-
-        pitch = extract_pitch_contour(vocals_path)
-        if pitch is None:
-            return
-        (_stems_dir(stem_id) / "pitch.json").write_text(
-            json.dumps(pitch, ensure_ascii=False), encoding="utf-8"
-        )
-    except Exception:
-        log.exception("lyrics_separate: pitch extraction failed; stems cached without pitch")
-
-
-def _read_stems_pitch(stem_id: str) -> Any | None:
-    """The cached contour beside the stems, or None if absent / unreadable."""
-    path = _stems_dir(stem_id) / "pitch.json"
-    if not path.is_file():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
 def _stems_result_envelope(stem_id: str) -> dict[str, Any]:
     """The terminal NDJSON `result` for /music/separate. `path` is relative to
     the api base (the frontend prefixes `<origin>/api/`); it lines up with
-    GET /music/stems/{id}/{name}. `pitch` (the vocal pitch contour) rides along
-    when it was extracted; absent when the pitch model wasn't provisioned."""
-    data: dict[str, Any] = {
-        "stems": [
-            {
-                "role": role,
-                "path": f"music/stems/{stem_id}/{role}.flac",
-                "filename": f"{role}.flac",
-                "contentType": "audio/flac",
-            }
-            for role in _STEM_ROLES
-        ]
+    GET /music/stems/{id}/{name}."""
+    return {
+        "type": "result",
+        "data": {
+            "stems": [
+                {
+                    "role": role,
+                    "path": f"music/stems/{stem_id}/{role}.flac",
+                    "filename": f"{role}.flac",
+                    "contentType": "audio/flac",
+                }
+                for role in _STEM_ROLES
+            ]
+        },
     }
-    pitch = _read_stems_pitch(stem_id)
-    if pitch is not None:
-        data["pitch"] = pitch
-    return {"type": "result", "data": data}
 
 
 @app.post("/music/separate")
@@ -804,17 +769,8 @@ async def get_video(video_id: str) -> FileResponse:
 
 async def _emit_stems_result(request_id: str, stem_id: str) -> AsyncIterator[bytes]:
     """Emit a cached /music/separate result as a single NDJSON `result`
-    envelope (no GPU ran, so no queued/running envelopes).
-
-    Backfills a missing pitch contour: stems separated before the f0 model was
-    provisioned have no `pitch.json`, and a cache hit would otherwise return them
-    pitch-less forever. The extraction is CPU-only (off the GPU) and best-effort,
-    so a still-unprovisioned model just no-ops cheaply."""
+    envelope (no GPU ran, so no queued/running envelopes)."""
     set_request_id(request_id)
-    if _read_stems_pitch(stem_id) is None:
-        await asyncio.to_thread(
-            _write_stems_pitch, stem_id, _stems_dir(stem_id) / "vocals.flac"
-        )
     yield _encode_envelope(_stems_result_envelope(stem_id))
 
 
@@ -839,10 +795,6 @@ async def _stream_lyrics_separate(
             stems_dir.mkdir(parents=True, exist_ok=True)
             for role in _STEM_ROLES:
                 shutil.move(str(paths[role]), str(stems_dir / f"{role}.flac"))
-            # Pitch is a property of the vocal stem: extract its contour now (CPU,
-            # off the GPU) and cache it beside the stems so the frontend can
-            # render/align pitch without a second f0 pass. Best-effort.
-            await asyncio.to_thread(_write_stems_pitch, stem_id, stems_dir / "vocals.flac")
             log.info("lyrics_separate: stems cache MISS, populated (%s)", stem_id)
             yield _stems_result_envelope(stem_id)
         except FileNotFoundError as exc:
@@ -872,8 +824,7 @@ def _beats_cache_path(mix_hash: str) -> Path:
     return settings.cache_dir / "beats" / f"{mix_hash}.json"
 
 
-def _read_beats_cache(mix_hash: str) -> Any | None:
-    path = _beats_cache_path(mix_hash)
+def _read_json_cache(path: Path) -> Any | None:
     if not path.is_file():
         return None
     try:
@@ -882,13 +833,12 @@ def _read_beats_cache(mix_hash: str) -> Any | None:
         return None
 
 
-def _write_beats_cache(mix_hash: str, beats: Any) -> None:
+def _write_json_cache(path: Path, value: Any) -> None:
     try:
-        path = _beats_cache_path(mix_hash)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(beats, ensure_ascii=False), encoding="utf-8")
+        path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
     except OSError:
-        log.warning("music_beats: could not write beats cache", exc_info=True)
+        log.warning("could not write cache %s", path, exc_info=True)
 
 
 def _beats_result_envelope(beats: Any | None) -> dict[str, Any]:
@@ -925,7 +875,7 @@ async def music_beats(request: Request, mix: UploadFile = File(...)) -> Streamin
         raise HTTPException(status_code=400, detail="`mix` is required.")
     mix_hash = _hash_bytes(mix_bytes)
 
-    cached = _read_beats_cache(mix_hash)
+    cached = _read_json_cache(_beats_cache_path(mix_hash))
     if cached is not None:
         log.info("music_beats: cache HIT (%s)", mix_hash)
         return StreamingResponse(
@@ -979,7 +929,7 @@ async def _stream_music_beats(
 
             beats = await asyncio.to_thread(analyze_beats, mix_path)
             if beats is not None:
-                _write_beats_cache(mix_hash, beats)
+                _write_json_cache(_beats_cache_path(mix_hash), beats)
             log.info("music_beats: analysed (%s)", mix_hash)
             yield _beats_result_envelope(beats)
         except Exception as exc:
@@ -992,6 +942,45 @@ async def _stream_music_beats(
             yield chunk
     finally:
         shutil.rmtree(cleanup_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# /music/pitch: the vocal pitch contour of a separated vocals stem
+# ---------------------------------------------------------------------------
+
+
+def _pitch_cache_path(vocals_hash: str) -> Path:
+    return settings.cache_dir / "pitch" / f"{vocals_hash}.json"
+
+
+@app.post("/music/pitch")
+async def music_pitch(request: Request, vocals: UploadFile = File(...)) -> dict[str, Any]:
+    """The vocal pitch contour (RMVPE) of a vocals stem: `{"pitch": {fps, midi,
+    vibRate, vibExtent}}`, or `{}` when the f0 model isn't provisioned.
+
+    CPU-only, so it skips the GPU lock and runs alongside the /music/align of the
+    same stem. Content-addressed by SHA-256 of the vocals bytes."""
+    _require_pipeline_role()
+    _require_ready(request)
+    vocals_bytes = await vocals.read()
+    if not vocals_bytes:
+        raise HTTPException(status_code=400, detail="`vocals` is required.")
+    cache_path = _pitch_cache_path(_hash_bytes(vocals_bytes))
+    pitch = _read_json_cache(cache_path)
+    if pitch is None:
+        pitch = await asyncio.to_thread(_extract_pitch, vocals_bytes, Path(vocals.filename or "").suffix)
+        if pitch is not None:
+            _write_json_cache(cache_path, pitch)
+    return {"pitch": pitch} if pitch is not None else {}
+
+
+def _extract_pitch(vocals_bytes: bytes, suffix: str) -> Any | None:
+    from app.pipeline.pitch.analyze import extract_pitch_contour
+
+    with tempfile.TemporaryDirectory(prefix="utai_pitch_") as tmp:
+        path = Path(tmp) / f"vocals{suffix}"
+        path.write_bytes(vocals_bytes)
+        return extract_pitch_contour(path)
 
 
 def _parse_lyrics_input(raw: str) -> list[InputLine]:

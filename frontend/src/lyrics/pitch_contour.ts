@@ -3,11 +3,11 @@
  * segmentation that maps it onto aligned lyric words.
  *
  * Pitch is a property of the vocal stem, so the contour (cleaned per-frame MIDI
- * + track-wide vibrato) is extracted once, at separation time, by the backend
- * (`aligner/app/pipeline/pitch/analyze.py::extract_pitch_contour`) and rides
- * back on the `/music/separate` result. Alignment then returns bare word
- * timings and {@link attachPitchToLines} slices this contour onto each word here
- *, median pitch, note sub-segments (melisma), per-note vibrato, so the f0
+ * + track-wide vibrato) is extracted once per stem by the backend
+ * (`aligner/app/pipeline/pitch/analyze.py::extract_pitch_contour`, fetched by
+ * {@link import('./extract_pitch').extractPitch}). Alignment returns bare word
+ * timings and {@link attachPitchToLines} slices this contour onto each word
+ * here, median pitch, note sub-segments (melisma), per-note vibrato, so the f0
  * model never re-runs.
  *
  * The DSP mirrors `aligner/app/pipeline/pitch/features.py` (`segment_notes`,
@@ -41,7 +41,7 @@ const VIB_MIN_SEC = 0.22;
 // Guards the frame-index rounding against float drift on exact frame boundaries.
 const FRAME_EPS = 1e-9;
 
-/** Parse the `pitch` payload from a `/music/separate` result into a
+/** Parse the `pitch` payload from an `extractPitch` / `/music/pitch` result into a
  *  {@link PitchContour}, or undefined when absent / malformed (best-effort:
  *  a bad contour just leaves the vocal track pitch-less). */
 export function parsePitchContour(raw: unknown): PitchContour | undefined {

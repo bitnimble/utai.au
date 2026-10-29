@@ -20,6 +20,8 @@ from pathlib import Path
 
 import numpy as np
 
+from app.pipeline.onnx_cuda import default_providers, log_bound_ep, release_arena_run_options
+
 SR, N_FFT, HOP, N_MELS, FMIN, FMAX = 22050, 1024, 441, 128, 30, 11000
 FPS = 50
 CHUNK, BORDER = 1500, 6
@@ -156,8 +158,6 @@ class OnnxBeatThis:
     def __init__(self, onnx_path, providers=None) -> None:
         import onnxruntime as ort
 
-        from app.pipeline.onnx_cuda import default_providers, log_bound_ep
-
         if providers is None:
             providers = default_providers()
         try:
@@ -174,9 +174,14 @@ class OnnxBeatThis:
         y, _ = librosa.load(str(audio_path), sr=SR, mono=True)
         spect = _logmel(np.asarray(y, np.float32), self.fb)
         chunks, starts = _split(spect)
+        last = len(chunks) - 1
         preds = [
-            tuple(v[0] for v in self.sess.run(None, {self._in: ch[None].astype(np.float32)}))
-            for ch in chunks
+            tuple(v[0] for v in self.sess.run(
+                None,
+                {self._in: ch[None].astype(np.float32)},
+                release_arena_run_options(self.sess) if i == last else None,
+            ))
+            for i, ch in enumerate(chunks)
         ]
         beat_logits, downbeat_logits = _aggregate(preds, starts, spect.shape[0])
         return _postp(beat_logits, downbeat_logits)
