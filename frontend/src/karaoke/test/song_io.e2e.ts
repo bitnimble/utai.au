@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { HOST_PATH, test } from 'src/testing/e2e_test';
+import { HOST_PATH, showTracksView, test } from 'src/testing/e2e_test';
 import { makeSongBundle } from 'src/testing/song_bundle';
 
 type UtaiWindow = {
@@ -19,6 +19,7 @@ function firstTrack(page: Page): Promise<{ muted?: boolean; volume?: number } | 
 
 test('song io: opening a bundle restores stems, lyrics, and metadata', async ({ page }) => {
   await page.goto(HOST_PATH);
+  await showTracksView(page);
 
   await page.locator('input[type="file"][accept=".zip,application/zip"]').setInputFiles({
     name: 'song.utai.zip',

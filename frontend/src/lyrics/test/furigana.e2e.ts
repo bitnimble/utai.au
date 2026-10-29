@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { HOST_PATH, pausePlayback, test } from 'src/testing/e2e_test';
+import { HOST_PATH, pausePlayback, showTracksView, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type Utai = {
@@ -61,6 +61,7 @@ const DICT_TIMEOUT = { timeout: 20_000 };
 
 test('furigana: tracks view annotates word-aligned and line-level lyrics', async ({ page }) => {
   await loadJapaneseSong(page);
+  await showTracksView(page);
   await expect(page.getByTestId('lyrics-line-0').locator('rt')).toHaveText(['ほんとう'], DICT_TIMEOUT);
   await expect(page.getByTestId('lyrics-line-1').locator('rt')).toHaveText(['か', 'ち'], DICT_TIMEOUT);
   const annotatedBases = await page
@@ -72,6 +73,7 @@ test('furigana: tracks view annotates word-aligned and line-level lyrics', async
 
 test('romaji: View option adds romaji under the lyrics in both views, and stays on', async ({ page }) => {
   await loadJapaneseSong(page);
+  await showTracksView(page);
   const romaji = (testId: string) => page.getByTestId(testId).locator('rt[data-romaji]');
   await expect(page.getByTestId('lyrics-line-0').locator('rt')).toHaveText(['ほんとう'], DICT_TIMEOUT);
   await expect(romaji('lyrics-line-0')).toHaveCount(0);
@@ -92,6 +94,7 @@ test('romaji: View option adds romaji under the lyrics in both views, and stays 
 
   await page.getByTestId('view-menu').click();
   await page.getByTestId('view-mode-karaoke').click();
+  await page.getByTestId('karaoke-two-lines').click();
   await page.keyboard.press('Escape');
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(9.2));
   await expect(romaji('karaoke-line')).toHaveText(['kimi to futari de itta'], DICT_TIMEOUT);
@@ -99,6 +102,7 @@ test('romaji: View option adds romaji under the lyrics in both views, and stays 
 
 test('furigana: reads numeral + counter compounds, 行った, repeated okurigana, and kanji kuromoji lacks (嗤)', async ({ page }) => {
   await loadJapaneseSong(page);
+  await showTracksView(page);
   await expect(page.getByTestId('lyrics-line-2').locator('rt')).toHaveText(['きみ', 'ふたり', 'い'], DICT_TIMEOUT);
   await expect(page.getByTestId('lyrics-line-3').locator('rt')).toHaveText(['わら'], DICT_TIMEOUT);
   await expect(page.getByTestId('lyrics-line-4').locator('rt')).toHaveText(['わら', 'やつ'], DICT_TIMEOUT);
@@ -106,6 +110,7 @@ test('furigana: reads numeral + counter compounds, 行った, repeated okurigana
 
 test("furigana + romaji: a word's heard reading wins over the dictionary's", async ({ page }) => {
   await loadJapaneseSong(page);
+  await showTracksView(page);
   await expect(page.getByTestId('lyrics-line-6').locator('rt')).toHaveText(['あ', 'せい'], DICT_TIMEOUT);
 
   await page.getByTestId('view-menu').click();
@@ -133,8 +138,9 @@ test('karaoke splits a long Japanese line between phrases, never inside a word',
       sourceLabel: 'probe',
     });
   });
+  await pausePlayback(page);
   await page.getByTestId('view-menu').click();
-  await page.getByTestId('view-mode-karaoke').click();
+  await page.getByTestId('karaoke-two-lines').click();
   await page.keyboard.press('Escape');
   const seek = (sec: number) => page.evaluate((s) => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(s), sec);
   const baseText = () =>
@@ -153,7 +159,7 @@ test('karaoke splits a long Japanese line between phrases, never inside a word',
 test('furigana: karaoke view annotates word-aligned and line-level lyrics', async ({ page }) => {
   await loadJapaneseSong(page);
   await page.getByTestId('view-menu').click();
-  await page.getByTestId('view-mode-karaoke').click();
+  await page.getByTestId('karaoke-two-lines').click();
   await page.keyboard.press('Escape');
   const utai = (sec: number) => page.evaluate((s) => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(s), sec);
 

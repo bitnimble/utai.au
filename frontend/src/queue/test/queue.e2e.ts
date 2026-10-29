@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test';
 import { strToU8, zipSync } from 'fflate';
-import { HOST_PATH, test } from 'src/testing/e2e_test';
+import { HOST_PATH, showTracksView, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type UtaiWindow = {
@@ -82,6 +82,7 @@ test('queue: first song plays at once, the rest queue up, and play next / remove
 
 test('queue: the sidebar docks beside the stage, and covers it when too narrow to share', async ({ page }) => {
   await page.goto(HOST_PATH);
+  await showTracksView(page);
   const stage = page.getByTestId('score-area');
   const openWidth = (await stage.boundingBox())!.width;
   await page.getByTestId('queue-open').click();

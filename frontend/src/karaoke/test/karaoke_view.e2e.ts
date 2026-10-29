@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { HOST_PATH, pausePlayback, test } from 'src/testing/e2e_test';
+import { HOST_PATH, pausePlayback, showTracksView, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type Utai = {
@@ -9,6 +9,7 @@ type Utai = {
 
 test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', async ({ page }) => {
   await page.goto(HOST_PATH);
+  await showTracksView(page);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',
@@ -32,6 +33,7 @@ test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', as
 
   await page.getByTestId('view-menu').click();
   await page.getByTestId('view-mode-karaoke').click();
+  await page.getByTestId('karaoke-two-lines').click();
   await page.keyboard.press('Escape');
 
   await expect(page.getByTestId('score-area')).toHaveCount(0);
@@ -68,7 +70,6 @@ test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', as
 });
 
 test('a first launch opens in the karaoke view, showing 2 lines', async ({ page }) => {
-  await page.addInitScript(() => localStorage.removeItem('utai.settings'));
   await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -76,6 +77,7 @@ test('a first launch opens in the karaoke view, showing 2 lines', async ({ page 
     buffer: makeWav(20),
   });
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
   await page.evaluate(() => {
     const line = (startSec: number, text: string) => ({ startSec, text, words: [{ startSec, endSec: startSec + 1, text }] });
     (window as unknown as { utai: Utai }).utai.lyricsStore.add([line(2, 'line one'), line(4, 'line two')], {
@@ -117,7 +119,6 @@ test('karaoke "Show lyric pitch" renders the line through the pitched lyric chip
     );
   });
   await page.getByTestId('view-menu').click();
-  await page.getByTestId('view-mode-karaoke').click();
   await page.getByTestId('karaoke-show-pitch').click();
   await page.keyboard.press('Escape');
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(3.2));
@@ -176,10 +177,6 @@ test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating sl
       { source: 'plaintext', sourceLabel: 'probe' },
     );
   });
-  await page.getByTestId('view-menu').click();
-  await page.getByTestId('view-mode-karaoke').click();
-  await page.getByTestId('karaoke-two-lines').click();
-  await page.keyboard.press('Escape');
 
   const top = page.getByTestId('karaoke-slot-top');
   const bottom = page.getByTestId('karaoke-slot-bottom');
@@ -220,6 +217,7 @@ test('karaoke "Show 2 lines" sizes both lines alike, small enough for the longer
     buffer: makeWav(20),
   });
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
   await page.evaluate(() => {
     const line = (startSec: number, text: string) => ({
       startSec,
@@ -231,10 +229,6 @@ test('karaoke "Show 2 lines" sizes both lines alike, small enough for the longer
       { source: 'plaintext', sourceLabel: 'probe' },
     );
   });
-  await page.getByTestId('view-menu').click();
-  await page.getByTestId('view-mode-karaoke').click();
-  await page.getByTestId('karaoke-two-lines').click();
-  await page.keyboard.press('Escape');
 
   await expect(page.getByTestId('karaoke-slot-bottom')).toContainText('a much longer line');
   const fit = () =>
@@ -262,7 +256,7 @@ test('karaoke "Show 2 lines" sizes both lines alike, small enough for the longer
     .toEqual({ oneRow: true, unclipped: true, insideSlot: true, fillsSlot: true, sameSize: true, shrunk: true });
 });
 
-test('karaoke splits a line too long for its container: kept whole on one line, split in the narrower 2-line slots', async ({ page }) => {
+test('karaoke splits a line too long for its container: split in the narrower 2-line slots, kept whole on one line', async ({ page }) => {
   await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -270,6 +264,7 @@ test('karaoke splits a line too long for its container: kept whole on one line, 
     buffer: makeWav(20),
   });
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
   await page.evaluate(() => {
     const texts = 'We were dancing in the moonlight now'.split(' ');
     const words = texts.map((text, i) => ({ startSec: 2 + i * 0.3, endSec: 2.25 + i * 0.3, text }));
@@ -278,10 +273,6 @@ test('karaoke splits a line too long for its container: kept whole on one line, 
       sourceLabel: 'probe',
     });
   });
-  await page.getByTestId('view-menu').click();
-  await page.getByTestId('view-mode-karaoke').click();
-  await page.getByTestId('karaoke-two-lines').click();
-  await page.keyboard.press('Escape');
   await expect(page.getByTestId('karaoke-slot-top')).toHaveText('We were dancing in');
   await expect(page.getByTestId('karaoke-slot-bottom')).toHaveText('the moonlight now');
 
@@ -321,7 +312,7 @@ test('karaoke counts a line in after a gap: 3, 2, 1 dots above its first word, t
     );
   });
   await page.getByTestId('view-menu').click();
-  await page.getByTestId('view-mode-karaoke').click();
+  await page.getByTestId('karaoke-two-lines').click();
   await page.keyboard.press('Escape');
 
   const seek = (sec: number) =>
@@ -372,9 +363,6 @@ test('karaoke hides the lyrics once the song plays out, until the next seek', as
       { source: 'plaintext', sourceLabel: 'probe' },
     );
   });
-  await page.getByTestId('view-menu').click();
-  await page.getByTestId('view-mode-karaoke').click();
-  await page.keyboard.press('Escape');
   await expect(page.getByTestId('karaoke-lyrics')).toBeVisible();
   const ended = (): Promise<boolean> =>
     page.evaluate(() => (window as unknown as { utai: { playbackEngine: { ended: boolean } } }).utai.playbackEngine.ended);
@@ -388,9 +376,6 @@ test('karaoke hides the lyrics once the song plays out, until the next seek', as
 
 test('karaoke view flags a song with no lyrics', async ({ page }) => {
   await page.goto(HOST_PATH);
-  await page.getByTestId('view-menu').click();
-  await page.getByTestId('view-mode-karaoke').click();
-  await page.keyboard.press('Escape');
   await expect(page.getByTestId('karaoke-lyrics')).toBeAttached();
   await expect(page.getByTestId('karaoke-no-lyrics')).toHaveCount(0);
 
@@ -418,6 +403,7 @@ test('karaoke seek bar: flush above the footer, follows and moves the playhead, 
     buffer: makeWav(20),
   });
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await showTracksView(page);
   const seekBar = page.getByTestId('karaoke-seek-bar');
   await expect(seekBar).toHaveCount(0);
 
@@ -458,6 +444,7 @@ test('karaoke "Show lyric pitch" splits a long line and fits it inside the overl
     buffer: makeWav(20),
   });
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
   await page.evaluate(() => {
     const text = 'every single one of these words is sung far too quickly to ever fit at full size';
     const words = text.split(' ').map((t, i) => {
@@ -470,16 +457,16 @@ test('karaoke "Show lyric pitch" splits a long line and fits it inside the overl
     });
   });
   await page.getByTestId('view-menu').click();
-  await page.getByTestId('view-mode-karaoke').click();
   await page.getByTestId('karaoke-show-pitch').click();
   await page.keyboard.press('Escape');
 
   const overlay = page.getByTestId('karaoke-lyrics');
-  await expect(overlay.locator('[data-testid^="lyrics-word-"]').first()).toHaveText('every');
-  expect(await overlay.locator('[data-testid^="lyrics-word-"]').count()).toBeLessThanOrEqual(7);
+  const shownWords = page.getByTestId('karaoke-slot-top').locator('[data-testid^="lyrics-word-"]');
+  await expect(shownWords.first()).toHaveText('every');
+  expect(await shownWords.count()).toBeLessThanOrEqual(7);
   const bounds = await overlay.evaluate((el) => {
     const r = el.getBoundingClientRect();
-    const glyphs = Array.from(el.querySelectorAll('[data-testid^="lyrics-word-"]')).map((w) => w.getBoundingClientRect());
+    const glyphs = Array.from(el.querySelectorAll('[data-testid^="lyrics-word-"] text')).map((w) => w.getBoundingClientRect());
     return { left: r.left, right: r.right, minLeft: Math.min(...glyphs.map((g) => g.left)), maxRight: Math.max(...glyphs.map((g) => g.right)) };
   });
   expect(bounds.minLeft).toBeGreaterThanOrEqual(bounds.left - 1);

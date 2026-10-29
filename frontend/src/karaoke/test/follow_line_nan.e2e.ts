@@ -1,13 +1,10 @@
 import { expect } from '@playwright/test';
-import { HOST_PATH, test } from 'src/testing/e2e_test';
+import { HOST_PATH, showTracksView, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
-// A non-finite word time (the aligner can emit one for a long-held final note)
-// used to collapse follow-"line": the NaN span -> NaN zoom -> NaN pxPerBeat,
-// which nuked the content width + windowing so every lyric + track vanished.
-// The score must survive it: frame on the line's finite words and stay visible.
 test('follow-line survives a non-finite word time on the active line', async ({ page }) => {
   await page.goto(HOST_PATH);
+  await showTracksView(page);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
     mimeType: 'audio/wav',

@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { HOST_PATH, test } from 'src/testing/e2e_test';
+import { HOST_PATH, showTracksView, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 const ANALYSIS = {
@@ -39,6 +39,7 @@ test('beat lines: overlay renders one line per beat and the toolbar shows BPM ·
 }) => {
   await mockBeats(page);
   await page.goto(HOST_PATH);
+  await showTracksView(page);
   await loadAudio(page);
 
   // The analysis lands asynchronously; the toolbar readout confirms it applied.
@@ -53,6 +54,7 @@ test('beat lines: overlay renders one line per beat and the toolbar shows BPM ·
 test('beat lines: absent until analysis returns', async ({ page }) => {
   // No mock, and separation is unavailable, so no beats are ever produced.
   await page.goto(HOST_PATH);
+  await showTracksView(page);
   await loadAudio(page);
   await expect(page.getByTestId('beat-lines')).toHaveCount(0);
   await expect(page.getByTestId('beats-readout')).toHaveCount(0);
