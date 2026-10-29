@@ -9,6 +9,7 @@ import { intersectsBeatRange } from '../utils/windowing';
 import { PositionedLine, PositionedWord } from './lyric_layout';
 import { ELLIPSIS, LyricWordPlacement, lyricWordKey, SustainSpan } from './lyrics_measure';
 import styles from './lyrics_track_view.module.css';
+import { wrapChunks } from './wrap_chunks';
 
 /** Treat sub-millisecond gaps between rendered and raw model times as
  *  noise (floating-point round-trip through JSON, tiny rounding inside
@@ -226,7 +227,7 @@ const LyricWordChip = observer(
         )}
         <span className={styles.lyricWordText}>
           <WordText words={lineWordTexts} index={wordPosIndex} />
-          {ellipsis && ELLIPSIS}
+          {ellipsis && <SvgText text={ELLIPSIS} />}
         </span>
       </span>
     );
@@ -240,9 +241,7 @@ const LyricWordChip = observer(
  *  compound (実 out of 実は) reads correctly (じつ) instead of its lone-
  *  token reading (み). `segmentsForWords` is synchronous (bare text until
  *  the kuromoji dictionary resolves) and its `revision` read makes this
- *  `observer` re-render in place once readings arrive. Falls back to a
- *  plain text node when there's no ruby, so non-Japanese words render
- *  exactly as before. */
+ *  `observer` re-render in place once readings arrive. */
 const WordText = observer(
   ({ words, index }: { words: readonly string[]; index: number }) => (
     <RubyText
@@ -270,16 +269,18 @@ export const RubyText = ({
   romaji?: string;
 }): React.ReactNode => {
   const text = !segments.some((s) => s.reading != null) ? (
-    segments.map((s) => s.base).join('')
+    <SvgText text={segments.map((s) => s.base).join('')} />
   ) : (
     // One <ruby> per reading: an <rt> annotates all base text since the previous one.
     segments.map((seg, i) =>
       seg.reading == null ? (
-        <React.Fragment key={i}>{seg.base}</React.Fragment>
+        <SvgText key={i} text={seg.base} />
       ) : (
         <ruby key={i} className={styles.ruby}>
-          {seg.base}
-          <rt>{seg.reading}</rt>
+          <SvgText text={seg.base} />
+          <rt>
+            <SvgText text={seg.reading} />
+          </rt>
         </ruby>
       ),
     )
@@ -288,8 +289,30 @@ export const RubyText = ({
   return (
     <ruby className={styles.romajiRuby}>
       {text}
-      <rt data-romaji>{romaji}</rt>
+      <rt data-romaji>
+        <SvgText text={romaji} />
+      </rt>
     </ruby>
+  );
+};
+
+/** `text` painted as SVG, which unlike HTML text takes `stroke-linejoin`, and
+ *  laid out by a hidden HTML copy, so it sizes, wraps and baseline-aligns as
+ *  the plain text would. */
+const SvgText = ({ text }: { text: string }): React.ReactNode => {
+  const chunks = React.useMemo(() => wrapChunks(text), [text]);
+  return chunks.map((chunk, i) =>
+    /^\s+$/.test(chunk) ? (
+      chunk
+    ) : (
+      <span key={i} className={styles.svgText} data-text={chunk}>
+        <svg>
+          <text x="0" y="50%">
+            {chunk}
+          </text>
+        </svg>
+      </span>
+    ),
   );
 };
 

@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { HOST_PATH, test } from 'src/testing/e2e_test';
+import { HOST_PATH, pausePlayback, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type Utai = {
@@ -15,6 +15,7 @@ async function loadJapaneseSong(page: Page): Promise<void> {
     buffer: makeWav(20),
   });
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
   await page.evaluate(() =>
     (window as unknown as { utai: Utai }).utai.lyricsStore.add(
       [

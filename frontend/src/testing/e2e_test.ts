@@ -1,4 +1,4 @@
-import { test as base, type Route } from '@playwright/test';
+import { expect, test as base, type Page, type Route } from '@playwright/test';
 
 const CORS = { 'access-control-allow-origin': '*' };
 
@@ -38,3 +38,14 @@ export const test = base.extend({
     await use(page);
   },
 });
+
+type PlaybackWindow = { utai: { playbackEngine: { state: string; pause: () => Promise<void> } } };
+
+/** Pauses the track the page auto-played, so a spec's seeks hold still while it
+ *  asserts on what that moment shows. */
+export async function pausePlayback(page: Page): Promise<void> {
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as PlaybackWindow).utai.playbackEngine.state))
+    .toBe('playing');
+  await page.evaluate(() => (window as unknown as PlaybackWindow).utai.playbackEngine.pause());
+}

@@ -112,7 +112,7 @@ test('zoomed out, a crowded line ellipsises before the next and pitch lines neve
         const r = range.getBoundingClientRect();
         return { text: el.textContent ?? '', left: r.left - rowLeft, right: r.right - rowLeft };
       });
-    const pitchLines = Array.from(row.querySelectorAll('svg')).map((s) => {
+    const pitchLines = Array.from(row.querySelectorAll('svg:has(path)')).map((s) => {
       const r = s.getBoundingClientRect();
       return { left: r.left - rowLeft, right: r.right - rowLeft };
     });
@@ -167,11 +167,11 @@ test('a held word shows its pitch line after its text, moving with it', async ({
     const range = document.createRange();
     range.selectNodeContents(word.querySelector(':scope > span')!);
     const text = range.getBoundingClientRect();
-    const svg = word.querySelector('svg')!.getBoundingClientRect();
+    const svg = word.querySelector('svg:has(path)')!.getBoundingClientRect();
     return { textRight: text.right, lineLeft: svg.left, shift: parseFloat(word.style.getPropertyValue('--lyric-word-shift')) };
   });
   expect(geom.shift).toBeGreaterThan(0);
   expect(geom.lineLeft).toBeGreaterThanOrEqual(geom.textRight);
   expect(geom.lineLeft - geom.textRight).toBeLessThan(12);
-  expect(await page.locator('[data-testid="lyrics-word-0-0"] svg').count()).toBe(0);
+  expect(await page.locator('[data-testid="lyrics-word-0-0"] svg:has(path)').count()).toBe(0);
 });

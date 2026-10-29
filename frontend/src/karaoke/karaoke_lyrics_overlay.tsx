@@ -7,6 +7,7 @@ import { LyricLineChip, RubyText } from 'src/editing/lyrics/lyric_chips';
 import { PositionedLine, positionLyricLines } from 'src/editing/lyrics/lyric_layout';
 import {
   computePitchPaths,
+  KARAOKE_LYRIC_FONT,
   layoutLyricWords,
   LyricWordPlacement,
   lyricMeasureInputs,
@@ -462,7 +463,7 @@ function fitLineToWidth(
   let pxPerBeat = widthPx / Math.max(MIN_LINE_SPAN_SEC, line.endBeat - line.startBeat);
   let fontSizePx = baseFontSizePx;
   for (let step = 0; ; step++) {
-    const placements = layoutLyricWords(input, pxPerBeat, fontSizePx);
+    const placements = layoutLyricWords(input, pxPerBeat, fontSizePx, KARAOKE_LYRIC_FONT);
     const rightPx = Math.max(...Array.from(placements.values()).filter((p) => !p.hidden).map((p) => p.rightPx));
     if (rightPx <= widthPx || step === FIT_STEPS) return { pxPerBeat, fontSizePx, placements, rightPx };
     const scale = widthPx / rightPx;

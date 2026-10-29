@@ -39,8 +39,23 @@
 }
 
 .line rt[data-romaji],
-.rowWidthProbe rt[data-romaji] {
+.rowWidthProbe rt[data-romaji],
+.overlay .pitchRow rt[data-romaji] {
     padding-top: 0.3em;
+}
+
+/* The pitched line's chips come from the track view; pin them to the plain
+   line's type. Keep in lockstep with lyrics_measure.ts::KARAOKE_LYRIC_FONT. */
+.overlay .pitchRow {
+    --lyric-wdth: 100;
+    --lyric-wght: 800;
+    --lyric-rt-size: 0.45em;
+    /* stylelint-disable-next-line property-disallowed-list -- undoes the track view's zoom-driven tracking. */
+    letter-spacing: normal;
+}
+
+.overlay .pitchRow rt {
+    font-variation-settings: 'wght' 800;
 }
 
 .countInAnchor {
@@ -117,20 +132,21 @@
     background: none;
     /* stroke under fill: only its outer half shows, glyph keeps its weight */
     paint-order: stroke fill;
-    -webkit-text-stroke-width: 0.16em;
-    transition: -webkit-text-stroke-color 80ms linear;
+    stroke-width: 0.16em;
+    stroke-linejoin: round;
+    transition: stroke 80ms linear;
 }
 
 .overlay [data-word-state='upcoming'] {
-    -webkit-text-stroke-color: var(--color-karaoke-outline);
+    stroke: var(--color-karaoke-outline);
 }
 
 .overlay [data-word-state='sung'] {
-    -webkit-text-stroke-color: var(--color-karaoke-outline-sung);
+    stroke: var(--color-karaoke-outline-sung);
 }
 
 .overlay [data-word-state='current'] {
-    -webkit-text-stroke-color: var(--color-karaoke-outline-current);
+    stroke: var(--color-karaoke-outline-current);
     transition: none;
 }
 

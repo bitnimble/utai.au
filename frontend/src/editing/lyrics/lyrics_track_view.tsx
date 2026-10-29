@@ -14,6 +14,7 @@ import {
   lyricFontSizeAt,
   lyricMeasureInputs,
   lyricsMeasurer,
+  zoomLyricFont,
 } from './lyrics_measure';
 import { positionLyricLines } from './lyric_layout';
 import { WindowedLines } from './lyric_chips';
@@ -110,7 +111,12 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   const showRomaji = appSettingsStore.showRomaji;
   const placements = React.useMemo(
     () =>
-      layoutLyricWords(lyricMeasureInputs(positioned, { romaji: showRomaji }), pxPerBeat, lyricsFontSizePx),
+      layoutLyricWords(
+        lyricMeasureInputs(positioned, { romaji: showRomaji }),
+        pxPerBeat,
+        lyricsFontSizePx,
+        zoomLyricFont(pxPerBeat),
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [positioned, pxPerBeat, fontReady, furiganaRevision, lyricsFontSizePx, showRomaji],
   );

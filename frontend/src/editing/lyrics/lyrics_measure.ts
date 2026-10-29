@@ -31,18 +31,49 @@ import { PositionedLine, WAVE_WAVELENGTH_PX, buildPitchLine } from './lyric_layo
 
 const FONT_FAMILY =
   "'Bricolage Grotesque', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
-const ACTIVE_FONT_WEIGHT = 800;
 const MIN_GAP_PX = 4;
 const MIN_SUSTAIN_PX = 6;
 export const ELLIPSIS = '…';
 const FULL_SIZE_PX_PER_BEAT = 120;
 const MIN_FONT_SCALE = 0.4;
-/** Furigana annotation size as a fraction of the lyric font size. Keep in
- *  lockstep with `lyrics_track_view.module.css::--lyric-rt-size: 0.65em`. The
- *  `rt` runs at weight 400, default (100%) width. */
-const RT_FONT_RATIO = 0.65;
-const RT_FONT_WEIGHT = 400;
 const RT_WDTH = 100;
+
+/** The variable-font state lyric text renders at, for measuring it off the
+ *  DOM. Furigana (`rt`) runs at `rtRatio` of the font size, default width, no
+ *  tracking. */
+export type LyricFont = {
+  wght: number;
+  activeWght: number;
+  wdthPct: number;
+  letterSpacingPx: number;
+  rtRatio: number;
+  rtWght: number;
+};
+
+/** The track view's zoom-driven font. Keep in lockstep with
+ *  `lyrics_track_view.module.css` (`.lyricsBarsRow` axes, `--lyric-rt-size`,
+ *  `.lyricWordActive .lyricWordText`, `.lyricLine rt`). */
+export function zoomLyricFont(pxPerBeat: number): LyricFont {
+  return {
+    wght: computeWght(pxPerBeat),
+    activeWght: 800,
+    wdthPct: computeWdth(pxPerBeat),
+    letterSpacingPx: computeLetterSpacingPx(pxPerBeat),
+    rtRatio: 0.65,
+    rtWght: 400,
+  };
+}
+
+/** Karaoke's fixed font. Keep in lockstep with `typography.module.css::karaokeLyric`
+ *  and `karaoke_lyrics_overlay.module.css` (`rt` size, `.pitchRow` overrides). */
+export const KARAOKE_LYRIC_FONT: LyricFont = {
+  wght: 800,
+  activeWght: 800,
+  wdthPct: 100,
+  letterSpacingPx: 0,
+  rtRatio: 0.45,
+  rtWght: 800,
+};
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -127,19 +158,10 @@ class LyricsMeasurer {
     return ctx.measureText(text).width * (wdthPct / 100);
   }
 
-  /** Measure `text` as it would render under the row's variable-font
-   *  state for the given zoom + lyric font size. `isActive` picks the
-   *  active-word weight override (`wght: 800`). Returns 0 when canvas
-   *  isn't available. */
-  measureWordPx(text: string, pxPerBeat: number, isActive: boolean, fontSizePx: number): number {
-    const wght = isActive ? ACTIVE_FONT_WEIGHT : computeWght(pxPerBeat);
-    return this.measure(
-      text,
-      fontSizePx,
-      wght,
-      computeWdth(pxPerBeat),
-      computeLetterSpacingPx(pxPerBeat),
-    );
+  /** Measure `text` as it would render in `font` at `fontSizePx`; `isActive`
+   *  picks its active-word weight. Returns 0 when canvas isn't available. */
+  measureWordPx(text: string, font: LyricFont, isActive: boolean, fontSizePx: number): number {
+    return this.measure(text, fontSizePx, isActive ? font.activeWght : font.wght, font.wdthPct, font.letterSpacingPx);
   }
 
   /** Measure a ruby-annotated word. Native `<ruby>` lays each base/reading
@@ -148,31 +170,28 @@ class LyricsMeasurer {
    *  `measureWordPx` (base glyphs only) would miss, letting the next word
    *  overlap. Sum per-segment `max(baseWidth, readingWidth)` to match the
    *  browser's pair sizing. Reading-less runs contribute their base width
-   *  only. The `rt` is measured at its own fixed font state (see the
-   *  RT_* constants), independent of zoom. */
+   *  only. */
   measureRubyPx(
     segments: readonly RubySegment[],
-    pxPerBeat: number,
+    font: LyricFont,
     isActive: boolean,
     fontSizePx: number,
   ): number {
     let total = 0;
-    const rtSizePx = fontSizePx * RT_FONT_RATIO;
     for (const seg of segments) {
-      const baseW = this.measureWordPx(seg.base, pxPerBeat, isActive, fontSizePx);
+      const baseW = this.measureWordPx(seg.base, font, isActive, fontSizePx);
       if (seg.reading === undefined) {
         total += baseW;
         continue;
       }
-      const rtW = this.measure(seg.reading, rtSizePx, RT_FONT_WEIGHT, RT_WDTH, 0);
-      total += Math.max(baseW, rtW);
+      total += Math.max(baseW, this.measureAnnotationPx(seg.reading, font, fontSizePx));
     }
     return total;
   }
 
   /** Width of a ruby annotation (`rt`) over or under text at `fontSizePx`. */
-  measureAnnotationPx(text: string, fontSizePx: number): number {
-    return this.measure(text, fontSizePx * RT_FONT_RATIO, RT_FONT_WEIGHT, RT_WDTH, 0);
+  measureAnnotationPx(text: string, font: LyricFont, fontSizePx: number): number {
+    return this.measure(text, fontSizePx * font.rtRatio, font.rtWght, RT_WDTH, 0);
   }
 }
 
@@ -244,11 +263,12 @@ export function layoutLyricWords(
   lines: readonly LyricLineMeasureInput[],
   pxPerBeat: number,
   fontSizePx: number,
+  font: LyricFont,
 ): Map<LyricWordKey, LyricWordPlacement> {
   const out = new Map<LyricWordKey, LyricWordPlacement>();
   if (!Number.isFinite(pxPerBeat) || pxPerBeat <= 0) return out;
-  const spacePx = Math.max(MIN_GAP_PX, lyricsMeasurer.measureWordPx(' ', pxPerBeat, false, fontSizePx));
-  const ellipsisPx = lyricsMeasurer.measureWordPx(ELLIPSIS, pxPerBeat, true, fontSizePx);
+  const spacePx = Math.max(MIN_GAP_PX, lyricsMeasurer.measureWordPx(' ', font, false, fontSizePx));
+  const ellipsisPx = lyricsMeasurer.measureWordPx(ELLIPSIS, font, true, fontSizePx);
 
   const byStart = [...lines].sort((a, b) => a.lineStartBeat - b.lineStartBeat);
   byStart.forEach((line, k) => {
@@ -259,12 +279,12 @@ export function layoutLyricWords(
       .map((w) => {
         const hasRuby = w.segments?.some((s) => s.reading != null) ?? false;
         const textPx = hasRuby
-          ? lyricsMeasurer.measureRubyPx(w.segments!, pxPerBeat, true, fontSizePx)
-          : lyricsMeasurer.measureWordPx(w.text, pxPerBeat, true, fontSizePx);
+          ? lyricsMeasurer.measureRubyPx(w.segments!, font, true, fontSizePx)
+          : lyricsMeasurer.measureWordPx(w.text, font, true, fontSizePx);
         return {
           key: lyricWordKey(line.lineIdx, w.sourceIdx),
           natural: (line.lineStartBeat + w.beatOffset) * pxPerBeat,
-          width: w.romaji ? Math.max(textPx, lyricsMeasurer.measureAnnotationPx(w.romaji, fontSizePx)) : textPx,
+          width: w.romaji ? Math.max(textPx, lyricsMeasurer.measureAnnotationPx(w.romaji, font, fontSizePx)) : textPx,
           cellPx: w.beatWidth * pxPerBeat,
           text: w.text,
         };

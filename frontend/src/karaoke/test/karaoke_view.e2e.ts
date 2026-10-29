@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { HOST_PATH, test } from 'src/testing/e2e_test';
+import { HOST_PATH, pausePlayback, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
 type Utai = {
@@ -15,6 +15,7 @@ test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', as
     buffer: makeWav(20),
   });
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
   await page.evaluate(() => {
     const word = (startSec: number, endSec: number, text: string) => ({ startSec, endSec, text });
     (window as unknown as { utai: Utai }).utai.lyricsStore.add(
@@ -47,12 +48,12 @@ test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', as
   await expect.poll(states).toEqual(['sung', 'current', 'upcoming']);
 
   const distinctStrokes = async (): Promise<number> => {
-    const strokes = await lines.locator('[data-word-state]').evaluateAll((els) =>
+    const strokes = await lines.locator('[data-word-state] text').evaluateAll((els) =>
       Object.fromEntries(
-        els.map((e) => [e.getAttribute('data-word-state'), getComputedStyle(e).webkitTextStrokeColor] as const),
+        els.map((e) => [e.closest('[data-word-state]')!.getAttribute('data-word-state'), getComputedStyle(e).stroke] as const),
       ),
     );
-    return new Set([strokes.sung, strokes.current, strokes.upcoming]).size;
+    return new Set([strokes.sung, strokes.current, strokes.upcoming].filter((s) => s !== 'none')).size;
   };
   await expect.poll(distinctStrokes).toBe(3);
 
@@ -95,6 +96,7 @@ test('karaoke "Show lyric pitch" renders the line through the pitched lyric chip
     buffer: makeWav(20),
   });
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
   await page.evaluate(() => {
     const word = (startSec: number, endSec: number, text: string, midi: number) => ({
       startSec,
@@ -138,11 +140,20 @@ test('karaoke "Show lyric pitch" renders the line through the pitched lyric chip
   await expect.poll(async () => (await lineStrokes()).every((s) => s != null)).toBe(true);
   await expect.poll(async () => new Set(await lineStrokes()).size).toBe(3);
 
+  const wordWidths = (): Promise<number[]> =>
+    page
+      .getByTestId('karaoke-line')
+      .locator('svg:has(text)')
+      .evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().width)));
+  const pitchedWidths = await wordWidths();
+
   await page.getByTestId('view-menu').click();
   await page.getByTestId('karaoke-show-pitch').click();
   await page.keyboard.press('Escape');
   await expect(words).toHaveCount(0);
   await expect(page.getByTestId('karaoke-line')).toHaveText('low mid high');
+  expect(pitchedWidths).toHaveLength(3);
+  expect(await wordWidths()).toEqual(pitchedWidths);
 });
 
 test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating slots', async ({ page }) => {
@@ -153,6 +164,7 @@ test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating sl
     buffer: makeWav(20),
   });
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
   await page.evaluate(() => {
     const line = (startSec: number, text: string) => ({
       startSec,
@@ -268,6 +280,7 @@ test('karaoke counts a line in after a gap: a dot per beat of the bar above its 
     buffer: makeWav(20),
   });
   await expect(page.getByTestId('beats-readout')).toHaveText('120 BPM · 4/4', { timeout: 15_000 });
+  await pausePlayback(page);
   await page.evaluate(() => {
     const word = (startSec: number, endSec: number, text: string) => ({ startSec, endSec, text });
     (window as unknown as { utai: Utai }).utai.lyricsStore.add(

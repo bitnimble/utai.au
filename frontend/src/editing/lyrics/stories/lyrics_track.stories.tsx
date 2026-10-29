@@ -6,7 +6,7 @@ import { buildLinearTimeline } from 'src/editing/playback/timeline';
 import { WindowedLines } from '../lyric_chips';
 import { positionLyricLines } from '../lyric_layout';
 import { DEFAULT_LYRIC_FONT_SIZE_PX } from 'src/settings/app_settings_store';
-import { computePitchPaths, layoutLyricWords, lyricFontSizeAt, lyricMeasureInputs } from '../lyrics_measure';
+import { computePitchPaths, layoutLyricWords, lyricFontSizeAt, lyricMeasureInputs, zoomLyricFont } from '../lyrics_measure';
 import styles from '../lyrics_track_view.module.css';
 
 /**
@@ -116,7 +116,7 @@ function LyricsTrackDemo({ lines, pitch, vibrato, pxPerBeat }: DemoArgs & { line
   );
   const fontSizePx = lyricFontSizeAt(DEFAULT_LYRIC_FONT_SIZE_PX, pxPerBeat);
   const placements = React.useMemo(
-    () => layoutLyricWords(lyricMeasureInputs(positioned, { romaji: false }), pxPerBeat, fontSizePx),
+    () => layoutLyricWords(lyricMeasureInputs(positioned, { romaji: false }), pxPerBeat, fontSizePx, zoomLyricFont(pxPerBeat)),
     [positioned, pxPerBeat, fontSizePx],
   );
   const pitchPaths = React.useMemo(
