@@ -1,8 +1,8 @@
-// The Python sidecar, the capability installer, and the writable-data-root
+// The local Python backend, the capability installer, and the writable-data-root
 // plumbing are all desktop-only: Android can't spawn a Python process or run
-// `uv`/`nvidia-smi`, and alignment there goes over the HTTP backend (see
-// the frontend `backendClient()`). Gate them out so the Android `cdylib`
-// builds with just the webview + the file/dialog plugins.
+// `uv`/`nvidia-smi`, and alignment there goes to a remote backend over the same
+// HTTP API. Gate them out so the Android `cdylib` builds with just the webview +
+// the file/dialog plugins.
 #[cfg(desktop)]
 mod audio;
 #[cfg(desktop)]
@@ -18,9 +18,9 @@ mod paths;
 #[cfg(desktop)]
 mod pitch;
 #[cfg(desktop)]
-mod session_server;
+mod processes;
 #[cfg(desktop)]
-mod sidecar;
+mod session_server;
 mod updates;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -78,18 +78,17 @@ pub fn run() {
     // keeps a single setup slot, so a second `.setup()` here would silently
     // clobber the desktop one in the e2e build where both cfgs are active).
 
-    // Desktop wires the sidecar broker + capability commands and points the
+    // Desktop wires the local backend + capability commands and points the
     // pipeline at the bundled data root; mobile ships none of that.
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(sidecar::SidecarState::default())
+        .manage(processes::ChildProcesses::default())
         .manage(local_backend::LocalBackend::default())
         .manage(audio::AudioState::new())
         .manage(pitch::PitchState::default())
         .setup(|app| {
             use tauri::Manager;
-            use tauri_plugin_fs::FsExt;
             // wdio e2e: grant the plugin permissions at runtime (a static
             // capability file would break release builds where the plugins are
             // absent). Lives here, not in the wdio block, so it doesn't compete
@@ -105,26 +104,15 @@ pub fn run() {
             if paths::portable_data_root().is_none() {
                 paths::redirect_env(&root, false);
             }
-            // Let the webview read the sidecar's artifacts (aligned lyrics via
-            // plugin-fs, stems via the asset protocol / convertFileSrc) out of the
-            // outputs dir, wherever data_root put it. Scope is locked to that dir.
-            let outputs = paths::outputs_dir(&root);
-            let _ = std::fs::create_dir_all(&outputs);
-            let _ = app.fs_scope().allow_directory(&outputs, true);
-            let _ = app.asset_protocol_scope().allow_directory(&outputs, true);
             app.manage(session_server::start(app.handle()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            sidecar::run_job,
-            sidecar::cancel_job,
             capability::detect_accelerator,
             capability::capability_states,
             capability::set_capability_installed,
             capability::install_capability,
             capability::uninstall_capability,
-            capability::check_models,
-            capability::download_models,
             capability::available_disk_space,
             logs::read_log_tail,
             logs::open_data_folder,
@@ -160,12 +148,9 @@ pub fn run() {
     });
 }
 
-/// Tree-kill any live sidecar Python: a window-close/quit doesn't drop the task
-/// owning the child, so its kill_on_drop never fires and a mid-separation process
-/// is orphaned holding the GPU.
 #[cfg(desktop)]
 fn shutdown_children<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
-    app.state::<sidecar::SidecarState>().kill_all_children();
+    app.state::<processes::ChildProcesses>().kill_all();
     app.state::<pitch::PitchState>().stop();
 }

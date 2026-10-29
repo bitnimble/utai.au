@@ -7,17 +7,18 @@
 //! performed here, see the spec's capability-mechanism section.
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::ExitStatus;
+use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager, Runtime};
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+use crate::local_backend::LocalBackend;
 use crate::no_console::NoConsole;
-use crate::sidecar::SidecarState;
+use crate::processes::{ChildProcesses, LineSink};
 
 /// Lowest NVIDIA driver major version the cu128 wheels run on (see the
 /// aligner pyproject note: cu128 needs driver 570+).
@@ -213,6 +214,23 @@ pub fn app_venv<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(crate::paths::data_root(app)?.join("venv"))
 }
 
+/// The Python interpreter the app's processes run under: the capability-managed
+/// app venv when present, else the dev `aligner/.venv`. Override with `UTAI_PYTHON`.
+pub fn resolve_python<R: Runtime>(app: &AppHandle<R>) -> String {
+    if let Ok(p) = std::env::var("UTAI_PYTHON") {
+        return p;
+    }
+    if let Ok(venv) = app_venv(app) {
+        let py = venv_python(&venv);
+        if py.exists() {
+            return py.to_string_lossy().into_owned();
+        }
+    }
+    // Anchored to the crate manifest like `resolve_aligner_dir`'s dev fallback.
+    let dev_venv = Path::new(env!("CARGO_MANIFEST_DIR")).join("../aligner/.venv");
+    venv_python(&dev_venv).to_string_lossy().into_owned()
+}
+
 /// The `uv` to run: explicit override, else the binary bundled at
 /// `$RESOURCE/bin/uv` (packaged builds), else `uv` on PATH (dev). The bundled
 /// copy is marked executable on unix (resources don't preserve the mode).
@@ -261,27 +279,6 @@ pub enum InstallEvent {
     Error { message: String },
 }
 
-/// Startup model-provisioning progress, streamed to the webview's blocking
-/// startup gate. Byte fields are camelCase to match the frontend
-/// (`SidecarProvisioningSource`); `phase` mirrors `app.pipeline.provision`'s
-/// per-asset phases (checking | downloading | done | skipped).
-#[derive(Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ProvisionEvent {
-    Progress {
-        asset: String,
-        phase: String,
-        #[serde(rename = "bytesDone")]
-        bytes_done: Option<u64>,
-        #[serde(rename = "bytesTotal")]
-        bytes_total: Option<u64>,
-    },
-    Done,
-    Error {
-        message: String,
-    },
-}
-
 /// `uv sync --no-default-groups --group <g>…` the app capability venv to exactly
 /// `groups` (the union of every capability that should be present afterwards, since
 /// uv sync replaces the env). Streams uv's progress lines through `on_event`; Ok
@@ -322,52 +319,12 @@ async fn sync_venv(
     for group in groups {
         cmd.arg("--group").arg(group);
     }
-    let mut child = cmd
-        .current_dir(&dir)
-        .env("UV_PROJECT_ENVIRONMENT", &venv)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .no_console()
-        .spawn()
-        .map_err(|e| format!("failed to spawn uv ({uv}): {e}"))?;
-
-    let stdout = child.stdout.take().ok_or("uv has no stdout")?;
-    let stderr = child.stderr.take().ok_or("uv has no stderr")?;
-    // uv reports progress on stderr; forward both streams as lines.
-    let forward = |reader: tokio::process::ChildStdout| {
-        let sink = on_event.cloned();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(reader).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                log::info!("[sync] {line}");
-                if let Some(s) = &sink {
-                    let _ = s.send(InstallEvent::Line { line });
-                }
-            }
-        })
-    };
-    let out_task = forward(stdout);
-    let err_sink = on_event.cloned();
-    let err_task = tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            log::info!("[sync] {line}");
-            if let Some(s) = &err_sink {
-                let _ = s.send(InstallEvent::Line { line });
-            }
-        }
-    });
-
-    let status = child.wait().await.map_err(|e| e.to_string())?;
-    let _ = out_task.await;
-    let _ = err_task.await;
-
+    cmd.current_dir(&dir).env("UV_PROJECT_ENVIRONMENT", &venv);
+    let status = run_streaming(app, cmd, "sync", on_event).await?;
     if !status.success() {
         return Err(format!("uv sync failed ({status})"));
     }
     let _ = std::fs::write(sync_stamp_path(&venv), sync_stamp(&dir, groups));
-    app.state::<SidecarState>().retire_worker().await;
     Ok(())
 }
 
@@ -419,18 +376,14 @@ pub async fn install_capability(
     groups: Vec<String>,
     on_event: Channel<InstallEvent>,
 ) -> Result<(), String> {
-    if let Err(message) = sync_venv(&app, &id, &groups, Some(&on_event)).await {
-        let _ = on_event.send(InstallEvent::Error { message: message.clone() });
-        return Err(message);
-    }
-    let venv = app_venv(&app)?;
-    let dir = resolve_aligner_dir(&app);
-    if let Err(message) = provision_models(&venv, &dir, &groups, Some(&on_event)).await {
-        let _ = on_event.send(InstallEvent::Error { message: message.clone() });
-        return Err(message);
-    }
-    let _ = on_event.send(InstallEvent::Done);
-    Ok(())
+    let installed = app
+        .state::<LocalBackend>()
+        .while_stopped(&app, async {
+            sync_venv(&app, &id, &groups, Some(&on_event)).await?;
+            run_provision(&app, &groups, "Downloading models", &on_event).await
+        })
+        .await;
+    finish(installed, &on_event)
 }
 
 /// Uninstall capabilities: first delete the model files no still-installed
@@ -447,284 +400,75 @@ pub async fn uninstall_capability(
     keep_caps: Vec<String>,
     on_event: Channel<InstallEvent>,
 ) -> Result<(), String> {
-    let venv = app_venv(&app)?;
-    let dir = resolve_aligner_dir(&app);
     log::info!("[uninstall:{id}] keep_groups={keep_groups:?} keep_caps={keep_caps:?}");
-    if let Err(message) = prune_models(&venv, &dir, &keep_caps, &on_event).await {
-        let _ = on_event.send(InstallEvent::Error { message: message.clone() });
-        return Err(message);
-    }
-    if let Err(message) = sync_venv(&app, &id, &keep_groups, Some(&on_event)).await {
-        let _ = on_event.send(InstallEvent::Error { message: message.clone() });
-        return Err(message);
-    }
-    let _ = on_event.send(InstallEvent::Done);
-    Ok(())
-}
-
-/// Run `python -m app.pipeline.provision <groups>` in the freshly-synced venv to
-/// download the capability's models, streaming progress to the webview. Returns
-/// an error if the download can't be started or exits non-zero, so
-/// `install_capability` surfaces it rather than reporting a capability installed
-/// without its weights.
-async fn provision_models(
-    venv: &Path,
-    dir: &Path,
-    groups: &[String],
-    on_event: Option<&Channel<InstallEvent>>,
-) -> Result<(), String> {
-    let python = venv_python(venv);
-    if !python.exists() {
-        return Err("model download skipped: venv python missing after sync".to_string());
-    }
-    let mut cmd = Command::new(&python);
-    cmd.arg("-m").arg("app.pipeline.provision");
-    for group in groups {
-        cmd.arg(group);
-    }
-    let mut child = cmd
-        .current_dir(dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .no_console()
-        .spawn()
-        .map_err(|e| format!("failed to start model download: {e}"))?;
-    if let Some(s) = on_event {
-        let _ = s.send(InstallEvent::Line { line: "Downloading models…".to_string() });
-    }
-    let out = child.stdout.take();
-    let err = child.stderr.take();
-    let out_sink = on_event.cloned();
-    let out_task = tokio::spawn(async move {
-        if let Some(r) = out {
-            let mut lines = BufReader::new(r).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                log::info!("[provision] {line}");
-                if let Some(s) = &out_sink {
-                    let _ = s.send(InstallEvent::Line { line });
-                }
+    let installed_anything = venv_python(&app_venv(&app)?).exists();
+    let prune: Vec<String> = std::iter::once("--prune".to_string()).chain(keep_caps).collect();
+    let uninstalled = app
+        .state::<LocalBackend>()
+        .while_stopped(&app, async {
+            if installed_anything {
+                run_provision(&app, &prune, "Removing models", &on_event).await?;
             }
-        }
-    });
-    let err_sink = on_event.cloned();
-    let err_task = tokio::spawn(async move {
-        if let Some(r) = err {
-            let mut lines = BufReader::new(r).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                log::info!("[provision] {line}");
-                if let Some(s) = &err_sink {
-                    let _ = s.send(InstallEvent::Line { line });
-                }
-            }
-        }
-    });
-    let status = child.wait().await.map_err(|e| e.to_string())?;
-    let _ = out_task.await;
-    let _ = err_task.await;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("model download failed ({status})"))
-    }
+            sync_venv(&app, &id, &keep_groups, Some(&on_event)).await
+        })
+        .await;
+    finish(uninstalled, &on_event)
 }
 
-/// Run `python -m app.pipeline.provision <mode> <startup caps>` (`--progress-json`
-/// downloads, `--check` only reports) and forward its per-asset JSON lines (stdout)
-/// to the webview as {@link ProvisionEvent}s. stderr carries logs, which we log
-/// rather than surface. Errors if the process can't start or exits non-zero.
-async fn provision_models_streaming(
-    venv: &Path,
-    dir: &Path,
-    mode: &str,
-    on_event: &Channel<ProvisionEvent>,
-) -> Result<(), String> {
-    let python = venv_python(venv);
-    if !python.exists() {
-        return Err("model provisioning skipped: venv python missing".to_string());
-    }
-    let mut cmd = Command::new(&python);
-    cmd.arg("-m").arg("app.pipeline.provision").arg(mode).args(STARTUP_PROVISION_CAPS);
-    let mut child = cmd
-        .current_dir(dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .no_console()
-        .spawn()
-        .map_err(|e| format!("failed to start model provisioning: {e}"))?;
-    let out = child.stdout.take();
-    let err = child.stderr.take();
-    let sink = on_event.clone();
-    let out_task = tokio::spawn(async move {
-        let mut error = None;
-        if let Some(r) = out {
-            let mut lines = BufReader::new(r).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                match parse_provision_line(&line) {
-                    Some(ProvisionLine::Progress(ev)) => {
-                        let _ = sink.send(ev);
-                    }
-                    Some(ProvisionLine::Error(message)) => error = Some(message),
-                    None => log::info!("[provision] {line}"),
-                }
-            }
-        }
-        error
+fn finish(result: Result<(), String>, on_event: &Channel<InstallEvent>) -> Result<(), String> {
+    let _ = on_event.send(match &result {
+        Ok(()) => InstallEvent::Done,
+        Err(message) => InstallEvent::Error { message: message.clone() },
     });
-    let err_task = tokio::spawn(async move {
-        if let Some(r) = err {
-            let mut lines = BufReader::new(r).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                log::info!("[provision] {line}");
-            }
-        }
-    });
-    let status = child.wait().await.map_err(|e| e.to_string())?;
-    let error = out_task.await.ok().flatten();
-    let _ = err_task.await;
-    if status.success() {
-        return Ok(());
-    }
-    Err(match error {
-        Some(message) => message,
-        None => format!("model provisioning failed ({status})"),
-    })
+    result
 }
 
-enum ProvisionLine {
-    Progress(ProvisionEvent),
-    Error(String),
-}
-
-/// Parse one `--progress-json` stdout line; None for a non-JSON line (a stray log
-/// line that landed on stdout).
-fn parse_provision_line(line: &str) -> Option<ProvisionLine> {
-    #[derive(serde::Deserialize)]
-    #[serde(untagged)]
-    enum Raw {
-        Error {
-            error: String,
-        },
-        Progress {
-            asset: String,
-            phase: String,
-            #[serde(rename = "bytesDone")]
-            bytes_done: Option<u64>,
-            #[serde(rename = "bytesTotal")]
-            bytes_total: Option<u64>,
-        },
-    }
-    Some(match serde_json::from_str(line.trim()).ok()? {
-        Raw::Error { error } => ProvisionLine::Error(error),
-        Raw::Progress { asset, phase, bytes_done, bytes_total } => {
-            ProvisionLine::Progress(ProvisionEvent::Progress { asset, phase, bytes_done, bytes_total })
-        }
-    })
-}
-
-/// Run `python -m app.pipeline.provision --prune <keep_caps>` in the app venv to
-/// delete the model files no remaining capability needs. Skipped (Ok) when the
-/// venv python is already gone -- nothing was installed to have downloaded, so
-/// there's nothing to prune.
-async fn prune_models(
-    venv: &Path,
-    dir: &Path,
-    keep_caps: &[String],
+/// `python -m app.pipeline.provision <args>` in the app venv: downloads the given
+/// capabilities' models, or with `--prune <keep>…` deletes the ones no kept
+/// capability needs. A failure fails the install, so a capability is never
+/// recorded installed without its weights.
+async fn run_provision(
+    app: &AppHandle,
+    args: &[String],
+    action: &str,
     on_event: &Channel<InstallEvent>,
 ) -> Result<(), String> {
-    let python = venv_python(venv);
-    if !python.exists() {
-        log::info!("[uninstall] venv python missing; skipping model prune");
-        return Ok(());
-    }
-    let mut cmd = Command::new(&python);
-    cmd.arg("-m").arg("app.pipeline.provision").arg("--prune");
-    for cap in keep_caps {
-        cmd.arg(cap);
-    }
-    let mut child = cmd
-        .current_dir(dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .no_console()
-        .spawn()
-        .map_err(|e| format!("failed to start model prune: {e}"))?;
-    let _ = on_event.send(InstallEvent::Line { line: "Removing models…".to_string() });
-    let out = child.stdout.take();
-    let err = child.stderr.take();
-    let out_sink = on_event.clone();
-    let out_task = tokio::spawn(async move {
-        if let Some(r) = out {
-            let mut lines = BufReader::new(r).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                log::info!("[prune] {line}");
-                let _ = out_sink.send(InstallEvent::Line { line });
-            }
-        }
-    });
-    let err_sink = on_event.clone();
-    let err_task = tokio::spawn(async move {
-        if let Some(r) = err {
-            let mut lines = BufReader::new(r).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                log::info!("[prune] {line}");
-                let _ = err_sink.send(InstallEvent::Line { line });
-            }
-        }
-    });
-    let status = child.wait().await.map_err(|e| e.to_string())?;
-    let _ = out_task.await;
-    let _ = err_task.await;
+    let mut cmd = Command::new(venv_python(&app_venv(app)?));
+    cmd.args(["-m", "app.pipeline.provision"]).args(args).current_dir(resolve_aligner_dir(app));
+    let _ = on_event.send(InstallEvent::Line { line: format!("{action}…") });
+    let status = run_streaming(app, cmd, "provision", Some(on_event)).await?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("model prune failed ({status})"))
+        Err(format!("{action} failed ({status})"))
     }
+}
+
+/// Run `command` to completion, its output logged under `tag` and sent to
+/// `on_event` as install lines.
+async fn run_streaming(
+    app: &AppHandle,
+    command: Command,
+    tag: &'static str,
+    on_event: Option<&Channel<InstallEvent>>,
+) -> Result<ExitStatus, String> {
+    let on_line = on_event.cloned().map(|channel| -> LineSink {
+        Arc::new(move |line| {
+            let _ = channel.send(InstallEvent::Line { line });
+        })
+    });
+    app.state::<ChildProcesses>().spawn(command, tag, on_line)?.wait().await
 }
 
 // uv groups the startup gate syncs when the venv needs building (dev builds ship
 // no vendored wheels). `pitch` needs nothing beyond `separation` (transitive via
 // `lyrics-ja`), so no pitch group. See scripts/mac-build.ts.
 const STARTUP_SYNC_GROUPS: &[&str] = &["lyrics-ja", "onthespot"];
-// Capabilities whose models the startup check covers. `lyrics` + `pitch` each
-// compose `separation`, so this is every model (separator + both aligners + f0).
-const STARTUP_PROVISION_CAPS: &[&str] = &["lyrics", "pitch"];
 
-/// At app launch: sync the app venv when it needs building (a dev cross-build
-/// ships no vendored wheels; installed builds only on a missing or stale venv),
-/// then report each startup model as missing, outdated or current as progress
-/// events with those phases. Downloads nothing; the user chooses whether to run
-/// {@link download_models}.
-#[tauri::command]
-pub async fn check_models(app: AppHandle, on_event: Channel<ProvisionEvent>) -> Result<(), String> {
-    report(&on_event, check_models_inner(&app, &on_event).await)
-}
-
-/// Download the startup models that are missing or outdated, streaming progress.
-#[tauri::command]
-pub async fn download_models(app: AppHandle, on_event: Channel<ProvisionEvent>) -> Result<(), String> {
-    let result = match app_venv(&app) {
-        Ok(venv) => {
-            provision_models_streaming(&venv, &resolve_aligner_dir(&app), "--progress-json", &on_event).await
-        }
-        Err(e) => Err(e),
-    };
-    // A running sidecar holds the replaced models in memory.
-    app.state::<SidecarState>().retire_worker().await;
-    report(&on_event, result)
-}
-
-fn report(on_event: &Channel<ProvisionEvent>, result: Result<(), String>) -> Result<(), String> {
-    let _ = on_event.send(match &result {
-        Ok(()) => ProvisionEvent::Done,
-        Err(message) => ProvisionEvent::Error { message: message.clone() },
-    });
-    result
-}
-
-async fn check_models_inner(app: &AppHandle, on_event: &Channel<ProvisionEvent>) -> Result<(), String> {
+/// Before the local backend starts: sync the app venv when it needs building (a
+/// dev cross-build ships no vendored wheels; installed builds only on a missing or
+/// stale venv), and link its ffmpeg. The models are the backend's to check.
+pub(crate) async fn prepare_venv(app: &AppHandle) -> Result<(), String> {
     let venv = app_venv(app)?;
     let dir = resolve_aligner_dir(app);
     let groups: Vec<String> = STARTUP_SYNC_GROUPS.iter().map(|s| s.to_string()).collect();
@@ -739,7 +483,7 @@ async fn check_models_inner(app: &AppHandle, on_event: &Channel<ProvisionEvent>)
             log::warn!("couldn't link the bundled ffmpeg: {message}");
         }
     }
-    provision_models_streaming(&venv, &dir, "--check", on_event).await
+    Ok(())
 }
 
 #[cfg(test)]
@@ -754,6 +498,19 @@ mod tests {
         mock_builder()
             .build(mock_context(noop_assets()))
             .expect("failed to build mock app")
+    }
+
+    #[test]
+    fn resolve_python_prefers_the_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("UTAI_PYTHON");
+        std::env::set_var("UTAI_PYTHON", "/custom/python3");
+        let resolved = resolve_python(mock_app().handle());
+        match prev {
+            Some(v) => std::env::set_var("UTAI_PYTHON", v),
+            None => std::env::remove_var("UTAI_PYTHON"),
+        }
+        assert_eq!(resolved, "/custom/python3");
     }
 
     /// Sets an env var and restores its prior value on drop, so a panicking
@@ -872,23 +629,5 @@ mod tests {
         });
 
         let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn provision_lines_parse_progress_error_and_strays() {
-        match parse_provision_line(r#"{"asset":"m.onnx","phase":"downloading","bytesDone":1,"bytesTotal":10}"#) {
-            Some(ProvisionLine::Progress(ProvisionEvent::Progress { asset, phase, bytes_done, bytes_total })) => {
-                assert_eq!(
-                    (asset.as_str(), phase.as_str(), bytes_done, bytes_total),
-                    ("m.onnx", "downloading", Some(1), Some(10))
-                );
-            }
-            _ => panic!("expected progress"),
-        }
-        match parse_provision_line(r#"{"error":"couldn't download m.onnx: 404"}"#) {
-            Some(ProvisionLine::Error(message)) => assert_eq!(message, "couldn't download m.onnx: 404"),
-            _ => panic!("expected error"),
-        }
-        assert!(parse_provision_line("INFO:provision: fetched m.onnx").is_none());
     }
 }

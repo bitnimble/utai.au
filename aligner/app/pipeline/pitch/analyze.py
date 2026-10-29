@@ -14,12 +14,12 @@ low-latency) is reserved for the live-mic path, not this offline pass.
 from __future__ import annotations
 
 import logging
-import threading
 from pathlib import Path
 
 import numpy as np
 
 from app.config import settings
+from app.lazy import Lazy
 from app.pipeline.pitch import features
 from app.pipeline.pitch.rmvpe import Rmvpe
 
@@ -29,9 +29,6 @@ log = logging.getLogger(__name__)
 # to keep genuine (breathy, lower-salience) falsetto, above RMVPE's 0.03 floor.
 _CONF_THRESH = 0.1
 
-_extractor: Rmvpe | None = None
-_extractor_lock = threading.Lock()
-
 
 def extract_pitch_contour(vocals_path: str | Path) -> dict | None:
     """The vocals stem's pitch contour: cleaned per-frame MIDI + track-wide
@@ -40,14 +37,14 @@ def extract_pitch_contour(vocals_path: str | Path) -> dict | None:
 
     Returns None when the f0 model isn't provisioned or the stem is too short to
     yield any frames."""
-    extractor = _get_extractor()
-    if extractor is None:
+    rmvpe = extractor.get()
+    if rmvpe is None:
         log.info("pitch: f0 model not provisioned; no contour")
         return None
     from app.pipeline.lyrics_onnx import load_audio_np
 
     audio = load_audio_np(vocals_path)
-    contour = extractor.extract(audio, release_memory=True)
+    contour = rmvpe.extract(audio, release_memory=True)
     if contour.ts.shape[0] == 0:
         log.info("pitch: stem too short; no f0 frames")
         return None
@@ -79,43 +76,12 @@ def _nan_to_none(arr: np.ndarray) -> list[float | None]:
     return [None if np.isnan(v) else round(float(v), 3) for v in arr]
 
 
-def warm_extractor() -> bool:
-    """Eagerly build the RMVPE session at startup so the first pitch pass pays no
-    model-load latency. Returns whether the f0 model was available; best-effort,
-    never raises."""
-    try:
-        return _get_extractor() is not None
-    except Exception:
-        log.warning("pitch: could not warm the f0 model", exc_info=True)
-        return False
-
-
-def _get_extractor() -> Rmvpe | None:
-    global _extractor
-    with _extractor_lock:
-        if _extractor is None:
-            path = _pitch_model_path()
-            if path is None:
-                return None
-            # CPU: keeps the weights + a whole-song activation peak off the GPU.
-            _extractor = Rmvpe(path, providers=["CPUExecutionProvider"])
-        return _extractor
-
-
-def _pitch_model_path() -> Path | None:
-    from app.pipeline.provision import provision, provisioned_file
+def _build_extractor() -> Rmvpe | None:
+    from app.pipeline.provision import provisioned_file
 
     path = provisioned_file(settings.pitch_model_offline)
-    if path is not None:
-        return path
-    # provision("pitch") dedupes against already-present separation assets and
-    # fetches the f0 model(s). Best-effort so a fetch failure just skips pitch.
-    try:
-        provision("pitch")
-    except Exception:
-        log.warning("pitch: could not provision the f0 model; skipping pitch", exc_info=True)
-        return None
-    path = provisioned_file(settings.pitch_model_offline)
-    if path is None:
-        log.info("pitch: f0 model still absent after provisioning; skipping pitch")
-    return path
+    # CPU: keeps the weights + a whole-song activation peak off the GPU.
+    return Rmvpe(path, providers=["CPUExecutionProvider"]) if path is not None else None
+
+
+extractor: Lazy[Rmvpe | None] = Lazy(_build_extractor)

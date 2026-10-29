@@ -172,7 +172,12 @@ describe('fetchTrack', () => {
           { type: 'running', stage: 'Downloading', frac: 0.5 },
           {
             type: 'result',
-            audio: { path: 'music/audio/7', filename: 'Get Lucky', contentType: 'audio/mpeg' },
+            audio: {
+              path: 'music/audio/7',
+              serverPath: '/root/Music/Get Lucky.mp3',
+              filename: 'Get Lucky',
+              contentType: 'audio/mpeg',
+            },
           },
         ]);
       }
@@ -183,7 +188,8 @@ describe('fetchTrack', () => {
         headers: { 'content-type': 'audio/mpeg' },
       });
     };
-    const file = await fetchTrack(TRACK, { onProgress: (p) => progress.push(p.frac) });
+    const { file, serverPath } = await fetchTrack(TRACK, { onProgress: (p) => progress.push(p.frac) });
+    expect(serverPath).toBe('/root/Music/Get Lucky.mp3');
     expect(file).toBeInstanceOf(File);
     expect(file.name).toBe('Get Lucky');
     expect(file.type).toBe('audio/mpeg');

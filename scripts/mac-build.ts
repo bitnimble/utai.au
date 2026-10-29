@@ -3,7 +3,7 @@
 // `UTAI_MAC_DIST_DIR` (set in `.env`) if given, else leaves it under the Rust
 // target dir.
 //
-// Unlike the native/Windows builds this ships a *dev* sidecar (see
+// Unlike the native/Windows builds this ships a *dev* backend (see
 // prepare-desktop-resources.ts `UTAI_RESOURCE_DEV`): the pure-Python aligner
 // source + a macOS `uv`, but NO vendored wheels/models -- the runtime `uv sync`s
 // the deps from git and downloads models on first launch (a `devbuild` marker in
@@ -184,7 +184,7 @@ function assembleApp(appDir: string): void {
   chmodSync(join(macos, EXE), 0o755);
 
   // Runtime resolves BaseDirectory::Resource to Contents/Resources, so the dev
-  // sidecar (python/, bin/uv) and the devbuild marker go straight under it.
+  // backend (python/, bin/uv) and the devbuild marker go straight under it.
   for (const name of ['python', 'bin', 'devbuild']) {
     const src = join(resourcesDir, name);
     if (existsSync(src)) cpSync(src, join(res, name), { recursive: true });

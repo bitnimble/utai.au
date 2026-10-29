@@ -1,6 +1,6 @@
 //! Expose the app log file to the webview's Settings → Logs viewer.
 //!
-//! The broker + piped sidecar stderr + capability-install output all land in the
+//! The shell + the local backend's piped output + capability-install output all land in the
 //! log file via `log::` (see `lib.rs` logger setup); this returns its tail so the
 //! viewer can show recent backend/alignment diagnostics without leaving the
 //! app.
@@ -24,7 +24,7 @@ pub async fn read_log_tail<R: Runtime>(
     read_tail(&path, max_bytes.unwrap_or(DEFAULT_TAIL_BYTES)).map_err(|e| e.to_string())
 }
 
-/// Reveal the writable data root (venv, models, outputs, logs, caches) in the OS
+/// Reveal the writable data root (venv, models, logs, caches) in the OS
 /// file manager, for the Settings → Logs "Open data folder" button. Uses
 /// the platform opener (no dependency): a fire-and-forget spawn -- the file
 /// manager is detached and outlives the child handle (no `kill_on_drop`).

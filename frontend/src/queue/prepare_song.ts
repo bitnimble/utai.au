@@ -24,6 +24,8 @@ import { LrclibMatch, searchLrclib } from 'src/lyrics/lrclib';
 import { attachPitchToLines } from 'src/lyrics/pitch_contour';
 import { separateStems, type SeparatedStems } from 'src/lyrics/separate_stems';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
+import { ModelsMissingError, type JobProgress } from 'src/net/backend_job';
+import type { JobAudio } from 'src/net/job_audio';
 import { fetchTrack, type TrackResult } from 'src/net/music_source_client';
 import {
   fetchSkipSegments,
@@ -45,6 +47,7 @@ export type QueueSource =
 
 export type PrepareStage =
   | { kind: 'downloading'; frac: number }
+  | { kind: 'loadingModels' }
   | { kind: 'separating' }
   | { kind: 'aligning' };
 
@@ -88,7 +91,7 @@ async function warmBackingVideo(meta: SongMeta, signal: AbortSignal): Promise<vo
 async function prepareFile(file: File, opts: PrepareOptions): Promise<PreparedSong> {
   const music = { durationSec: await decodeDurationSec(file), startSec: 0, durationSlackSec: 0, isCover: false };
   const parsed = parseSongFilename(file.name);
-  return prepareMix(file, {}, music, findSyncedLyrics(parsed.title, parsed.artist, music, opts.signal), opts);
+  return prepareMix({ file }, {}, music, findSyncedLyrics(parsed.title, parsed.artist, music, opts.signal), opts);
 }
 
 /** The lyrics search starts once the song is identified, without waiting for the download. */
@@ -117,12 +120,12 @@ async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promi
 
 async function streamingMusic(
   track: TrackResult,
-  download: Promise<File>,
+  download: Promise<JobAudio>,
   skipSegments: Promise<SkipSegment[]>,
   identity: Promise<SongIdentity>,
 ): Promise<KnownMusic> {
   const [segments, song] = await Promise.all([skipSegments, identity]);
-  const durationSec = track.durationSec ?? (await decodeDurationSec(await download));
+  const durationSec = track.durationSec ?? (await decodeDurationSec((await download).file));
   return {
     durationSec: musicDurationSec(segments, durationSec),
     startSec: musicStartSec(segments, durationSec),
@@ -152,37 +155,41 @@ type SyncedLyrics = { lines: LyricLine[]; trackName: string; artistName: string 
 /** Separate and beat-track a full mix, then align the lyrics (once both the
  *  vocal stem and `lyricsSearch` are in) alongside the vocal pitch pass. */
 async function prepareMix(
-  mix: File,
+  mix: JobAudio,
   meta: SongMeta,
   music: KnownMusic,
   lyricsSearch: Promise<SyncedLyrics | undefined>,
   { signal, onStage }: PrepareOptions,
 ): Promise<PreparedSong> {
-  const parsed = parseSongFilename(mix.name);
-  const songLabel = meta.title || parsed.title || mix.name;
+  const parsed = parseSongFilename(mix.file.name);
+  const songLabel = meta.title || parsed.title || mix.file.name;
 
-  onStage({ kind: 'separating' });
+  const separating = trackStage({ kind: 'separating' }, onStage);
   const [stems, beats, match] = await Promise.all([
-    separateStems(mix, { signal }).catch((err: unknown) => {
-      if (!signal.aborted && !isBackendUnreachable(err)) {
-        toastStore.showWarning(`${songLabel}: kept the full mix (stem separation failed: ${message(err)}).`);
-      }
+    separating((onProgress) => separateStems(mix, { signal, onProgress })).catch((err: unknown) => {
+      if (signal.aborted || isBackendUnreachable(err)) return undefined;
+      toastStore.showWarning(
+        err instanceof ModelsMissingError
+          ? `${songLabel}: playing the full mix, as the AI models aren't downloaded.`
+          : `${songLabel}: kept the full mix (stem separation failed: ${message(err)}).`,
+        { testId: KEPT_FULL_MIX_TOAST_TEST_ID },
+      );
       return undefined;
     }),
-    analyzeBeats(mix, { signal }).catch((err: unknown) => {
-      if (!signal.aborted && !isBackendUnreachable(err)) console.warn('[beats] analysis failed:', message(err));
+    separating((onProgress) => analyzeBeats(mix, { signal, onProgress })).catch((err: unknown) => {
+      if (!signal.aborted && !isQuietFailure(err)) console.warn('[beats] analysis failed:', message(err));
       return undefined;
     }),
     lyricsSearch,
   ]);
   signal.throwIfAborted();
 
-  if (match) onStage({ kind: 'aligning' });
   const [aligned, pitchContour] = await Promise.all([
-    match && alignWords(match.lines, music.startSec, mix, stems, songLabel, signal),
+    match &&
+      alignWords(match.lines, music.startSec, mix, stems, songLabel, signal, trackStage({ kind: 'aligning' }, onStage)),
     stems &&
       extractPitch(stems.vocals, signal).catch((err: unknown) => {
-        if (!signal.aborted && !isBackendUnreachable(err)) console.warn('[pitch] extraction failed:', message(err));
+        if (!signal.aborted && !isQuietFailure(err)) console.warn('[pitch] extraction failed:', message(err));
         return undefined;
       }),
   ]);
@@ -207,12 +214,32 @@ async function prepareMix(
     },
     stems: stems
       ? [
-          { role: 'backing', file: stems.backing },
-          { role: 'vocals', file: stems.vocals, pitchContour },
+          { role: 'backing', file: stems.backing.file },
+          { role: 'vocals', file: stems.vocals.file, pitchContour },
         ]
-      : [{ role: 'full-mix', file: mix }],
+      : [{ role: 'full-mix', file: mix.file }],
     lyrics,
     beats,
+  };
+}
+
+type TrackJob = <T>(job: (onProgress: (event: JobProgress) => void) => Promise<T>) => Promise<T>;
+
+/** Reports `stage` now, and `loadingModels` instead while any job run through
+ *  the returned tracker is still loading its models. */
+export function trackStage(stage: PrepareStage, onStage: (stage: PrepareStage) => void): TrackJob {
+  const loading = new Set<symbol>();
+  const report = (): void => onStage(loading.size > 0 ? { kind: 'loadingModels' } : stage);
+  report();
+  return (job) => {
+    const id = Symbol();
+    return job((event) => {
+      if (event.kind === 'loading') loading.add(id);
+      else loading.delete(id);
+      report();
+    }).finally(() => {
+      if (loading.delete(id)) report();
+    });
   };
 }
 
@@ -221,24 +248,29 @@ async function prepareMix(
 async function alignWords(
   lines: LyricLine[],
   offsetSec: number,
-  mix: File,
+  mix: JobAudio,
   stems: SeparatedStems | undefined,
   songLabel: string,
   signal: AbortSignal,
+  track: TrackJob,
 ): Promise<LyricLine[] | undefined> {
   try {
-    const aligned = await alignLyricsForced(
-      {
-        kind: stems ? 'vocals' : 'mix',
-        file: stems?.vocals ?? mix,
-        realign: { lines: lines.map((l) => ({ startSec: l.startSec + offsetSec, text: l.text })) },
-      },
-      { signal },
+    const aligned = await track((onProgress) =>
+      alignLyricsForced(
+        {
+          kind: stems ? 'vocals' : 'mix',
+          audio: stems?.vocals ?? mix,
+          realign: { lines: lines.map((l) => ({ startSec: l.startSec + offsetSec, text: l.text })) },
+        },
+        { signal, onProgress },
+      ),
     );
     return aligned.length > 0 ? aligned : undefined;
   } catch (err) {
     signal.throwIfAborted();
-    if (!isBackendUnreachable(err)) toastStore.showError(`${songLabel}: lyrics align failed: ${message(err)}`);
+    // With stems, separation had its models, so no toast has said these are missing.
+    const quiet = stems ? isBackendUnreachable(err) : isQuietFailure(err);
+    if (!quiet) toastStore.showError(`${songLabel}: lyrics align failed: ${message(err)}`);
     return undefined;
   }
 }
@@ -321,6 +353,14 @@ function fromBundle(loaded: LoadedSong): PreparedSong {
     })),
     lyrics: loaded.lyrics,
   };
+}
+
+const KEPT_FULL_MIX_TOAST_TEST_ID = 'kept-full-mix-toast';
+
+/** Already reported: the server is down, or the job's models aren't downloaded,
+ *  which separation's full-mix toast covers. */
+function isQuietFailure(err: unknown): boolean {
+  return isBackendUnreachable(err) || err instanceof ModelsMissingError;
 }
 
 function message(err: unknown): string {

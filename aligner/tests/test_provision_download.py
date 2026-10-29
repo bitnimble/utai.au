@@ -8,7 +8,6 @@ streaming context manager exposing the surface `_download` touches.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -53,7 +52,7 @@ def test_truncated_body_raises_and_leaves_no_dest(tmp_path, monkeypatch) -> None
     with pytest.raises(OSError):
         provision._download("http://example/weights.onnx", dest)
     assert not dest.exists()
-    assert not (tmp_path / "weights.onnx.part").exists()
+    assert not list(tmp_path.glob("*.part"))
 
 
 def test_complete_body_succeeds(tmp_path, monkeypatch) -> None:
@@ -62,7 +61,7 @@ def test_complete_body_succeeds(tmp_path, monkeypatch) -> None:
     _patch_stream(monkeypatch, _FakeStream(body, content_length=100, num_bytes=100))
     provision._download("http://example/weights.onnx", dest)
     assert dest.read_bytes() == body
-    assert not (tmp_path / "weights.onnx.part").exists()
+    assert not list(tmp_path.glob("*.part"))
 
 
 def test_no_content_length_succeeds(tmp_path, monkeypatch) -> None:
@@ -75,7 +74,7 @@ def test_no_content_length_succeeds(tmp_path, monkeypatch) -> None:
     assert dest.read_bytes() == body
 
 
-def test_failed_download_reports_one_line_error_naming_the_asset(tmp_path, monkeypatch, capsys) -> None:
+def test_failed_download_raises_one_line_error_naming_the_asset(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(provision.settings, "models_dir", tmp_path)
     url = "http://example/missing.onnx"
     monkeypatch.setattr(provision, "_capability_assets", lambda _cap: [provision._Asset("m.onnx", url)])
@@ -85,11 +84,9 @@ def test_failed_download_reports_one_line_error_naming_the_asset(tmp_path, monke
         yield httpx.Response(404, request=httpx.Request("GET", url))
 
     monkeypatch.setattr(httpx, "stream", not_found)
-    assert provision.main(["--progress-json", "separation"]) == 1
-    last = capsys.readouterr().out.strip().splitlines()[-1]
-    assert json.loads(last) == {
-        "error": f"couldn't download m.onnx: Client error '404 Not Found' for url '{url}'"
-    }
+    with pytest.raises(Exception) as raised:
+        provision.provision("separation")
+    assert str(raised.value) == f"couldn't download m.onnx: Client error '404 Not Found' for url '{url}'"
 
 
 def test_gzip_decoded_body_shorter_than_content_length_succeeds(tmp_path, monkeypatch) -> None:

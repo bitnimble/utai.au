@@ -1,14 +1,16 @@
 /**
  * Client for the aligner's music-source endpoints (`<origin>/api/music/*`), the
  * facade that wraps OnTheSpot. Search the user's configured streaming services,
- * manage accounts + priority, and fetch a track's original audio as a `File`.
+ * manage accounts + priority, and fetch a track's original audio.
  *
  * Mirrors the backend models in `aligner/app/music/models.py`. Like the other
  * net clients here it hand-parses defensively rather than trusting the shape;
  * the endpoint base is the shared {@link appSettingsStore.apiBase}.
  */
 
-import { backendFetch } from 'src/net/backend_fetch';
+import { backendFetch, errorDetail, okJson } from 'src/net/backend_fetch';
+import { streamJob } from 'src/net/backend_job';
+import { downloadJobAudio, parseBackendAudio, type JobAudio } from 'src/net/job_audio';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 
 export type AuthKind = 'anonymous' | 'credentials' | 'token' | 'oauth' | 'interactive';
@@ -74,24 +76,6 @@ export type ConfigPatch = {
 
 function musicUrl(path: string): string {
   return `${appSettingsStore.apiBase}/music/${path}`;
-}
-
-async function okJson(res: Response, what: string): Promise<unknown> {
-  if (!res.ok) {
-    throw new Error(await errorDetail(res, what));
-  }
-  return res.json();
-}
-
-async function errorDetail(res: Response, what: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { detail?: unknown; message?: unknown };
-    const detail = body?.detail ?? body?.message;
-    if (typeof detail === 'string' && detail.length > 0) return detail;
-  } catch {
-    // non-JSON body; fall through
-  }
-  return `${what} failed (${res.status} ${res.statusText})`;
 }
 
 export async function listServices(signal?: AbortSignal): Promise<ServiceInfo[]> {
@@ -198,86 +182,23 @@ export async function searchTracks(query: string, signal?: AbortSignal): Promise
  * for the track. Rejects with the backend's message on failure, or an
  * `AbortError` when `opts.signal` fires.
  */
-export async function fetchTrack(track: TrackResult, opts: FetchTrackOptions = {}): Promise<File> {
-  const res = await backendFetch(musicUrl('fetch'), {
+export async function fetchTrack(track: TrackResult, opts: FetchTrackOptions = {}): Promise<JobAudio> {
+  const init: RequestInit = {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sourceUrl: track.sourceUrl, service: track.service, itemId: track.id }),
     signal: opts.signal,
-  });
-  if (!res.ok) throw new Error(await errorDetail(res, 'fetch'));
-  if (!res.body) throw new Error('fetch returned no response body');
-
-  const audio = await readFetchStream(res.body, opts.onProgress);
-  return downloadAudio(audio, opts.signal);
-}
-
-type AudioRef = { path: string; filename: string; contentType: string };
-
-async function readFetchStream(
-  body: ReadableStream<Uint8Array>,
-  onProgress?: (progress: FetchProgress) => void,
-): Promise<AudioRef> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder('utf-8');
-  let buffer = '';
-  let audio: AudioRef | null = null;
-  let errorMessage: string | null = null;
-
-  const handle = (event: Record<string, unknown>): void => {
-    const type = event.type;
-    if (type === 'running') {
-      onProgress?.({
-        stage: typeof event.stage === 'string' ? event.stage : 'downloading',
-        frac: typeof event.frac === 'number' ? event.frac : 0,
-      });
-    } else if (type === 'result') {
-      audio = parseAudioRef(event.audio);
-    } else if (type === 'error') {
-      errorMessage = typeof event.message === 'string' ? event.message : 'fetch failed';
-    }
   };
-  const settled = (): boolean => audio != null || errorMessage != null;
-
-  try {
-    while (!settled()) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let newlineIdx: number;
-      while ((newlineIdx = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, newlineIdx).trim();
-        buffer = buffer.slice(newlineIdx + 1);
-        if (line) {
-          const event = parseNdjsonLine(line);
-          if (event) handle(event);
-        }
-        if (settled()) break;
-      }
-    }
-    const tail = buffer.trim();
-    if (!settled() && tail) {
-      const event = parseNdjsonLine(tail);
-      if (event) handle(event);
-    }
-  } finally {
-    try {
-      await reader.cancel();
-    } catch {
-      // already done / aborted
-    }
-  }
-
-  if (errorMessage != null) throw new Error(errorMessage);
-  if (audio == null) throw new Error('fetch stream ended without a terminal result');
-  return audio;
-}
-
-async function downloadAudio(audio: AudioRef, signal?: AbortSignal): Promise<File> {
-  const res = await backendFetch(`${appSettingsStore.apiBase}/${audio.path}`, { signal });
-  if (!res.ok) throw new Error(await errorDetail(res, 'audio download'));
-  const bytes = await res.arrayBuffer();
-  return new File([bytes], audio.filename || 'track', { type: audio.contentType || undefined });
+  const result = await streamJob('music/fetch', init, (event) => {
+    if (event.type !== 'running') return;
+    opts.onProgress?.({
+      stage: typeof event.stage === 'string' ? event.stage : 'downloading',
+      frac: typeof event.frac === 'number' ? event.frac : 0,
+    });
+  });
+  const audio = parseBackendAudio(result.audio, 'track');
+  if (audio == null) throw new Error('music/fetch returned no audio');
+  return downloadJobAudio(audio, opts.signal);
 }
 
 // --- parsing --------------------------------------------------------------
@@ -318,26 +239,6 @@ function parseTrack(raw: unknown): TrackResult | undefined {
     sourceUrl: r.sourceUrl,
     uploaderTitled: r.uploaderTitled === true,
   };
-}
-
-function parseAudioRef(raw: unknown): AudioRef | null {
-  if (raw == null || typeof raw !== 'object') return null;
-  const r = raw as Record<string, unknown>;
-  if (typeof r.path !== 'string') return null;
-  return {
-    path: r.path,
-    filename: typeof r.filename === 'string' ? r.filename : 'track',
-    contentType: typeof r.contentType === 'string' ? r.contentType : 'application/octet-stream',
-  };
-}
-
-function parseNdjsonLine(line: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(line);
-    return typeof parsed === 'object' && parsed != null ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
 }
 
 function isAuthKind(value: unknown): value is AuthKind {

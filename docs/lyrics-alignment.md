@@ -114,7 +114,7 @@ runs from the vendored torch-free build.
 ## [5] Vocal pitch (f0) overlay
 
 `pitch.analyze.extract_pitch_contour` runs an f0 extractor over the separated
-vocals stem (its own job: sidecar `extractPitch` / HTTP `/music/pitch`, which the
+vocals stem (its own job, `/music/pitch`, which the
 frontend runs alongside alignment once the stem exists), so the frontend can lay
 words out vertically like notes. **Two models, one wire shape** (`pitch/`):
 
@@ -211,22 +211,38 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   one capability that uses it. Model URLs / HF ids are `settings.*`
   build fields (config.py), never hardcoded. Shipped ONNX set lives on the
   live `bitnimble/utai-onnx` HF repo (`settings.onnx_repo`).
-- **Update-detection at startup.** The docker/HTTP backend provisions
-  `settings.startup_capabilities` (default `lyrics,pitch` = every model) on
-  launch; the desktop app checks the same set and offers the download in a
-  toast, fetching only if the user accepts (declining is safe: each pipeline
-  fetches a missing model on first use). A toast shows progress, only when the
+- **Update-detection at startup.** At launch the backend checks
+  `settings.startup_capabilities` (default `lyrics,pitch,beat` = every model) and
+  the frontend offers the missing/outdated ones in a toast, fetching only if the
+  user accepts. **Jobs never download a model**: without one, align/separate
+  answer 424 (`job_stream.require_models`), so a queued song plays its full mix
+  (with a toast saying so) and keeps line-level lyrics; beats fall back to
+  librosa, pitch is skipped. Same on web and desktop: the frontend polls
+  `GET /provision/status` and asks with `POST /provision/download`. A toast shows progress, only when the
   check is slow or there's work. Each present asset is ETag-verified against
   the remote (HF sets the `resolve/` ETag to the LFS content hash, stored in a `<name>.etag` sidecar)
   and re-downloaded only on change, so a pushed model update lands next launch;
   an unreachable remote or an untracked-but-size-matching file is left alone.
   `provision_update_check=false` reverts to presence-only (prod, baked models).
-  Backend: a lifespan background task provisions + warms the separator and
-  reports progress at `GET /provision/status` (`/music/*` 503 until ready);
-  desktop: the frontend runs `capability::check_models` (`provision --check`)
-  and, on the user's say-so, `capability::download_models` (`--progress-json`);
-  web polls the status endpoint. See
-  `frontend/src/provisioning/`.
+  See `app/provisioning.py::Provisioner` and `frontend/src/provisioning/`.
+- **Model loading is its own stage.** Building the ORT sessions (TensorRT
+  engine deserialize, CoreML compile, CUDA init) takes tens of seconds once per
+  process, so `Provisioner` loads every model already on disk at startup
+  (`warm_models`), and again after a download. Each model is a process-wide
+  `app.lazy.Lazy` (`separate.separator`, `beats.analyze.model`,
+  `lyrics_align.aligner`, `pitch.analyze.extractor`), dropped by `reset_models`.
+  A job that arrives before the load is done streams a `{"type": "loading"}`
+  envelope and waits (`ProvisionStatus.once_loaded`); the queue shows it as
+  "Loading AI models…" before "Separating stems…" / "Aligning lyrics…".
+- **Jobs** (`app/job_stream.py::ndjson_job`). Separation and alignment take turns
+  on the GPU lock (round-robin across sessions); beats run beside them. Closing
+  the request cancels its job: a streaming job's task is cancelled on disconnect,
+  a non-streaming one watches for it (`request_context.cancel_on_disconnect`), and
+  the worker thread stops at its next chunk (`check_cancelled`). A job names its
+  audio either as an upload or as a `...Path` field naming a file the backend
+  already holds (`app/backend_files.py`: a stem it separated, `serverPath` in the
+  result; a track OnTheSpot downloaded, under `settings.music_download_dir`);
+  other paths are refused.
 
 Dep groups mirror capabilities (`aligner/pyproject.toml`, PEP 735):
 `separation`, `lyrics` (adds `ctc-forced-aligner`), `lyrics-ja` (adds

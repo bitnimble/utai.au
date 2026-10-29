@@ -119,7 +119,7 @@ describe('ProvisioningPresenter', () => {
     expect(source.disposed).toBe(true);
   });
 
-  test('an error replaces the toast with an error toast, and retry checks again', () => {
+  test('an error replaces the toast with an error toast, and retry downloads again', () => {
     const { store, presenter, source } = setup();
     source.push(AVAILABLE);
     source.push({ state: 'error', error: 'boom', assets: [] });
@@ -130,8 +130,10 @@ describe('ProvisioningPresenter', () => {
     presenter.retry();
     expect(toast(PROVISIONING_ERROR_TOAST_TEST_ID)).toBeUndefined();
     expect(store.status).toBeUndefined();
-    expect(source.live).toBe('watch');
+    expect(source.live).toBe('download');
     expect(source.disposed).toBe(false);
+    source.push({ state: 'ready', assets: [] });
+    expect(toastStore.toasts.map((t) => t.kind)).toEqual(['success']);
   });
 
   test('aggregates download fraction across sized assets', () => {

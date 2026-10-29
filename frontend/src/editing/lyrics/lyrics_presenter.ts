@@ -222,7 +222,7 @@ export class LyricsPresenter {
     const offsetSec = lyricsStore.get(targetTrackId)?.offsetSec ?? 0;
     const req: AlignLyricsRequest = {
       kind: pick.kind,
-      file,
+      audio: { file },
       realign: { lines: lines.map((l) => ({ startSec: l.startSec + offsetSec, text: l.text })) },
     };
 

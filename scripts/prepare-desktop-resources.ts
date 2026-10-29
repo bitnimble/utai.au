@@ -63,7 +63,7 @@ const depName = (spec: string): string => spec.split('@')[0].trim();
 const venvPython = (venv: string): string =>
   join(venv, process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
 
-// --- stage the Python source (sidecar + pipeline) ---------------------------
+// --- stage the Python source (backend + pipeline) ---------------------------
 await rm(pyOut, { recursive: true, force: true });
 await rm(devMarker, { force: true }); // never leave a stale marker on a non-dev build
 await mkdir(join(pyOut, 'aligner'), { recursive: true });

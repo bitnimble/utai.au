@@ -39,12 +39,4 @@ describe('Desktop capability + hardware commands (real IPC)', () => {
     expect(typeof info.meetsCudaMin).toBe('boolean');
     expect(info).not.toHaveProperty('meets_cuda_min');
   });
-
-  it('cancel_job for an unknown id is a no-op over IPC (does not reject)', async () => {
-    const ok = await browser.tauri.execute(async ({ core }) => {
-      await core.invoke('cancel_job', { id: 'no-such-job' });
-      return true;
-    });
-    expect(ok).toBe(true);
-  });
 });

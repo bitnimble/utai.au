@@ -2,7 +2,7 @@
 
 torch is an EXPORT/dev-only dependency (the one-time `.onnx` export + the offline
 parity checks); the runtime import graph must NEVER pull it in, or the torch-free
-capability install / bundled sidecar breaks. Keep any torch import lazy, inside
+capability install / bundled desktop backend breaks. Keep any torch import lazy, inside
 the dev-export branch (see the note in `separate.py`).
 
 Runs in a SUBPROCESS so an unrelated test (or transformers) importing torch in
@@ -23,7 +23,6 @@ def test_runtime_import_graph_is_torch_free():
         """
         import sys
         import app.main                              # HTTP app (routes + pipeline graph)
-        import app.sidecar                           # stdio sidecar entry
         import app.pipeline.separation.np_inference  # the ONNX separator
         import app.pipeline.lyrics_onnx              # the ONNX CTC aligner
         import app.pipeline.pitch.analyze            # the ONNX pitch stage (RMVPE)

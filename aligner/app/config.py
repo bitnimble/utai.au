@@ -22,12 +22,9 @@ class Settings(BaseSettings):
     )
 
     # --- Separation model ---
-    # The vocals separator is NOT in audio-separator's registry;
-    # `pipeline/provision.py` injects it and downloads its weights on startup.
-    # This value is the *local* filename it writes into `models_dir`.
-    # `model_mel_band_roformer.ckpt` = Mel-Band Roformer (MIT; the /music path
-    # consumes its `vocals` stem). The field name `demucs_model` is historical
-    # (it's a Roformer now, not Demucs).
+    # The vocals separator's local filename in `models_dir`: Mel-Band Roformer
+    # (MIT; the /music path consumes its `vocals` stem). The field name
+    # `demucs_model` is historical (it's a Roformer, not Demucs).
     demucs_model: str = "model_mel_band_roformer.ckpt"
 
     # --- Model asset sources (build/packaging) ---
@@ -54,21 +51,18 @@ class Settings(BaseSettings):
     pitch_model_live: str = "f0_swiftf0.onnx"
 
     # --- Startup provisioning ---
-    # Comma-separated capabilities to eagerly provision (download + update-check)
-    # at startup, so every feature works the moment the app finishes loading. A
-    # capability list (not a flat asset list) keeps provisioning capability-scoped;
-    # `lyrics` + `pitch` each compose `separation`, so the default pulls every
-    # model. A plain string (not `list[str]`) so `STARTUP_CAPABILITIES=lyrics,pitch`
-    # needs no JSON quoting; parsed by `startup_capability_list`. Empty opts out.
-    # NOTE: `beat` is deliberately NOT here, it provisions lazily on first song
-    # load (`beats/analyze.py`), so a missing/unpublished beat asset can't fail
-    # startup and 503 the whole app (a startup provision error blocks readiness);
-    # beats are best-effort and fall back to librosa if the model is absent.
-    startup_capabilities: str = "lyrics,pitch"
+    # Comma-separated capabilities whose models are checked at startup (present,
+    # outdated against the remote ETag, or missing) and offered to the user to
+    # download (`POST /provision/download`). A capability list (not a flat asset
+    # list) keeps provisioning capability-scoped; `lyrics` + `pitch` each compose
+    # `separation`, so the default covers every model. Jobs never download: a
+    # model the user hasn't downloaded is simply skipped. A plain string (not
+    # `list[str]`) so `STARTUP_CAPABILITIES=lyrics,pitch,beat` needs no JSON
+    # quoting; parsed by `startup_capability_list`. Empty opts out.
+    startup_capabilities: str = "lyrics,pitch,beat"
     # Compare each present asset's stored ETag against the remote (HF sets it to the
-    # LFS content hash) and re-download on change, so a pushed model update is
-    # picked up on next launch. Off => presence-only (prod with baked, immutable
-    # models: no per-startup network round-trips).
+    # LFS content hash), offering the changed ones as updates. Off => presence-only
+    # (prod with baked, immutable models: no per-startup network round-trips).
     provision_update_check: bool = True
 
     @property
@@ -179,6 +173,11 @@ class Settings(BaseSettings):
     # sub-path would send to the SPA instead. The `/music/accounts` route builds
     # the interactive-login `authUrl` from the request host + this port.
     onthespot_public_port: int = 5176
+    # Where OnTheSpot writes its downloads, as this process sees that directory
+    # (the same volume, mounted at the same path). Set, a fetched track's result
+    # carries its `serverPath`, and jobs read the track there instead of taking
+    # it re-uploaded.
+    music_download_dir: Path | None = None
 
 
 settings = Settings()

@@ -17,6 +17,7 @@ const trackResultSchema = z.object({
 const remoteQueueStatusSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('waiting') }),
   z.object({ kind: z.literal('downloading'), frac: z.number() }),
+  z.object({ kind: z.literal('loadingModels') }),
   z.object({ kind: z.literal('separating') }),
   z.object({ kind: z.literal('aligning') }),
   z.object({ kind: z.literal('ready') }),

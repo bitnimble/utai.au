@@ -5,7 +5,7 @@ The transcriber ships torch-free, so nothing pulls torch's bundled CUDA runtime
 onnxruntime-gpu then can't load its CUDA provider (`libcublasLt.so.12: cannot open
 shared object file`) and silently falls back to the CPU EP -- fatal for the fp16
 GRU models (onset heads / ADTOF), which the CPU EP can't run, and ~7x slower for
-the rest. The desktop broker spawns the sidecar with no `LD_LIBRARY_PATH` (and a
+the rest. The desktop app starts its backend with no `LD_LIBRARY_PATH` (and a
 bundled app has no reason to set it), so we make the libs findable ourselves.
 
 The libs ARE present in the venv, just not on the loader path:
@@ -19,7 +19,7 @@ The libs ARE present in the venv, just not on the loader path:
     dir -- both are a no-op here.
 
 Idempotent + best-effort. Call `preload_cuda_libs()` before creating any
-onnxruntime session with a GPU EP (done at `app/sidecar.py::main`).
+onnxruntime session with a GPU EP (done in `Provisioner.start`).
 """
 from __future__ import annotations
 

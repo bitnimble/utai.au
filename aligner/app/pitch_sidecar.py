@@ -7,9 +7,9 @@ window to stdout, which the engine relays to the frontend as pitch telemetry.
 
 A reader thread keeps only the LATEST window, dropping any the extractor was too
 slow to reach, so pitch latency stays bounded to a single extract even when RMVPE
-on CPU can't match the send rate (GPU keeps up outright). Binary framing (not the
-NDJSON control protocol) because this streams raw audio continuously; stderr is
-diagnostics, stdout is pitch-only. Torch-free, like the rest of the runtime.
+on CPU can't match the send rate (GPU keeps up outright). Binary framing because
+this streams raw audio continuously; stderr is diagnostics, stdout is pitch-only.
+Torch-free, like the rest of the runtime.
 """
 from __future__ import annotations
 
@@ -23,15 +23,7 @@ import numpy as np
 from app.config import settings
 from app.pipeline.pitch.live import LivePitchStream
 from app.pipeline.pitch.rmvpe import Rmvpe
-from app.pipeline.provision import provision, provisioned_file
-
-
-def _model_path():
-    path = provisioned_file(settings.pitch_model_offline)
-    if path is None:
-        provision("pitch")
-        path = provisioned_file(settings.pitch_model_offline)
-    return path
+from app.pipeline.provision import provisioned_file
 
 
 def read_exact(reader, n: int) -> bytes | None:
@@ -88,9 +80,9 @@ def _read_loop(reader, latest: LatestWindow) -> None:
 
 
 def main() -> int:
-    path = _model_path()
+    path = provisioned_file(settings.pitch_model_offline)
     if path is None:
-        print("pitch: f0 model unavailable; sidecar pitch disabled", file=sys.stderr, flush=True)
+        print("pitch: f0 model not downloaded; sidecar pitch disabled", file=sys.stderr, flush=True)
         return 1
     stream = LivePitchStream(Rmvpe(path))
     latest = LatestWindow()

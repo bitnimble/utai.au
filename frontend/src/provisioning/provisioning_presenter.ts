@@ -52,7 +52,6 @@ export class ProvisioningPresenter {
   }
 
   download(): void {
-    if (!this.source.download) return;
     this.stop();
     this.downloading = true;
     this.disposeWatch = this.source.download((s) => this.onStatus(s));
@@ -64,12 +63,10 @@ export class ProvisioningPresenter {
   }
 
   retry(): void {
-    this.stop();
     this.dismissToast();
     this.dismissErrorToast();
-    this.downloading = false;
     this.store.status = undefined;
-    this.start();
+    this.download();
   }
 
   private stop(): void {
@@ -98,6 +95,10 @@ export class ProvisioningPresenter {
         return;
       case 'checking':
         this.scheduleToast();
+        return;
+      case 'available':
+        this.downloading = false;
+        this.showToast();
         return;
       default:
         this.showToast();

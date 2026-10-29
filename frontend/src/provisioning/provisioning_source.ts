@@ -1,63 +1,79 @@
-import { isSidecarAvailable } from 'src/net/sidecar_transport';
+import { backendFetch } from 'src/net/backend_fetch';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { ProvisionState, ProvisionStatus } from './provisioning_store';
-import { SidecarProvisioningSource } from './sidecar_provisioning_source';
 
 /**
- * A watcher over the aligner's provisioning progress. `watch` starts observing
- * and invokes `onStatus` on each update; an unreachable backend yields no calls
- * (the presenter then stays quiet). Returns a disposer.
- *
- * Two implementations mirror the align/separate transport split: the web/HTTP
- * build polls `/provision/status` of a backend that provisions itself; the
- * desktop build checks via the sidecar and downloads only when asked.
+ * The backend's model provisioning. `watch` reports the startup check, ending
+ * `available` (some models missing or outdated) or `ready`; `download` fetches
+ * them, ending `ready`. Both invoke `onStatus` on each update; an unreachable
+ * backend yields no calls (the presenter then stays quiet). Each returns a
+ * disposer.
  */
 export interface ProvisioningSource {
   watch(onStatus: (status: ProvisionStatus) => void): () => void;
-  /** Fetch what `watch` reported as `available`. Only sources that report it implement this. */
-  download?(onStatus: (status: ProvisionStatus) => void): () => void;
+  download(onStatus: (status: ProvisionStatus) => void): () => void;
 }
 
 const POLL_INTERVAL_MS = 700;
 // If the backend is never reached within this window (pure-web / no-aligner
 // deploys, or the e2e vite server), stop polling so we don't retry forever.
 const UNREACHED_GIVE_UP_MS = 15_000;
+const SETTLED: readonly ProvisionState[] = ['available', 'ready', 'error'];
 
-/** Poll `GET <apiBase>/provision/status` until it reports a terminal state or the
- *  watch is disposed. Uses a plain fetch (not `backendFetch`) so a booting/absent
- *  backend doesn't fire the "server is down" toast. */
+/** Polls `GET <apiBase>/provision/status`; `download` first asks for the
+ *  download with `POST <apiBase>/provision/download`. */
 export class HttpProvisioningSource implements ProvisioningSource {
   watch(onStatus: (status: ProvisionStatus) => void): () => void {
-    let stopped = false;
-    let everReached = false;
-    const startedAt = Date.now();
-    const controller = new AbortController();
+    return poll(onStatus, (signal) => fetchStatus('status', { signal }));
+  }
 
-    const tick = async (): Promise<void> => {
-      if (stopped) return;
-      const status = await fetchStatus(controller.signal);
-      if (stopped) return;
-      if (status != null) {
-        everReached = true;
-        onStatus(status);
-        if (status.state === 'ready' || status.state === 'error') return;
-      } else if (!everReached && Date.now() - startedAt > UNREACHED_GIVE_UP_MS) {
-        return;
-      }
-      setTimeout(() => void tick(), POLL_INTERVAL_MS);
-    };
-    void tick();
-
-    return () => {
-      stopped = true;
-      controller.abort();
-    };
+  download(onStatus: (status: ProvisionStatus) => void): () => void {
+    return poll(onStatus, async (signal) => {
+      const status = await fetchStatus('download', { method: 'POST', signal });
+      return status ?? { state: 'error', error: "the backend couldn't start the download", assets: [] };
+    });
   }
 }
 
-async function fetchStatus(signal: AbortSignal): Promise<ProvisionStatus | null> {
+/** `first`, then `GET status` until the state settles. */
+function poll(
+  onStatus: (status: ProvisionStatus) => void,
+  first: (signal: AbortSignal) => Promise<ProvisionStatus | null>,
+): () => void {
+  let stopped = false;
+  let everReached = false;
+  let next = first;
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  // The desktop's own backend is restarted until it's up, however long its startup takes.
+  const mayGiveUp = appSettingsStore.localBackend === 'none';
+
+  const tick = async (): Promise<void> => {
+    if (stopped) return;
+    const status = await next(controller.signal);
+    next = (signal) => fetchStatus('status', { signal });
+    if (stopped) return;
+    if (status != null) {
+      everReached = true;
+      onStatus(status);
+      if (SETTLED.includes(status.state)) return;
+    } else if (mayGiveUp && !everReached && Date.now() - startedAt > UNREACHED_GIVE_UP_MS) {
+      return;
+    }
+    setTimeout(() => void tick(), POLL_INTERVAL_MS);
+  };
+  void tick();
+
+  return () => {
+    stopped = true;
+    controller.abort();
+  };
+}
+
+/** Silent: a booting/absent backend shouldn't fire the "server is down" toast. */
+async function fetchStatus(path: 'status' | 'download', init: RequestInit): Promise<ProvisionStatus | null> {
   try {
-    const res = await fetch(`${appSettingsStore.apiBase}/provision/status`, { signal });
+    const res = await backendFetch(`${appSettingsStore.apiBase}/provision/${path}`, init, { silent: true });
     if (!res.ok) return null;
     return parseStatus(await res.json());
   } catch {
@@ -65,7 +81,7 @@ async function fetchStatus(signal: AbortSignal): Promise<ProvisionStatus | null>
   }
 }
 
-const STATES: readonly ProvisionState[] = ['checking', 'available', 'downloading', 'loading', 'ready', 'error'];
+const STATES: readonly ProvisionState[] = ['checking', 'available', 'downloading', 'ready', 'error'];
 
 function parseStatus(raw: unknown): ProvisionStatus | null {
   if (raw == null || typeof raw !== 'object') return null;
@@ -91,11 +107,4 @@ function parseAsset(raw: unknown): ProvisionStatus['assets'][number] | null {
     bytesDone: typeof r.bytesDone === 'number' ? r.bytesDone : undefined,
     bytesTotal: typeof r.bytesTotal === 'number' ? r.bytesTotal : undefined,
   };
-}
-
-/** The source for the current build: the desktop sidecar stream when available,
- *  else HTTP polling. */
-export function createProvisioningSource(): ProvisioningSource {
-  if (isSidecarAvailable()) return new SidecarProvisioningSource();
-  return new HttpProvisioningSource();
 }

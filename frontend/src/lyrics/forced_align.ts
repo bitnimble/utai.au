@@ -5,14 +5,10 @@
  * the backend runs a CTC forced aligner (MMS-300m via
  * `ctc-forced-aligner`) to recompute per-word timings against an
  * uploaded audio source.
- *
- * The endpoint base is the shared {@link appSettingsStore.apiBase}
- * (`<aligner origin>/api`).
  */
 
-import { backendFetch } from 'src/net/backend_fetch';
-import { alignLyricsSidecar, isSidecarAvailable } from 'src/net/sidecar_transport';
-import { appSettingsStore } from 'src/settings/app_settings_presenter';
+import { runJob, type JobOptions } from 'src/net/backend_job';
+import { setJobAudio, type JobAudio } from 'src/net/job_audio';
 import type { LyricLine } from './lrc';
 
 /**
@@ -32,164 +28,19 @@ export type AlignLyricsRequest = {
   /** `mix` runs the 2-stem vocals separator first; `vocals` skips
    *  separation and feeds the file straight to the aligner. */
   kind: 'mix' | 'vocals';
-  file: File;
+  audio: JobAudio;
   realign: AlignLyricsRealignInput;
 };
 
-/** Non-terminal progress emitted while the alignment stream runs:
- *  `queued` while the request waits behind another in-flight align on the
- *  GPU, then `running` once it owns the GPU and alignment actually starts. */
-export type AlignLyricsProgress = { kind: 'queued' | 'running' };
-
-export type AlignLyricsOptions = {
-  signal?: AbortSignal;
-  /** Fires once per non-terminal stream envelope. Optional; omitting it
-   *  just loses the queued/running wait-state feedback. */
-  onProgress?: (event: AlignLyricsProgress) => void;
-};
-
-/**
- * Run forced alignment against an audio source, returning the parsed lyric
- * lines. On the Tauri desktop build this drives the bundled Python sidecar
- * over the Rust broker ({@link alignLyricsSidecar}); on web and Android it
- * POSTs to the HTTP `/api` backend ({@link alignLyricsHttp}). Both paths share
- * the same request/progress/result contract, so callers (the lyrics presenter)
- * don't branch on transport.
- */
-export function alignLyricsForced(
-  req: AlignLyricsRequest,
-  opts: AlignLyricsOptions = {},
-): Promise<LyricLine[]> {
-  return isSidecarAvailable() ? alignLyricsSidecar(req, opts) : alignLyricsHttp(req, opts);
-}
-
-/**
- * POST to `/music/align` and return the parsed lyric lines.
- *
- * The endpoint streams NDJSON: one envelope per line, `queued` (only
- * when the request waits behind another GPU job), `running` (alignment
- * started), then a terminal `result` carrying `{lines}` or an `error`.
- * Non-terminal envelopes drive `opts.onProgress` so the caller can show
- * a wait state; the `result` lines (shape `{lines: LyricLine[]}`, an
- * exact match for our in-memory type) go straight into
- * `lyricsStore.replace(id, ...)` via `LyricsPresenter.alignTrackToVocals`.
- *
- * Input-validation failures arrive as a real 4xx (before any stream
- * bytes) and surface here as the server's `detail` message, same as
- * before the endpoint streamed.
- */
-async function alignLyricsHttp(
-  req: AlignLyricsRequest,
-  opts: AlignLyricsOptions = {},
-): Promise<LyricLine[]> {
+/** Run `/music/align`, returning the aligned lines (shape `LyricLine`, as the
+ *  backend sends them). */
+export async function alignLyricsForced(req: AlignLyricsRequest, opts?: JobOptions): Promise<LyricLine[]> {
   const form = new FormData();
-  if (req.kind === 'vocals') {
-    form.set('vocals', req.file, req.file.name);
-  } else {
-    form.set('mix', req.file, req.file.name);
-  }
-  const payload = req.realign.lines.map((l) => ({
-    startSec: l.startSec,
-    text: l.text,
-  }));
-  form.set('lyrics', JSON.stringify(payload));
-  if (req.realign.language !== undefined && req.realign.language.length > 0) {
-    form.set('language', req.realign.language);
-  }
-  const res = await backendFetch(`${appSettingsStore.apiBase}/music/align`, {
-    method: 'POST',
-    body: form,
-    signal: opts.signal,
-  });
-  if (!res.ok) {
-    let detail: string | undefined;
-    try {
-      const body = (await res.json()) as { detail?: unknown };
-      if (typeof body?.detail === 'string') detail = body.detail;
-    } catch {
-      // Non-JSON body; fall through to the status-text fallback below.
-    }
-    throw new Error(detail ?? `music/align failed (${res.status} ${res.statusText})`);
-  }
-  if (!res.body) {
-    throw new Error('music/align returned no response body');
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder('utf-8');
-  let buffer = '';
-  let lines: LyricLine[] | null = null;
-  let errorMessage: string | null = null;
-
-  const handle = (event: Record<string, unknown>): void => {
-    const type = event.type;
-    if (type === 'queued' || type === 'running') {
-      opts.onProgress?.({ kind: type });
-    } else if (type === 'result') {
-      const data = event.data as { lines?: LyricLine[] } | undefined;
-      lines = Array.isArray(data?.lines) ? data.lines : [];
-    } else if (type === 'error') {
-      errorMessage = typeof event.message === 'string' ? event.message : 'music/align failed';
-    }
-  };
-  const settled = (): boolean => lines !== null || errorMessage !== null;
-
-  try {
-    while (!settled()) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      // Split on newline; a trailing partial line stays buffered for the
-      // next chunk.
-      let newlineIdx: number;
-      while ((newlineIdx = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, newlineIdx).trim();
-        buffer = buffer.slice(newlineIdx + 1);
-        if (line) {
-          const event = parseNdjsonLine(line);
-          if (event) handle(event);
-        }
-        if (settled()) break;
-      }
-    }
-    // Tolerate a final envelope with no trailing newline.
-    const tail = buffer.trim();
-    if (!settled() && tail) {
-      const event = parseNdjsonLine(tail);
-      if (event) handle(event);
-    }
-  } finally {
-    // Best-effort: aborts surface as a rejection from `reader.read()`
-    // above; here we just let the cancel chain run.
-    try {
-      await reader.cancel();
-    } catch {
-      // already done or aborted
-    }
-  }
-
-  if (errorMessage !== null) {
-    throw new Error(errorMessage);
-  }
-  if (lines === null) {
-    throw new Error('music/align stream ended without a terminal result event');
-  }
-  return lines;
-}
-
-/** Parse one NDJSON line without throwing; a malformed envelope is
- *  logged and skipped so a single bad line can't kill the whole stream. */
-function parseNdjsonLine(line: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(line);
-    return typeof parsed === 'object' && parsed !== null
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn('Skipping malformed music/align NDJSON event:', line, err);
-    return null;
-  }
+  setJobAudio(form, req.kind, req.audio);
+  form.set('lyrics', JSON.stringify(req.realign.lines.map(({ startSec, text }) => ({ startSec, text }))));
+  if (req.realign.language) form.set('language', req.realign.language);
+  const { lines } = await runJob('music/align', form, opts);
+  return Array.isArray(lines) ? (lines as LyricLine[]) : [];
 }
 
 /**

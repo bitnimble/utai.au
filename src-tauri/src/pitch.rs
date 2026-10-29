@@ -14,7 +14,7 @@ use tauri::{AppHandle, Runtime, State};
 
 use crate::audio::AudioState;
 use crate::no_console::NoConsole;
-use crate::sidecar::resolve_python;
+use crate::capability::resolve_python;
 
 const SR_TARGET: u32 = 16_000;
 /// Analysis window sent each tick (matches the web source + LivePitchStream).

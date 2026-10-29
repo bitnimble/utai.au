@@ -24,7 +24,7 @@ log = "0.4"
 # Cross-platform free-disk-space query for the pre-install space check (std has
 # no portable API; the alternative is fragile df/wmic shell-outs).
 fs2 = "0.4"
-tauri = { version = "2.11.3", features = ["protocol-asset"] }
+tauri = { version = "2.11.3" }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"

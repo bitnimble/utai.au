@@ -10,7 +10,7 @@ Inference runs torch-free through `pipeline/separation/np_inference.py` (numpy
 STFT/chunking + an onnxruntime session over the model body). The body is
 reimplemented bit-exact from `audio-separator`'s chunked overlap-add, and is
 either shipped pre-exported via `provision` or exported locally from a ckpt in
-dev (the one torch step). `pipeline/provision.py` fetches the weights on startup.
+dev (the one torch step).
 """
 
 from __future__ import annotations
@@ -24,11 +24,12 @@ import numpy as np
 import soundfile as sf
 
 from app.config import settings
-from app.pipeline.provision import provision_custom_models, yaml_for_ckpt
+from app.lazy import Lazy
+from app.pipeline.provision import yaml_for_ckpt
 
 # NOTE: `loader` / `export` `import torch` at module top, so they are imported
 # lazily inside the dev-export branch only (`_load_numpy_separator`). The runtime
-# must stay import-torch-free -- the shipped sidecar has no torch. `SAMPLE_RATE` /
+# must stay import-torch-free -- the shipped desktop backend has no torch. `SAMPLE_RATE` /
 # `ProgressCallback` come from the torch-free `_chunking`.
 from app.pipeline.separation._chunking import SAMPLE_RATE, ProgressCallback
 
@@ -36,30 +37,16 @@ log = logging.getLogger(__name__)
 
 
 class Separator:
-    """Vocals separator (Mel-Band Roformer). The model is loaded eagerly by
-    `load()` at application startup so the first `/music/align` mix-flow call
-    doesn't pay model-load latency.
-
-    Model weights are downloaded into `settings.models_dir` (mounted as a
-    Docker volume so they persist across container restarts).
-    """
+    """Vocals separator (Mel-Band Roformer), its weights under `settings.models_dir`."""
 
     def __init__(self) -> None:
         self._stems_all = None
 
     def load(self) -> None:
-        """Idempotently load the vocals separator (Mel-Band Roformer).
-
-        Called once at container startup (FastAPI lifespan) so the first mix-flow
-        /music/align call doesn't pay model-load latency, and again defensively
-        from `run_vocals`.
-        """
+        """Idempotent."""
         if self._stems_all is not None:
             return
 
-        # The model isn't in audio-separator's registry; inject it and fetch its
-        # weights BEFORE the loader below reads the registry / local files.
-        provision_custom_models()
         models_dir = Path(settings.models_dir)
         ckpt = models_dir / settings.demucs_model
         yaml = models_dir / yaml_for_ckpt(settings.demucs_model)
@@ -132,11 +119,14 @@ class Separator:
         return paths
 
 
+separator: Lazy[Separator] = Lazy(Separator)
+
+
 def _log_progress(stage: str) -> ProgressCallback:
     """Per-chunk(-batch) progress hook for a separation pass. INFO (not DEBUG):
-    the sidecar's default log level is INFO, and this is the one signal that
+    the backend's default log level is INFO, and this is the one signal that
     shows whether a split is actually progressing -- each line lands in the
-    persistent app log (Settings -> Advanced -> Logs) with the broker's own
+    persistent app log (Settings -> Advanced -> Logs) with the desktop shell's own
     per-line timestamp, so consecutive lines give real wall-clock chunk timing
     without needing to run at DEBUG (which would flood the log with everything
     else too)."""

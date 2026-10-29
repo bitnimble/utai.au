@@ -7,7 +7,7 @@ name = "utai-aligner"
 version = "0.1.0"
 description = "Lyrics alignment + vocal separation service for Utai."
 requires-python = ">=3.11"
-# Lean base: the API shell + the stdio sidecar (control protocol). Everything
+# Lean base: the API shell. Everything
 # heavy (torch / separation / lyrics) lives in the capability dependency-groups
 # below, so the desktop installer can pull one capability at a time. `uv sync`
 # installs the default-groups (full parity for dev / Docker); the desktop

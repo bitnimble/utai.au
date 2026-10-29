@@ -10,8 +10,7 @@ Wraps OnTheSpot with the behaviour its raw HTTP API doesn't provide:
 - non-secret prefs (service priority) persisted separately from OnTheSpot's
   own config, which keeps the credentials.
 
-The facade knows nothing about FastAPI / stdio; `routes.py` adapts it to HTTP,
-and the same core could later back a stdio control-protocol op. Its
+The facade knows nothing about FastAPI; `routes.py` adapts it to HTTP. Its
 collaborators are injected as Protocols so unit tests run without a live
 OnTheSpot: `OnTheSpotApi` (actions), `AccountPool` (OnTheSpot's account list,
 read from its config), and `YoutubeMusicSearch` (OnTheSpot's own YouTube Music
@@ -26,6 +25,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Protocol
 
+from app.backend_files import backend_file
 from app.config import settings
 
 from .models import (
@@ -479,13 +479,18 @@ def _find_queue_item(
 
 
 def _result(local_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    audio: dict[str, Any] = {
+        "path": f"music/audio/{local_id}",
+        "filename": _download_filename(item),
+        "contentType": _content_type_for(item),
+    }
+    file_path = item.get("file_path")
+    server_path = backend_file(file_path) if isinstance(file_path, str) else None
+    if server_path is not None:
+        audio["serverPath"] = str(server_path)
     return {
         "type": "result",
-        "audio": {
-            "path": f"music/audio/{local_id}",
-            "filename": _download_filename(item),
-            "contentType": _content_type_for(item),
-        },
+        "audio": audio,
         "meta": {
             "title": item.get("item_name"),
             "artists": item.get("item_by"),

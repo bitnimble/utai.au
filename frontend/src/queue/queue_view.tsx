@@ -200,7 +200,7 @@ const ItemMenu = ({ item }: { item: QueueItem }): React.ReactElement => {
 };
 
 const ItemStatus = ({ status }: { status: QueueItemStatus }): React.ReactElement => {
-  const busy = status.kind === 'downloading' || status.kind === 'separating' || status.kind === 'aligning';
+  const busy = status.kind !== 'waiting' && status.kind !== 'ready' && status.kind !== 'failed';
   return (
     <span
       className={classNames(styles.status, status.kind === 'failed' && styles.statusFailed)}
@@ -219,6 +219,8 @@ export function statusLabel(status: QueueItemStatus | RemoteQueueStatus): string
       return 'Waiting';
     case 'downloading':
       return `Downloading ${Math.round(status.frac * 100)}%`;
+    case 'loadingModels':
+      return 'Loading AI models…';
     case 'separating':
       return 'Separating stems…';
     case 'aligning':

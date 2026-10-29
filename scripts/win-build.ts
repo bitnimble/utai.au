@@ -6,7 +6,7 @@
 // The heavy Rust `target/` still honours `UTAI_BUILD_DIR` (see build_env.ts);
 // only the two final artifacts land in `UTAI_WIN_DIST_DIR`.
 //
-// The ML sidecar resources (`python/`, `bin/`) are dropped: they can't be
+// The Python backend resources (`python/`, `bin/`) are dropped: they can't be
 // cross-staged for Windows from a Linux host, so *lyrics alignment is
 // unavailable* in this build. Audio + the rest of the UI work. Staging a Windows
 // Python for a full build is a follow-up.
@@ -33,7 +33,7 @@ const extra = buildOutputEnv();
 const env = { ...process.env, ...extra };
 const config = JSON.stringify({
   // Frontend build only: skip desktop:resources (host-Python staging) since the
-  // sidecar isn't bundled in the cross build.
+  // backend isn't bundled in the cross build.
   build: { beforeBuildCommand: 'bun run build' },
   bundle: { resources: [] },
 });

@@ -58,25 +58,28 @@ services:
     # Docker) and run uvicorn as a module from /repo/aligner so cwd + PYTHONPATH
     # put the app source on sys.path; the backend image installs the deps only.
     # Hot-reload is off on purpose: a restart re-runs the startup lifespan, which
-    # re-provisions (update-checks every model) and re-warms the separator, so an
+    # update-checks every model and reloads them all, so an
     # edit-triggered reload is slow. Apply backend edits with an explicit
     # `docker compose -f docker-compose.dev.yml restart backend`.
     command: sh -c "cd /repo/aligner && exec /opt/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
     environment:
       PYTHONPATH: /repo/aligner
       # ONE service runs both the music API and the ML pipeline (vocal
-      # separation + CTC forced alignment), matching the sidecar. The `pipeline`
-      # role provisions the startup model set + warms the separator in a
-      # background task (uvicorn accepts connections immediately, so the web
-      # frontend's startup gate can poll /provision/status); music routes work in
-      # any role.
+      # separation + CTC forced alignment), as the desktop app's local backend
+      # does. The `pipeline` role checks the startup model set and loads what's
+      # downloaded in background tasks (uvicorn accepts connections immediately,
+      # so the frontend can poll /provision/status and offer the download);
+      # music routes work in any role.
       WORKER_ROLE: pipeline
       MODELS_DIR: /models
-      # Capabilities eagerly provisioned at startup (download + ETag update-check
-      # against `onnx_repo`). Default is lyrics,pitch (every model); set here for
-      # visibility. Any pre-mounted `/models` weights are adopted (size match) or
-      # update-checked rather than re-downloaded.
-      STARTUP_CAPABILITIES: lyrics,pitch
+      # Capabilities checked at startup (presence + ETag update-check against
+      # `onnx_repo`) and offered for download. Default is lyrics,pitch,beat
+      # (every model); set here for visibility. Any pre-mounted `/models` weights
+      # are adopted (size match) or update-checked rather than re-downloaded.
+      STARTUP_CAPABILITIES: lyrics,pitch,beat
+      # OnTheSpot's downloads volume, mounted at the same path as in its own
+      # container, so jobs read a fetched track in place.
+      MUSIC_DOWNLOAD_DIR: /root/Music
       # Runtime is torch-free onnxruntime (the only shipped path). On this box
       # separation rides the TensorRT EP automatically (the backend image carries
       # the tensorrt-cu12 wheel and UTAI_SEP_TRT defaults on); its engine builds
@@ -96,13 +99,14 @@ services:
     volumes:
       - ${REPO_PATH:-.}:/repo
       - otsconfig:/config
-      # Persistent model cache. Startup provisioning downloads whatever's missing
+      # Persistent model cache. The offered download fetches whatever's missing
       # here from `onnx_repo` (and update-checks what's present), so an empty dir
-      # just means a one-time download on first `up`; a pre-populated onnx-export
+      # just means a one-time download after first `up`; a pre-populated onnx-export
       # dir is adopted as-is. Kept on a host path so downloads survive `down`.
       - ${MODELS_PATH:-/codebox-workspace/utai/onnx-export}:/models
       - aligncache:/cache
       - hfcache:/hf-cache
+      - otsdownloads:/root/Music
     expose:
       - "8000"
     depends_on:
