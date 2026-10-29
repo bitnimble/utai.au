@@ -67,13 +67,13 @@ export class AppSettingsStore {
    *  the View menu. */
   lyricsFontSizePx: number = DEFAULT_LYRIC_FONT_SIZE_PX;
 
-  viewMode: ViewMode = 'tracks';
+  viewMode: ViewMode = 'karaoke';
 
   /** Karaoke overlay: lift each word to its sung pitch + draw its pitch line. */
   karaokeShowPitch: boolean = false;
 
   /** Karaoke overlay: show the next line too, alternating top-left / bottom-right. */
-  karaokeTwoLines: boolean = false;
+  karaokeTwoLines: boolean = true;
 
   /** Romaji under Japanese lyrics, below the text (furigana sits above). */
   showRomaji: boolean = false;

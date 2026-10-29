@@ -66,6 +66,27 @@ test('karaoke view swaps the score for a lyrics overlay + footer stem mixer', as
   await expect(page.getByTestId('lyrics-track')).toBeVisible();
 });
 
+test('a first launch opens in the karaoke view, showing 2 lines', async ({ page }) => {
+  await page.addInitScript(() => localStorage.removeItem('utai.settings'));
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await page.evaluate(() => {
+    const line = (startSec: number, text: string) => ({ startSec, text, words: [{ startSec, endSec: startSec + 1, text }] });
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add([line(2, 'line one'), line(4, 'line two')], {
+      source: 'plaintext',
+      sourceLabel: 'probe',
+    });
+  });
+  await expect(page.getByTestId('score-area')).toHaveCount(0);
+  await expect(page.getByTestId('karaoke-slot-top')).toHaveText('line one');
+  await expect(page.getByTestId('karaoke-slot-bottom')).toHaveText('line two');
+});
+
 test('karaoke "Show lyric pitch" renders the line through the pitched lyric chips', async ({ page }) => {
   await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
