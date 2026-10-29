@@ -297,7 +297,9 @@ export type FuriganaToken = Pick<
 /** A romanized word and the UTF-16 span of the line it covers. */
 export type RomajiWord = { start: number; end: number; romaji: string };
 
-export type Annotation = { segments: RubySegment[]; romaji: RomajiWord[] };
+/** `phraseStarts`: UTF-16 offsets, past the first, where a bunsetsu (a content
+ *  word plus the particles and endings it carries) begins. */
+export type Annotation = { segments: RubySegment[]; romaji: RomajiWord[]; phraseStarts: number[] };
 
 /** Dictionary readings {@link annotateTokens} falls back on where kuromoji's
  *  own are wrong or missing. */
@@ -321,9 +323,11 @@ export type ReadingSource = {
 export function annotateTokens(tokens: readonly FuriganaToken[], dict: ReadingSource): Annotation {
   const segs: RubySegment[] = [];
   const words: { start: number; end: number; kana: string }[] = [];
+  const phraseStarts: number[] = [];
   let offset = 0;
   let afterStem = false;
   for (let i = 0; i < tokens.length; i++) {
+    if (i > 0 && startsPhrase(tokens[i], tokens[i - 1])) phraseStarts.push(offset);
     const end = numeralCounterEnd(tokens, i) ?? i;
     const run = tokens.slice(i, end + 1);
     const surface = run.map((t) => t.surface_form).join('');
@@ -352,7 +356,18 @@ export function annotateTokens(tokens: readonly FuriganaToken[], dict: ReadingSo
     romaji: words
       .filter((w) => hasKana(w.kana))
       .map((w) => ({ start: w.start, end: w.end, romaji: kanaToRomaji(w.kana) })),
+    phraseStarts,
   };
+}
+
+const CONTENT_POS = new Set(['名詞', '動詞', '形容詞', '副詞', '連体詞', '接続詞', '感動詞', '接頭詞', 'フィラー']);
+
+function startsPhrase(t: FuriganaToken, prev: FuriganaToken): boolean {
+  if (!CONTENT_POS.has(t.pos) || t.pos_detail_1 === '非自立' || t.pos_detail_1 === '接尾') return false;
+  if (prev.pos === '接頭詞') return false;
+  // compound noun (東京 + タワー), compound verb (走り + 続ける), サ変 noun + する (愛 + する)
+  if ((t.pos === '名詞' || t.pos === '動詞') && prev.pos === t.pos) return false;
+  return !(prev.pos_detail_1 === 'サ変接続' && t.basic_form === 'する');
 }
 
 /** Segments for a token kuromoji has no reading for, each kanji run read from
@@ -568,6 +583,16 @@ class FuriganaAnnotator {
       const kana = wordSegs[i].map((s) => s.reading ?? s.base).join('');
       return hasKana(kana) ? kanaToRomaji(kana) : '';
     });
+  }
+
+  /** {@link Annotation.phraseStarts} of a line's text; undefined until the
+   *  dictionary resolves, and for non-Japanese text. */
+  phraseStartsFor(line: string): readonly number[] | undefined {
+    void this.revision;
+    if (!hasKanji(line) && !hasKana(line)) return undefined;
+    const cached = this.cache.get(line);
+    if (!cached) this.schedule(line);
+    return cached?.phraseStarts;
   }
 
   /** Context-aware furigana for a run of display words that together form

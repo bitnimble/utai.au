@@ -262,6 +262,35 @@ test('karaoke "Show 2 lines" sizes both lines alike, small enough for the longer
     .toEqual({ oneRow: true, unclipped: true, insideSlot: true, fillsSlot: true, sameSize: true, shrunk: true });
 });
 
+test('karaoke splits a line too long for its container: kept whole on one line, split in the narrower 2-line slots', async ({ page }) => {
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await page.evaluate(() => {
+    const texts = 'We were dancing in the moonlight now'.split(' ');
+    const words = texts.map((text, i) => ({ startSec: 2 + i * 0.3, endSec: 2.25 + i * 0.3, text }));
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add([{ startSec: 2, text: texts.join(' '), words }], {
+      source: 'plaintext',
+      sourceLabel: 'probe',
+    });
+  });
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.getByTestId('karaoke-two-lines').click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('karaoke-slot-top')).toHaveText('We were dancing in');
+  await expect(page.getByTestId('karaoke-slot-bottom')).toHaveText('the moonlight now');
+
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('karaoke-two-lines').click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('karaoke-line')).toHaveText(['We were dancing in the moonlight now']);
+});
+
 test('karaoke counts a line in after a gap: 3, 2, 1 dots above its first word, the last out on the line', async ({ page }) => {
   await page.route('**/music/beats', async (route) => {
     const beats = {
@@ -421,7 +450,7 @@ test('karaoke seek bar: flush above the footer, follows and moves the playhead, 
   expect(Math.abs(bar.y + bar.height / 2 + TRACK_HALF_HEIGHT_PX - footer.y)).toBeLessThanOrEqual(1);
 });
 
-test('karaoke "Show lyric pitch" fits a long line inside the overlay', async ({ page }) => {
+test('karaoke "Show lyric pitch" splits a long line and fits it inside the overlay', async ({ page }) => {
   await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -446,7 +475,8 @@ test('karaoke "Show lyric pitch" fits a long line inside the overlay', async ({ 
   await page.keyboard.press('Escape');
 
   const overlay = page.getByTestId('karaoke-lyrics');
-  await expect(overlay.locator('[data-testid^="lyrics-word-"]')).toHaveCount(17);
+  await expect(overlay.locator('[data-testid^="lyrics-word-"]').first()).toHaveText('every');
+  expect(await overlay.locator('[data-testid^="lyrics-word-"]').count()).toBeLessThanOrEqual(7);
   const bounds = await overlay.evaluate((el) => {
     const r = el.getBoundingClientRect();
     const glyphs = Array.from(el.querySelectorAll('[data-testid^="lyrics-word-"]')).map((w) => w.getBoundingClientRect());

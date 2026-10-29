@@ -117,6 +117,39 @@ test("furigana + romaji: a word's heard reading wins over the dictionary's", asy
   await expect(page.getByTestId('karaoke-line').locator('rt:not([data-romaji])')).toHaveText(['あ', 'せい'], DICT_TIMEOUT);
 });
 
+test('karaoke splits a long Japanese line between phrases, never inside a word', async ({ page }) => {
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await page.evaluate(() => {
+    const texts = ['君', 'の', '名前', 'を', '呼', 'んで', 'い', 'た', 'ん', 'だ', 'ずっと', '遠い', '空', 'の', '向こう', 'へ'];
+    const words = texts.map((text, i) => ({ startSec: 1 + i * 0.3, endSec: 1.25 + i * 0.3, text }));
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add([{ startSec: 1, text: texts.join(''), words }], {
+      source: 'plaintext',
+      sourceLabel: 'probe',
+    });
+  });
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.keyboard.press('Escape');
+  const seek = (sec: number) => page.evaluate((s) => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(s), sec);
+  const baseText = () =>
+    page.getByTestId('karaoke-line').evaluate((el) => {
+      const copy = el.cloneNode(true) as HTMLElement;
+      copy.querySelectorAll('rt').forEach((rt) => rt.remove());
+      return copy.textContent;
+    });
+
+  await seek(1.2);
+  await expect.poll(baseText, DICT_TIMEOUT).toBe('君の名前を呼んでいたんだ');
+  await seek(4.1);
+  await expect.poll(baseText).toBe('ずっと遠い空の向こうへ');
+});
+
 test('furigana: karaoke view annotates word-aligned and line-level lyrics', async ({ page }) => {
   await loadJapaneseSong(page);
   await page.getByTestId('view-menu').click();
