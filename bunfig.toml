@@ -15,3 +15,4 @@
 # now share the `test/` folder.
 [test]
 root = "."
+preload = ["./frontend/src/testing/vite_url_imports.ts"]

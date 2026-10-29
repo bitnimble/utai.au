@@ -1,6 +1,7 @@
 //! Surround reverb: pushes a vocal out to the sides and into a wide reverb so
 //! it sits back like a backing vocal. Real-time and allocation-free once built.
-//! Mirrors `frontend/src/editing/playback/surround_reverb.ts`; change both together.
+//! The web build runs this too, as WASM in an AudioWorklet (see `wasm.rs`);
+//! after changing it, rebuild that with `bun run wasm:build`.
 
 use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
@@ -275,6 +276,22 @@ mod tests {
         let dot: f32 = l.iter().zip(&r).map(|(a, b)| a * b).sum();
         let norm = (l.iter().map(|a| a * a).sum::<f32>() * r.iter().map(|b| b * b).sum::<f32>()).sqrt();
         assert!((dot / norm).abs() < 0.5, "tail not decorrelated: {}", dot / norm);
+    }
+
+    /// `surround_reverb.e2e.ts` asserts the same value from the committed WASM,
+    /// so a stale build fails there.
+    const IMPULSE_TAIL_ENERGY: f64 = 2.212318e-4;
+
+    #[test]
+    fn impulse_tail_energy_matches_the_web_golden() {
+        let rate = 48_000;
+        let mut fx = SurroundReverb::new(rate);
+        let mut block = vec![0.0f32; rate as usize * 4];
+        block[0] = 1.0;
+        block[1] = 1.0;
+        fx.process(&mut block);
+        let energy: f64 = block[rate as usize * 2..].iter().map(|&s| (s as f64) * (s as f64)).sum();
+        assert!((energy / IMPULSE_TAIL_ENERGY - 1.0).abs() < 1e-3, "{energy:e}");
     }
 
     /// Chromium's `BiquadFilterNode` lowpass measures 1.12202 here too.

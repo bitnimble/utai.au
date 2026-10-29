@@ -1,6 +1,6 @@
 import type { AudioTrack, AudioTrackId } from './audio_tracks';
 import type { AudioOutput } from './playback_engine';
-import { createSurroundReverb } from './surround_reverb';
+import { createSurroundReverb, loadSurroundReverb } from './surround_reverb';
 
 const SCHEDULE_LEAD_SECONDS = 0.05;
 /** Pad past `ctx.currentTime` so a scheduled `start()` never lands in the past. */
@@ -132,7 +132,8 @@ type ActiveAudioTrack = {
   id: AudioTrackId;
   input: GainNode;
   gainNode: GainNode;
-  surroundReverb: AudioNode | undefined;
+  surroundReverbOn: boolean;
+  surroundReverb: AudioWorkletNode | undefined;
   buffer: AudioBuffer;
   source: AudioBufferSourceNode | undefined;
 };
@@ -165,12 +166,7 @@ export class AudioTrackPlaybackController {
   dropAudioTrack(id: AudioTrackId): void {
     const slot = this.active.get(id);
     if (!slot) return;
-    this.stopSource(slot);
-    try {
-      slot.gainNode.disconnect();
-    } catch (err) {
-      console.debug('[audio-tracks] dropAudioTrack gain.disconnect threw', err);
-    }
+    this.disconnectSlot(slot);
     this.active.delete(id);
   }
 
@@ -180,14 +176,7 @@ export class AudioTrackPlaybackController {
   }
 
   dispose(): void {
-    for (const slot of this.active.values()) {
-      this.stopSource(slot);
-      try {
-        slot.gainNode.disconnect();
-      } catch (err) {
-        console.debug('[audio-tracks] dispose gain.disconnect threw', err);
-      }
-    }
+    for (const slot of this.active.values()) this.disconnectSlot(slot);
     this.active.clear();
   }
 
@@ -217,6 +206,7 @@ export class AudioTrackPlaybackController {
       id: track.id,
       input: this.ctx.createGain(),
       gainNode,
+      surroundReverbOn: false,
       surroundReverb: undefined,
       buffer: track.buffer,
       source: undefined,
@@ -227,13 +217,28 @@ export class AudioTrackPlaybackController {
   }
 
   private routeSlot(slot: ActiveAudioTrack, surroundReverb: boolean): void {
+    slot.surroundReverbOn = surroundReverb;
+    slot.surroundReverb ??= surroundReverb ? createSurroundReverb(this.ctx, slot.gainNode) : undefined;
     slot.input.disconnect();
-    if (!surroundReverb) {
-      slot.input.connect(slot.gainNode);
+    if (surroundReverb && slot.surroundReverb != null) {
+      slot.input.connect(slot.surroundReverb);
       return;
     }
-    slot.surroundReverb ??= createSurroundReverb(this.ctx, slot.gainNode);
-    slot.input.connect(slot.surroundReverb);
+    slot.input.connect(slot.gainNode);
+    if (!surroundReverb) return;
+    void loadSurroundReverb(this.ctx).then(() => {
+      if (this.active.get(slot.id) === slot && slot.surroundReverbOn) this.routeSlot(slot, true);
+    });
+  }
+
+  private disconnectSlot(slot: ActiveAudioTrack): void {
+    this.stopSource(slot);
+    slot.surroundReverb?.port.postMessage('dispose');
+    try {
+      slot.gainNode.disconnect();
+    } catch (err) {
+      console.debug('[audio-tracks] gain.disconnect threw', err);
+    }
   }
 
   private stopSource(slot: ActiveAudioTrack): void {

@@ -194,6 +194,7 @@ Frontend (`bun`, repo root):
 | `bun run build` | lint:design + tsc + Vite build. Agent compile-check. |
 | `bun run e2e` | Playwright suite. |
 | `bun run tauri` | Tauri desktop build (via `scripts/tauri-build.ts`). |
+| `bun run wasm:build` | Rebuild the committed `surround_reverb.wasm` from `src-tauri/crates/audio` (run after changing `effect.rs`; the web AudioWorklet runs the same Rust DSP as the desktop mixer). |
 | `bun run android:init` | Generate `src-tauri/gen/android` (gitignored), TV-patched. |
 | `bun run android:build` | Android APK. |
 | `bun run release [version]` | Bump, write the changelog, commit + tag `v<version>`. |

@@ -8,6 +8,7 @@ type UtaiWindow = { utai?: { playbackEngine?: { audioTracks?: Map<string, Track>
 type ResultWindow = { moduleResult?: Promise<unknown> };
 
 const SIDE_DIFF = 0.8;
+const IMPULSE_TAIL_ENERGY = 2.212318e-4;
 
 function stemBundle(): { name: string; mimeType: string; buffer: Buffer } {
   const index = {
@@ -67,14 +68,15 @@ test('surround reverb: a centred impulse comes out direct, then wide, then as a 
     directL: number;
     directR: number;
     sideDiff: number;
-    tailRms: number;
+    tailEnergy: number;
     tailCorrelation: number;
   }>(
     page,
     `
-      import { createSurroundReverb } from '/src/editing/playback/surround_reverb.ts';
+      import { createSurroundReverb, loadSurroundReverb } from '/src/editing/playback/surround_reverb.ts';
       const rate = 48000;
       const ctx = new OfflineAudioContext(2, rate * 2, rate);
+      await loadSurroundReverb(ctx);
       const impulse = ctx.createBuffer(1, 1, rate);
       impulse.getChannelData(0)[0] = 1;
       const source = new AudioBufferSourceNode(ctx, { buffer: impulse });
@@ -94,19 +96,18 @@ test('surround reverb: a centred impulse comes out direct, then wide, then as a 
           directL: l[0],
           directR: r[0],
           sideDiff: (l[delay] - r[delay]) - (l[delay - 1] - r[delay - 1]),
-          tailRms: Math.sqrt((ll + rr) / (2 * rate)),
+          tailEnergy: ll + rr,
           tailCorrelation: dot / Math.sqrt(ll * rr),
         };
       });
     `,
   );
 
-  expect(ir.directL).toBeCloseTo(0.35, 2);
-  expect(ir.directR).toBeCloseTo(0.35, 2);
-  expect(ir.sideDiff).toBeCloseTo(SIDE_DIFF, 1);
-  // Exactly 0 without the reverb; ~4e-5 with it, ~100x that unnormalised.
-  expect(ir.tailRms).toBeGreaterThan(1e-5);
-  expect(ir.tailRms).toBeLessThan(4e-4);
+  expect(ir.directL).toBeCloseTo(0.35, 5);
+  expect(ir.directR).toBeCloseTo(0.35, 5);
+  expect(ir.sideDiff).toBeCloseTo(SIDE_DIFF, 5);
+  // effect.rs's IMPULSE_TAIL_ENERGY: off means the committed WASM is stale (`bun run wasm:build`).
+  expect(ir.tailEnergy / IMPULSE_TAIL_ENERGY).toBeCloseTo(1, 3);
   expect(Math.abs(ir.tailCorrelation)).toBeLessThan(0.5);
 });
 
@@ -116,8 +117,10 @@ test('surround reverb: switching a playing track on reroutes it through the effe
     `
       import { AudioTrack } from '/src/editing/playback/audio_tracks.ts';
       import { AudioTrackPlaybackController } from '/src/editing/playback/web_audio_output.ts';
+      import { loadSurroundReverb } from '/src/editing/playback/surround_reverb.ts';
       const rate = 48000;
       const ctx = new OfflineAudioContext(2, rate, rate);
+      await loadSurroundReverb(ctx);
       const buffer = ctx.createBuffer(1, rate, rate);
       buffer.getChannelData(0)[0] = 1;
       buffer.getChannelData(0)[rate / 2] = 1;

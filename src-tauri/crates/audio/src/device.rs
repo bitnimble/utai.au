@@ -530,18 +530,21 @@ where
             // are gated by `playing` (the mic monitor stays live when stopped).
             let tracks = shared.tracks.load();
             mixer::silence(&mut mix);
-            if playing {
-                for t in tracks.iter() {
-                    // Processed even when muted so the tail decays instead of
-                    // freezing and replaying on unmute.
-                    match t.effect.as_ref().and_then(|fx| fx.try_lock().ok()) {
-                        Some(mut fx) => {
+            for t in tracks.iter() {
+                // Processed even when muted or paused so the tail decays, as the
+                // web AudioWorklet's does, instead of freezing and replaying later.
+                match t.effect.as_ref().and_then(|fx| fx.try_lock().ok()) {
+                    Some(mut fx) => {
+                        if playing {
                             mixer::read_track(&mut effected, t.samples.as_slice(), start);
-                            fx.process(&mut effected);
-                            mixer::add_block(&mut mix, &effected, t.gain);
+                        } else {
+                            mixer::silence(&mut effected);
                         }
-                        None => mixer::add_track(&mut mix, t.samples.as_slice(), start, t.gain),
+                        fx.process(&mut effected);
+                        mixer::add_block(&mut mix, &effected, t.gain);
                     }
+                    None if playing => mixer::add_track(&mut mix, t.samples.as_slice(), start, t.gain),
+                    None => {}
                 }
             }
             mixer::add_block(&mut mix, &mic, shared.mic_gain.load());
