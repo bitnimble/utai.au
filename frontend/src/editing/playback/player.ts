@@ -48,6 +48,7 @@ export class UtaiPlayer implements PlaybackEngine {
   timeline: UtaiTimeline = EMPTY_TIMELINE;
   /** True when the user clicked to position the playhead while idle. */
   cued = false;
+  ended = false;
 
   audioTracks: Map<AudioTrackId, AudioTrack> = new Map();
   audioTrackError: string | undefined;
@@ -188,6 +189,7 @@ export class UtaiPlayer implements PlaybackEngine {
         this.timeline = buildLinearTimeline(dur);
         this.currentTime = target;
         this.cued = true;
+        this.ended = false;
       });
       return;
     }
@@ -283,6 +285,7 @@ export class UtaiPlayer implements PlaybackEngine {
       this.timeline = EMPTY_TIMELINE;
       this.currentTime = 0;
       this.cued = false;
+      this.ended = false;
     });
   }
 
@@ -322,6 +325,9 @@ export class UtaiPlayer implements PlaybackEngine {
     const tailMs = Math.max(0, (remainingSec + PLAYBACK_TAIL_SECONDS) * 1000);
     this.endTimerId = window.setTimeout(() => {
       this.stop();
+      runInAction(() => {
+        this.ended = true;
+      });
       for (const cb of this.endedListeners) cb();
     }, tailMs);
   }

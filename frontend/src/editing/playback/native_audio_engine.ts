@@ -45,6 +45,7 @@ export class NativeAudioEngine implements PlaybackEngine {
   currentTime = 0;
   timeline: UtaiTimeline = EMPTY_TIMELINE;
   cued = false;
+  ended = false;
   audioTracks: Map<AudioTrackId, AudioTrack> = new Map();
   audioTrackError: string | undefined;
 
@@ -168,6 +169,7 @@ export class NativeAudioEngine implements PlaybackEngine {
       this.state = 'playing';
       this.timeline = buildLinearTimeline(this.durationSec);
       this.cued = false;
+      this.ended = false;
     });
     this.startRaf();
   }
@@ -196,6 +198,7 @@ export class NativeAudioEngine implements PlaybackEngine {
       this.timeline = EMPTY_TIMELINE;
       this.currentTime = 0;
       this.cued = false;
+      this.ended = false;
     });
   }
 
@@ -209,6 +212,7 @@ export class NativeAudioEngine implements PlaybackEngine {
       this.timeline = buildLinearTimeline(dur);
       this.currentTime = target;
       if (this.state === 'idle') this.cued = true;
+      this.ended = false;
     });
   }
 
@@ -328,7 +332,10 @@ export class NativeAudioEngine implements PlaybackEngine {
     runInAction(() => {
       if (Math.abs(msg.level - this.micLevel) >= 0.01) this.micLevel = msg.level;
       if (Math.abs(msg.latencyMs - this.latencyMs) >= 0.1) this.latencyMs = msg.latencyMs;
-      if (ended) this.state = 'idle';
+      if (ended) {
+        this.state = 'idle';
+        this.ended = true;
+      }
     });
     if (stale) return;
     this.anchor = { playSec: msg.playSec, atMs: performance.now(), playing: msg.playing };

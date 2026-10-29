@@ -21,6 +21,8 @@ export interface PlaybackEngine {
   readonly timeline: UtaiTimeline;
   /** True when the user positioned the playhead while idle. */
   readonly cued: boolean;
+  /** True once playback runs off the end, until the next play, seek or stop. */
+  readonly ended: boolean;
   readonly audioTracks: Map<AudioTrackId, AudioTrack>;
   readonly audioTrackError: string | undefined;
 
