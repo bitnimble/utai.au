@@ -59,8 +59,7 @@ export class SongIoPresenter {
 
   // --- load ---
 
-  /** Replace the session's song with a prepared one. The vocals stem is muted
-   *  (karaoke: you sing over the backing). */
+  /** Replace the session's song with a prepared one. */
   async loadPreparedSong(prepared: PreparedSong): Promise<void> {
     this.clearSong();
     runInAction(() => {
@@ -73,7 +72,6 @@ export class SongIoPresenter {
         const id = await this.karaoke.loadAudioFile(stem.file, stem.role);
         if (id == null) continue;
         if (stem.pitchContour) this.karaoke.setTrackPitchContour(id, stem.pitchContour);
-        if (stem.role === 'vocals') this.karaoke.setTrackMuted(id, true);
       }
       this.karaoke.updateSongMeta(prepared.meta);
       runInAction(() => {

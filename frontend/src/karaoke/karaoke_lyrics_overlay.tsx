@@ -50,8 +50,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
   const beats = React.useContext(BeatStoreContext);
   const playhead = useLocalObservable(() => ({
     get track(): LyricsTrack | undefined {
-      const id = lyricsStore.trackIds[0];
-      return id != null ? lyricsStore.get(id) : undefined;
+      return lyricsStore.firstTrack;
     },
     widthPx: 0,
     setWidthPx(px: number): void {

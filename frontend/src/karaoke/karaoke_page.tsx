@@ -494,8 +494,8 @@ const Toolbar = observer(function Toolbar() {
 
   const saveLabel = songIo.phase === 'packing' ? 'Saving…' : 'Save song';
 
-  const firstLyricsId = lyricsStore.trackIds[0];
-  const canAlign = firstLyricsId !== undefined && playbackEngine.audioTracks.size > 0;
+  const firstLyricsId = lyricsStore.firstTrack?.id;
+  const canAlign = firstLyricsId != null && playbackEngine.audioTracks.size > 0;
 
   return (
     <header className={styles.toolbar}>
@@ -699,8 +699,7 @@ const ScoreArea = observer(function ScoreArea() {
       // is always framed. Sets the zoom itself (via the presenter), so it reads
       // the line's own duration + viewport width rather than the live `ppb`.
       if (mode === 'line') {
-        const trackId = lyricsStore.trackIds[0];
-        const track = trackId != null ? lyricsStore.get(trackId) : undefined;
+        const track = lyricsStore.firstTrack;
         if (!track || track.lines.length === 0) return;
         const lineVw = viewport._viewportWidth;
         if (lineVw <= 0) return;

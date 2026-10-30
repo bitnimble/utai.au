@@ -3,27 +3,42 @@ import { strToU8, zipSync } from 'fflate';
 import { HOST_PATH, showTracksView, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
 
+type Mix = { volume: number; muted: boolean };
 type UtaiWindow = {
   utai?: {
     song?: { title?: string };
-    playbackEngine?: { state?: string };
+    playbackEngine?: { state?: string; audioTracks?: Map<string, Mix & { id: string; role: string }> };
+    presenter?: { setTrackVolume: (id: string, v: number) => void; setTrackMuted: (id: string, m: boolean) => void };
   };
 };
 
 /** A saved-song bundle: already prepared, so it's ready the moment it's queued
  *  (no separation backend needed). */
-function bundle(title: string, seconds = 30): { name: string; mimeType: string; buffer: Buffer } {
+function bundle(
+  title: string,
+  seconds = 30,
+  roles: readonly string[] = ['backing'],
+): { name: string; mimeType: string; buffer: Buffer } {
   const index = {
     version: 1,
     title,
-    audio: [{ role: 'backing', file: 'audio/backing.wav', filename: 'backing.wav' }],
+    audio: roles.map((role) => ({ role, file: `audio/${role}.wav`, filename: `${role}.wav` })),
     lyrics: [],
   };
   const zip = zipSync({
     'index.json': strToU8(JSON.stringify(index)),
-    'audio/backing.wav': new Uint8Array(makeWav(seconds)),
+    ...Object.fromEntries(roles.map((role) => [`audio/${role}.wav`, new Uint8Array(makeWav(seconds))])),
   });
   return { name: `${title}.utai.zip`, mimeType: 'application/zip', buffer: Buffer.from(zip) };
+}
+
+function mixByRole(page: Page): Promise<Record<string, Mix>> {
+  return page.evaluate(() => {
+    const tracks = (window as unknown as UtaiWindow).utai?.playbackEngine?.audioTracks;
+    return Object.fromEntries(
+      Array.from(tracks?.values() ?? []).map((t) => [t.role, { volume: t.volume, muted: t.muted }]),
+    );
+  });
 }
 
 async function queueBundles(page: Page, ...bundles: ReturnType<typeof bundle>[]): Promise<void> {
@@ -107,6 +122,32 @@ test('queue: the next song plays when the current one ends', async ({ page }) =>
   expect(await currentTitle(page)).toBe('Short');
   await expectPlaying(page, 'Next');
   await expect(page.getByTestId('now-playing-banner')).toHaveText('Next');
+});
+
+test('queue: the stem mix carries over to the next song', async ({ page }) => {
+  const stems = ['backing', 'vocals'];
+  await page.goto(HOST_PATH);
+  await queueBundles(page, bundle('Alpha', 30, stems), bundle('Bravo', 30, stems));
+  await expectPlaying(page, 'Alpha');
+  expect(await mixByRole(page)).toEqual({
+    backing: { volume: 1, muted: false },
+    vocals: { volume: 1, muted: true },
+  });
+
+  await page.evaluate(() => {
+    const utai = (window as unknown as UtaiWindow).utai!;
+    for (const t of utai.playbackEngine!.audioTracks!.values()) {
+      if (t.role === 'vocals') utai.presenter!.setTrackMuted(t.id, false);
+      if (t.role === 'backing') utai.presenter!.setTrackVolume(t.id, 0.4);
+    }
+  });
+  await page.getByTestId('queue-open').click();
+  await page.getByTestId('queue-skip').click();
+  await expectPlaying(page, 'Bravo');
+  expect(await mixByRole(page)).toEqual({
+    backing: { volume: 0.4, muted: false },
+    vocals: { volume: 1, muted: false },
+  });
 });
 
 test('queue: skipping to a song still preparing shows a loading screen until it plays', async ({ page }) => {
