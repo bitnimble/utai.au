@@ -275,6 +275,8 @@ export function statusLabel(status: QueueItemStatus | RemoteQueueStatus): string
       return 'Separating stems…';
     case 'aligning':
       return 'Aligning lyrics…';
+    case 'downloadingVideo':
+      return 'Downloading video…';
     case 'ready':
       return 'Ready';
     case 'failed':

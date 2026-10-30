@@ -91,7 +91,7 @@ import { QueuePresenter } from 'src/queue/queue_presenter';
 import { QueuePresenterContext, QueueStoreContext } from 'src/queue/queue_contexts';
 import { QueueButtons, QueueLoadingScreen, QueueSidebar } from 'src/queue/queue_view';
 import { NowPlayingBanner } from 'src/queue/now_playing_banner';
-import { searchTracks } from 'src/net/music_source_client';
+import { downloadTrack, searchTracks } from 'src/net/music_source_client';
 import { BackendStartingScreen } from 'src/session/backend_starting_screen';
 import type { HostSession } from 'src/session/session_client';
 import { SessionHostPresenterContext, SessionHostStoreContext } from 'src/session/session_host_contexts';
@@ -160,7 +160,7 @@ function buildSession(): Session {
   const videoPresenter = new VideoPresenter(videoStore);
   const songIo = new SongIoPresenter(song, presenter, lyricsPresenter, beats, videoPresenter);
   const queue = new QueueStore();
-  const queuePresenter = new QueuePresenter(queue, songIo, playbackEngine, prepareSong, identifyTrack);
+  const queuePresenter = new QueuePresenter(queue, songIo, playbackEngine, prepareSong, identifyTrack, downloadTrack);
   const musicSource = new MusicSourceStore();
   const musicPresenter = new MusicSourcePresenter(musicSource, (track) =>
     queuePresenter.add({ kind: 'streaming', track }),

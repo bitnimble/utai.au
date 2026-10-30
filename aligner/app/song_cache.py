@@ -57,8 +57,24 @@ def is_valid_video_id(video_id: str) -> bool:
     return _VIDEO_ID_RE.fullmatch(video_id) is not None
 
 
+def youtube_video_id(url: str) -> str | None:
+    """Same URL forms as the frontend's `parseYouTubeId`, whose id names the
+    backing video a song's folder has to share."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").removeprefix("www.")
+    candidate: str | None = None
+    if host == "youtu.be":
+        candidate = parsed.path[1:].split("/")[0]
+    elif host in _YOUTUBE_HOSTS:
+        candidate = parse_qs(parsed.query).get("v", [""])[0]
+        if not is_valid_video_id(candidate):
+            match = _YOUTUBE_PATH_RE.match(parsed.path)
+            candidate = match.group(1) if match else None
+    return candidate if candidate is not None and is_valid_video_id(candidate) else None
+
+
 def song_id_for_source(source_url: str) -> str:
-    return _youtube_id(source_url) or hashlib.sha256(source_url.encode()).hexdigest()
+    return youtube_video_id(source_url) or hashlib.sha256(source_url.encode()).hexdigest()
 
 
 def song_id_of_path(path: Path) -> str | None:
@@ -179,17 +195,3 @@ def _folder_bytes(folder: Path) -> int:
     return total
 
 
-def _youtube_id(url: str) -> str | None:
-    """Same URL forms as the frontend's `parseYouTubeId`, whose id names the
-    backing video this folder has to share."""
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").removeprefix("www.")
-    candidate: str | None = None
-    if host == "youtu.be":
-        candidate = parsed.path[1:].split("/")[0]
-    elif host in _YOUTUBE_HOSTS:
-        candidate = parse_qs(parsed.query).get("v", [""])[0]
-        if not is_valid_video_id(candidate):
-            match = _YOUTUBE_PATH_RE.match(parsed.path)
-            candidate = match.group(1) if match else None
-    return candidate if candidate is not None and is_valid_video_id(candidate) else None

@@ -87,7 +87,7 @@ export class VideoPresenter {
 
   // --- native <video> backing (primary) ---
 
-  /** Resolve the yt-dlp URL for the current video, install a native backing on
+  /** Resolve the backend URL for the current video, install a native backing on
    *  it, and align it to the transport. On failure, record the id so the view
    *  falls back to the embed. */
   private async loadNative(epoch: number): Promise<void> {
@@ -102,7 +102,7 @@ export class VideoPresenter {
     const controller = new AbortController();
     this.resolveController = controller;
     try {
-      const src = await resolveBackingVideoUrl(id, { signal: controller.signal });
+      const src = await resolveBackingVideoUrl(id, controller.signal);
       // A newer attach/detach or video change superseded this fetch.
       if (this.epoch !== epoch || this.store.videoId !== id) return;
       this.setBacking(
@@ -116,7 +116,7 @@ export class VideoPresenter {
       this.applyTransport();
     } catch (err) {
       if (controller.signal.aborted || this.epoch !== epoch) return;
-      console.error('[video] backing-video fetch failed; falling back to the embed', err);
+      console.error('[video] no backend for the backing video; falling back to the embed', err);
       this.markNativeFailed(id);
     }
   }

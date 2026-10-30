@@ -25,6 +25,12 @@ _fetch_locks_lock = threading.Lock()
 _fetch_locks: dict[str, threading.Lock] = {}
 
 
+def cached_video(video_id: str) -> Path | None:
+    """The backing video's mp4 if it's on disk; never downloads."""
+    path = touch_song_dir(video_id) / "video" / video_cache_key(video_id)
+    return path if path.is_file() else None
+
+
 def video_cache_key(video_id: str) -> str:
     """The cached artifact's filename. Carries a digest of the format selection
     so changing it re-fetches rather than serving videos picked by the old one."""

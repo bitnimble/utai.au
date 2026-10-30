@@ -31,7 +31,8 @@ function backoffMs(attempt: number, baseDelayMs: number): number {
   return ceiling / 2 + (Math.random() * ceiling) / 2;
 }
 
-function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+/** Rejects with the signal's reason if it fires first. */
+export function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(signal.reason);

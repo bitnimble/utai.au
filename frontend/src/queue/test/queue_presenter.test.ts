@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { makeAutoObservable } from 'mobx';
 import type { PlayerState } from 'src/editing/playback/playback_engine';
 import type { PreparedSong } from 'src/karaoke/song_bundle';
-import type { TrackResult } from 'src/net/music_source_client';
+import type { JobAudio } from 'src/net/job_audio';
+import type { DownloadTrackOptions, TrackDownload, TrackResult } from 'src/net/music_source_client';
 import type { SongIdentity } from 'src/song_identity/identify_song';
 import type { IdentifyTrack } from 'src/song_identity/identify_track';
 import type { PrepareOptions, QueueSource } from '../prepare_song';
@@ -43,12 +44,22 @@ class FakeTransport {
 
 type Identifying = { track: TrackResult; resolve: (song: SongIdentity) => void };
 
+type Downloading = {
+  track: TrackResult;
+  opts: DownloadTrackOptions;
+  download: TrackDownload;
+  resolve: (audio: JobAudio) => void;
+  reject: (err: Error) => void;
+  finishVideo: () => void;
+};
+
 type Harness = {
   store: QueueStore;
   transport: FakeTransport;
   loaded: string[];
   pending: Pending[];
   identifying: Identifying[];
+  downloading: Downloading[];
   presenter: QueuePresenter;
   add: (name: string) => void;
   order: () => string[];
@@ -84,13 +95,30 @@ function setup(): Harness {
     });
   const identifying: Identifying[] = [];
   const identify: IdentifyTrack = (track) => new Promise((resolve) => identifying.push({ track, resolve }));
-  const presenter = new QueuePresenter(store, songIo, transport, prepare, identify);
+  const downloading: Downloading[] = [];
+  const download = (track: TrackResult, opts: DownloadTrackOptions = {}): TrackDownload => {
+    let resolve: (audio: JobAudio) => void = () => {};
+    let reject: (err: Error) => void = () => {};
+    let finishVideo: () => void = () => {};
+    const audio = new Promise<JobAudio>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    const video = new Promise<void>((res) => {
+      finishVideo = res;
+      opts.signal?.addEventListener('abort', () => res());
+    });
+    const started = { audio, video };
+    downloading.push({ track, opts, download: started, resolve, reject, finishVideo });
+    return started;
+  };
+  const presenter = new QueuePresenter(store, songIo, transport, prepare, identify, download);
   presenter.init();
   const add = (name: string): void => presenter.add({ kind: 'file', file: new File([], name) });
   const fileName = (source: QueueSource): string => (source.kind === 'file' ? source.file.name : '');
   const order = (): string[] => store.items.map((i) => fileName(i.source));
   const idOf = (name: string): string => store.items.find((i) => fileName(i.source) === name)!.id;
-  return { store, transport, loaded, pending, identifying, presenter, add, order, idOf };
+  return { store, transport, loaded, pending, identifying, downloading, presenter, add, order, idOf };
 }
 
 const LADY_UPLOAD: TrackResult = {
@@ -375,5 +403,111 @@ describe('QueuePresenter', () => {
     const { identifying, add } = setup();
     add('a');
     expect(identifying).toHaveLength(0);
+  });
+
+  const track = (id: string): TrackResult => ({ ...LADY_UPLOAD, id, title: id });
+
+  test('every streaming song starts downloading when queued, while another is preparing', () => {
+    const { presenter, pending, downloading, add } = setup();
+    add('preparing');
+    presenter.add({ kind: 'streaming', track: track('b') });
+    presenter.add({ kind: 'streaming', track: track('c') });
+    expect(pending.map((p) => p.name)).toEqual(['preparing']);
+    expect(downloading.map((d) => d.track.id)).toEqual(['b', 'c']);
+  });
+
+  test('a download that fails before its song is preparing surfaces once it is', async () => {
+    const { presenter, pending, downloading, add } = setup();
+    add('preparing');
+    presenter.add({ kind: 'streaming', track: track('b') });
+    downloading[0].reject(new Error('no audio'));
+    await flush();
+    pending[0].resolve();
+    await flush();
+    await expect(pending[1].opts.audio).rejects.toThrow('no audio');
+  });
+
+  test('its prepare gets the audio already downloading', () => {
+    const { presenter, pending, downloading } = setup();
+    presenter.add({ kind: 'streaming', track: track('a') });
+    expect(pending[0].opts.audio).toBe(downloading[0].download.audio);
+    expect(downloading).toHaveLength(1);
+  });
+
+  test('download progress shows only once the song is preparing', async () => {
+    const { presenter, store, pending, downloading, add } = setup();
+    add('preparing');
+    presenter.add({ kind: 'streaming', track: track('b') });
+    downloading[0].opts.onProgress?.({ frac: 0.5 });
+    expect(store.items[1].status).toEqual({ kind: 'waiting' });
+
+    pending[0].resolve();
+    await flush();
+    downloading[0].opts.onProgress?.({ frac: 0.5 });
+    expect(store.items[0].status).toEqual({ kind: 'downloading', frac: 0.5 });
+  });
+
+  test('a song is ready only once its video is done, but the next song prepares meanwhile', async () => {
+    const { presenter, store, pending, downloading, loaded } = setup();
+    presenter.add({ kind: 'streaming', track: track('a') });
+    presenter.add({ kind: 'streaming', track: track('b') });
+    pending[0].resolve();
+    await flush();
+    expect(store.items[0].status).toEqual({ kind: 'downloadingVideo' });
+    expect(loaded).toEqual([]);
+    expect(pending.map((p) => p.name)).toEqual(['a', 'b']);
+
+    downloading[0].finishVideo();
+    await flush();
+    expect(loaded).toEqual(['a']);
+  });
+
+  test('a song with no download to wait on is prepared once', async () => {
+    const { presenter, pending, loaded } = setup();
+    presenter.add({ kind: 'bundle', file: new File([], 'b.utai.zip') });
+    pending[0].resolve();
+    await flush();
+    expect(pending).toHaveLength(1);
+    expect(loaded).toEqual(['b.utai.zip']);
+  });
+
+  test('dispose while waiting on the video re-prepares against the restarted download', async () => {
+    const { presenter, pending, downloading } = setup();
+    presenter.add({ kind: 'streaming', track: track('a') });
+    pending[0].resolve();
+    await flush();
+    presenter.dispose();
+    presenter.init();
+    await flush();
+    expect(downloading).toHaveLength(2);
+    expect(pending).toHaveLength(2);
+    expect(pending[1].opts.audio).toBe(downloading[1].download.audio);
+  });
+
+  test('removing a queued song aborts its download', () => {
+    const { presenter, downloading, store, add } = setup();
+    add('preparing');
+    presenter.add({ kind: 'streaming', track: track('a') });
+    presenter.remove(store.items[1].id);
+    expect(downloading[0].opts.signal?.aborted).toBe(true);
+  });
+
+  test('dispose aborts downloads; init restarts those still needed (React StrictMode remount)', async () => {
+    const { presenter, downloading } = setup();
+    presenter.add({ kind: 'streaming', track: track('a') });
+    presenter.dispose();
+    expect(downloading[0].opts.signal?.aborted).toBe(true);
+    downloading[0].reject(new DOMException('aborted', 'AbortError'));
+    presenter.init();
+    await flush();
+    expect(downloading.map((d) => d.track.id)).toEqual(['a', 'a']);
+    expect(downloading[1].opts.signal?.aborted).toBe(false);
+  });
+
+  test('local files and bundles download nothing', () => {
+    const { presenter, downloading, add } = setup();
+    add('a');
+    presenter.add({ kind: 'bundle', file: new File([], 'b.utai.zip') });
+    expect(downloading).toHaveLength(0);
   });
 });

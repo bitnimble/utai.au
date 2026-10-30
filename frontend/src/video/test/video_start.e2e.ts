@@ -54,7 +54,7 @@ function expectPlaying(page: Page): Promise<void> {
 
 test('video start: the song waits for the first frame without seeking, then audio and video play', async ({ page }) => {
   await page.route(`**/video/${VIDEO_ID}`, async (route) => {
-    if (route.request().method() !== 'HEAD') await new Promise((resolve) => setTimeout(resolve, 800));
+    await new Promise((resolve) => setTimeout(resolve, 800));
     await route.fulfill({ path: VIDEO_PATH, contentType: 'video/mp4' });
   });
   await queueSong(page);
@@ -73,9 +73,7 @@ test('video start: a video that never loads holds the song back only until the t
   page.on('console', (msg) => {
     if (msg.type() === 'warning') warnings.push(msg.text());
   });
-  await page.route(`**/video/${VIDEO_ID}`, async (route) => {
-    if (route.request().method() === 'HEAD') await route.fulfill({ status: 200 });
-  });
+  await page.route(`**/video/${VIDEO_ID}`, () => {});
   await queueSong(page);
   await page.waitForTimeout(1500);
   expect(await page.evaluate(() => (window as unknown as UtaiWindow).utai?.playbackEngine?.state)).not.toBe('playing');
@@ -83,13 +81,14 @@ test('video start: a video that never loads holds the song back only until the t
   expect(warnings.some((w) => w.includes('no first frame'))).toBe(true);
 });
 
-test('video start: a failed video starts the song without waiting out the timeout', async ({ page }) => {
+test('video start: an uncached video falls back to the embed, without waiting out the timeout', async ({ page }) => {
   const warnings: string[] = [];
   page.on('console', (msg) => {
     if (msg.type() === 'warning') warnings.push(msg.text());
   });
-  await page.route(`**/video/${VIDEO_ID}`, (route) => route.abort());
+  await page.route(`**/video/${VIDEO_ID}`, (route) => route.fulfill({ status: 404, json: { detail: 'No such video.' } }));
   await queueSong(page);
   await expectPlaying(page);
+  await expect(page.getByTestId('video-host')).toBeVisible();
   expect(warnings.some((w) => w.includes('no first frame'))).toBe(false);
 });

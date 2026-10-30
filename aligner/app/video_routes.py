@@ -1,50 +1,22 @@
 from __future__ import annotations
 
-import logging
-
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from app.pipeline.video.fetch import fetch_video
-from app.request_context import (
-    Cancelled,
-    cancel_on_disconnect,
-    new_request_id,
-    run_cancellable,
-    set_request_id,
-)
+from app.pipeline.video.fetch import cached_video
 from app.song_cache import is_valid_video_id
-
-log = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.api_route("/video/{video_id}", methods=["GET", "HEAD"])
-async def get_video(request: Request, video_id: str) -> FileResponse:
-    """Serve the muted backing video for the karaoke page, fetched video-only
-    via yt-dlp on a cache miss. HEAD warms the cache without the transfer: the
-    queue issues it while preparing a song so the video is ready at playback.
-
-    The YouTube IFrame embed refuses embedding-disabled uploads ("Video
-    unavailable"); serving a native `<video>` over a fetched stream sidesteps
-    that. Cross-run cached in the song folder named by the 11-char id (validated
-    to foreclose path traversal), keyed by a digest of the format selection.
-    Needs no GPU / model, so it's served regardless of worker role or
-    provisioning state, and `FileResponse` honours Range requests so the
-    `<video>` element can seek."""
-    if not is_valid_video_id(video_id):
+@router.get("/video/{video_id}")
+async def get_video(video_id: str) -> FileResponse:
+    """Serve the muted backing video from the disk cache, or 404: `/music/fetch`
+    downloads it when a song is queued, and the page falls back to the YouTube
+    embed without one. Honours Range requests so the `<video>` element can seek."""
+    path = cached_video(video_id) if is_valid_video_id(video_id) else None
+    if path is None:
         raise HTTPException(status_code=404, detail="No such video.")
-    set_request_id(new_request_id())
-    try:
-        async with cancel_on_disconnect(request):
-            path = await run_cancellable(fetch_video, video_id)
-    except Cancelled as exc:
-        log.info("get_video: cancelled (%s)", video_id)
-        raise HTTPException(status_code=499, detail="Cancelled.") from exc
-    except Exception as exc:
-        log.exception("get_video: fetch failed (%s)", video_id)
-        raise HTTPException(status_code=502, detail=f"Could not fetch video: {exc}") from exc
     return FileResponse(
         str(path),
         media_type="video/mp4",

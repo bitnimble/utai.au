@@ -7,6 +7,7 @@ export type QueueItemId = string;
 export type QueueItemStatus =
   | { kind: 'waiting' }
   | PrepareStage
+  | { kind: 'downloadingVideo' }
   | { kind: 'ready'; song: PreparedSong }
   | { kind: 'failed'; message: string };
 

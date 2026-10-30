@@ -7,9 +7,8 @@ lifespan shutdown.
 """
 from __future__ import annotations
 
-import json
-import logging
 from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -20,6 +19,7 @@ from app.config import settings
 from app.song_cache import held_download, is_valid_song_id
 
 from .facade import MusicFacade, content_type_for_path
+from .fetch_jobs import FetchJobs
 from .models import (
     AddAccountRequest,
     AddAccountResult,
@@ -33,11 +33,10 @@ from .ots_config import OtsConfigFile
 from .spotify_oauth import SpotifyOAuthUnavailable
 from .youtube_music import YtMusicSearch
 
-log = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/music", tags=["music"])
 
 _facade: MusicFacade | None = None
+fetch_jobs = FetchJobs()
 
 
 def get_facade() -> MusicFacade:
@@ -51,6 +50,7 @@ def get_facade() -> MusicFacade:
 
 async def aclose_facade() -> None:
     global _facade
+    await fetch_jobs.aclose()
     if _facade is not None:
         await _facade.aclose()
         _facade = None
@@ -137,17 +137,28 @@ async def search(q: str = Query(default="")) -> SearchResponse:
 
 
 @router.post("/fetch")
-async def fetch(req: FetchRequest) -> StreamingResponse:
-    """Stream the download as NDJSON: `running` events (0..1 `frac`) at the poll
-    cadence, then a terminal `result` (with the audio ref) or `error`. The poll
-    cadence doubles as the keepalive, so no separate heartbeat is needed."""
-    facade = get_facade()
+async def fetch(req: FetchRequest) -> dict[str, str]:
+    """Start downloading a queued song: its audio, and its backing video if it's a
+    YouTube source. Answers at once with the job to poll."""
+    audio_events = get_facade().fetch(req.sourceUrl, req.service, req.itemId)
+    return {"jobId": fetch_jobs.start(audio_events, req.sourceUrl)}
 
-    async def stream() -> AsyncIterator[bytes]:
-        async for event in facade.fetch(req.sourceUrl, req.service, req.itemId):
-            yield (json.dumps(event) + "\n").encode("utf-8")
 
-    return StreamingResponse(stream(), media_type="application/x-ndjson")
+@router.get("/fetch/{job_id}")
+async def fetch_status(job_id: str) -> dict[str, Any]:
+    """`frac` is the audio's 0..1 progress; `audio` its ref once downloaded, `error`
+    why it failed. `videoDone` means the video is on disk, or failed, which doesn't
+    fail the song."""
+    job = fetch_jobs.status(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No such download.")
+    return {"frac": job.frac, "audio": job.audio, "error": job.error, "videoDone": job.video_done}
+
+
+@router.delete("/fetch/{job_id}")
+async def cancel_fetch(job_id: str) -> dict[str, bool]:
+    fetch_jobs.cancel(job_id)
+    return {"ok": True}
 
 
 @router.get("/songs/{song_id}/download")

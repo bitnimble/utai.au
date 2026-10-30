@@ -9,7 +9,7 @@
  */
 
 import { backendFetch, errorDetail, okJson } from 'src/net/backend_fetch';
-import { streamJob } from 'src/net/backend_job';
+import { sleep } from 'src/net/fetch_retrying';
 import { downloadJobAudio, parseBackendAudio, type JobAudio } from 'src/net/job_audio';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 
@@ -61,13 +61,24 @@ export type AddAccountResult = {
   authUrl?: string | null;
 };
 
-/** Non-terminal progress while a track downloads: a stage label + 0..1 frac. */
-export type FetchProgress = { stage: string; frac: number };
+/** The audio's 0..1 progress. */
+export type DownloadProgress = { frac: number };
 
-export type FetchTrackOptions = {
+export type DownloadTrackOptions = {
   signal?: AbortSignal;
-  onProgress?: (progress: FetchProgress) => void;
+  onProgress?: (progress: DownloadProgress) => void;
 };
+
+export type TrackDownload = {
+  /** Rejects with the backend's message on failure, or an `AbortError` when the signal fires. */
+  audio: Promise<JobAudio>;
+  /** Settles once the video is on disk or failed to get there. Never rejects: the song plays without it. */
+  video: Promise<void>;
+};
+
+type FetchJobStatus = { frac: number; audio: unknown; error: string | null; videoDone: boolean };
+
+const FETCH_POLL_INTERVAL_MS = 500;
 
 export type ConfigPatch = {
   priority?: string[];
@@ -177,28 +188,68 @@ export async function searchTracks(query: string, signal?: AbortSignal): Promise
 }
 
 /**
- * Fetch a track's original audio. Streams the download's NDJSON progress
- * (driving `onProgress`), then downloads the finished audio into a `File` named
- * for the track. Rejects with the backend's message on failure, or an
- * `AbortError` when `opts.signal` fires.
+ * Have the backend download a track's audio and backing video, polling its job
+ * so no connection stays open meanwhile. `opts.signal` cancels the job.
  */
-export async function fetchTrack(track: TrackResult, opts: FetchTrackOptions = {}): Promise<JobAudio> {
-  const init: RequestInit = {
+export function downloadTrack(track: TrackResult, { signal, onProgress }: DownloadTrackOptions = {}): TrackDownload {
+  let video: Promise<void> = Promise.resolve();
+  const audioRef = new Promise<unknown>((resolve, reject) => {
+    video = followFetchJob(track, signal, onProgress, resolve).catch((err: unknown) => {
+      reject(err);
+      if (!signal?.aborted) console.warn('[music] download failed:', err);
+    });
+  });
+  return { audio: audioRef.then((raw) => fetchedAudio(raw, signal)), video };
+}
+
+async function followFetchJob(
+  track: TrackResult,
+  signal: AbortSignal | undefined,
+  onProgress: DownloadTrackOptions['onProgress'],
+  onAudio: (raw: unknown) => void,
+): Promise<void> {
+  const jobId = await startFetchJob(track, signal);
+  let audioDone = false;
+  for (;;) {
+    const status = (await okJson(await backendFetch(fetchJobUrl(jobId), { signal }), 'music/fetch')) as FetchJobStatus;
+    if (status.error != null) throw new Error(status.error);
+    if (!audioDone) onProgress?.({ frac: status.frac });
+    if (status.audio != null && !audioDone) {
+      audioDone = true;
+      onAudio(status.audio);
+    }
+    if (audioDone && status.videoDone) return;
+    await sleep(FETCH_POLL_INTERVAL_MS, signal);
+  }
+}
+
+async function startFetchJob(track: TrackResult, signal: AbortSignal | undefined): Promise<string> {
+  const res = await backendFetch(musicUrl('fetch'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sourceUrl: track.sourceUrl, service: track.service, itemId: track.id }),
-    signal: opts.signal,
-  };
-  const result = await streamJob('music/fetch', init, (event) => {
-    if (event.type !== 'running') return;
-    opts.onProgress?.({
-      stage: typeof event.stage === 'string' ? event.stage : 'downloading',
-      frac: typeof event.frac === 'number' ? event.frac : 0,
-    });
+    signal,
   });
-  const audio = parseBackendAudio(result.audio, 'track');
+  const { jobId } = (await okJson(res, 'music/fetch')) as { jobId?: unknown };
+  if (typeof jobId !== 'string') throw new Error('music/fetch returned no job');
+  const cancel = (): void =>
+    void backendFetch(fetchJobUrl(jobId), { method: 'DELETE' }, { silent: true }).catch(() => undefined);
+  if (signal?.aborted) {
+    cancel();
+    signal.throwIfAborted();
+  }
+  signal?.addEventListener('abort', cancel, { once: true });
+  return jobId;
+}
+
+async function fetchedAudio(raw: unknown, signal: AbortSignal | undefined): Promise<JobAudio> {
+  const audio = parseBackendAudio(raw, 'track');
   if (audio == null) throw new Error('music/fetch returned no audio');
-  return downloadJobAudio(audio, opts.signal);
+  return downloadJobAudio(audio, signal);
+}
+
+function fetchJobUrl(jobId: string): string {
+  return musicUrl(`fetch/${encodeURIComponent(jobId)}`);
 }
 
 // --- parsing --------------------------------------------------------------

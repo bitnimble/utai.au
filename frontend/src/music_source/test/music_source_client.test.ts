@@ -1,14 +1,14 @@
 /**
  * Tests for the music-source net client. `globalThis.fetch` is stubbed per
  * test (like forced_align.test.ts) so we can assert the outbound request shape
- * and drive the responses - the parsing + the fetch NDJSON→File flow are the
+ * and drive the responses - the parsing + the download job→File flow are the
  * bug-prone parts this covers.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   addAccount,
-  fetchTrack,
+  downloadTrack,
   getMusicConfig,
   listServices,
   removeAccount,
@@ -46,11 +46,6 @@ function json(value: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
-}
-
-function ndjsonResponse(envelopes: object[], status = 200): Response {
-  const body = envelopes.map((e) => JSON.stringify(e)).join('\n') + '\n';
-  return new Response(body, { status, headers: { 'Content-Type': 'application/x-ndjson' } });
 }
 
 const TRACK: TrackResult = {
@@ -162,55 +157,105 @@ describe('accounts', () => {
   });
 });
 
-describe('fetchTrack', () => {
-  test('streams progress then downloads the finished audio into a File', async () => {
-    const progress: number[] = [];
+describe('downloadTrack', () => {
+  const JOB_URL = '/api/music/fetch/j1';
+  const AUDIO_REF = {
+    path: 'music/audio/7',
+    serverPath: '/root/Music/Get Lucky.mp3',
+    filename: 'Get Lucky',
+    contentType: 'audio/mpeg',
+  };
+  const status = (fields: object): Response =>
+    json({ frac: 0, audio: null, error: null, videoDone: false, ...fields });
+
+  /** Answers the job's status polls from `statuses` in turn, repeating the last. */
+  function serveJob(...statuses: object[]): void {
+    let polls = 0;
     fetchHandler = (call) => {
-      if (call.url.endsWith('/api/music/fetch')) {
-        return ndjsonResponse([
-          { type: 'running', stage: 'queued', frac: 0 },
-          { type: 'running', stage: 'Downloading', frac: 0.5 },
-          {
-            type: 'result',
-            audio: {
-              path: 'music/audio/7',
-              serverPath: '/root/Music/Get Lucky.mp3',
-              filename: 'Get Lucky',
-              contentType: 'audio/mpeg',
-            },
-          },
-        ]);
-      }
-      // the audio download
+      if (call.url === '/api/music/fetch') return json({ jobId: 'j1' });
+      if (call.url === JOB_URL) return status(statuses[Math.min(polls++, statuses.length - 1)]);
       expect(call.url).toBe('/api/music/audio/7');
       return new Response(new Blob([new Uint8Array([1, 2, 3])]), {
         status: 200,
         headers: { 'content-type': 'audio/mpeg' },
       });
     };
-    const { file, serverPath } = await fetchTrack(TRACK, { onProgress: (p) => progress.push(p.frac) });
+  }
+
+  test('polls progress then downloads the finished audio into a File', async () => {
+    const progress: number[] = [];
+    serveJob({ frac: 0.5 }, { frac: 1, audio: AUDIO_REF, videoDone: true });
+    const { audio } = downloadTrack(TRACK, { onProgress: (p) => progress.push(p.frac) });
+    const { file, serverPath } = await audio;
     expect(serverPath).toBe('/root/Music/Get Lucky.mp3');
     expect(file).toBeInstanceOf(File);
     expect(file.name).toBe('Get Lucky');
     expect(file.type).toBe('audio/mpeg');
     expect(await file.arrayBuffer()).toEqual(new Uint8Array([1, 2, 3]).buffer);
-    expect(progress).toEqual([0, 0.5]);
-    expect(fetchCalls.length).toBe(2); // fetch stream + audio download
+    expect(progress[progress.length - 1]).toBe(1);
+    expect(progress).toContain(0.5);
   });
 
-  test('rejects with the message from a terminal error envelope', async () => {
-    fetchHandler = () =>
-      ndjsonResponse([{ type: 'running', stage: 'queued', frac: 0 }, { type: 'error', message: 'Download failed.' }]);
-    await expect(fetchTrack(TRACK)).rejects.toThrow(/Download failed/);
+  test('one song polls its job with one loop, and stops reporting progress once the audio is in', async () => {
+    const progress: number[] = [];
+    serveJob({ frac: 0.5 }, { frac: 1, audio: AUDIO_REF }, { frac: 1, audio: AUDIO_REF, videoDone: true });
+    const { audio, video } = downloadTrack(TRACK, { onProgress: (p) => progress.push(p.frac) });
+    await audio;
+    await video;
+    expect(fetchCalls.filter((c) => c.url === JOB_URL)).toHaveLength(3);
+    expect(progress).toEqual([0.5, 1]);
+  });
+
+  test('audio is ready without waiting for the video', async () => {
+    serveJob({ audio: AUDIO_REF, videoDone: false });
+    const controller = new AbortController();
+    const { audio, video } = downloadTrack(TRACK, { signal: controller.signal });
+    let videoSettled = false;
+    void video.then(() => {
+      videoSettled = true;
+    });
+    await audio;
+    expect(videoSettled).toBe(false);
+    controller.abort();
+    await video;
+  });
+
+  test('video settles without rejecting if the job is lost', async () => {
+    fetchHandler = (call) => (call.url === '/api/music/fetch' ? json({ jobId: 'j1' }) : json({ detail: 'gone' }, 404));
+    const lost = downloadTrack(TRACK);
+    lost.audio.catch(() => undefined);
+    await lost.video;
+  });
+
+  test('rejects with the message the job failed with', async () => {
+    serveJob({ error: 'Download failed.', videoDone: true });
+    await expect(downloadTrack(TRACK).audio).rejects.toThrow(/Download failed/);
   });
 
   test('rejects when the fetch POST is not OK', async () => {
     fetchHandler = () => json({ detail: 'OnTheSpot unreachable' }, 502);
-    await expect(fetchTrack(TRACK)).rejects.toThrow(/OnTheSpot unreachable/);
+    await expect(downloadTrack(TRACK).audio).rejects.toThrow(/OnTheSpot unreachable/);
   });
 
-  test('rejects when the stream ends with no terminal result', async () => {
-    fetchHandler = () => ndjsonResponse([{ type: 'running', stage: 'queued', frac: 0 }]);
-    await expect(fetchTrack(TRACK)).rejects.toThrow();
+  test('aborting rejects the audio and cancels the job', async () => {
+    serveJob({ frac: 0.5 });
+    const controller = new AbortController();
+    const { audio, video } = downloadTrack(TRACK, { signal: controller.signal });
+    while (!fetchCalls.some((c) => c.url === JOB_URL)) await new Promise((resolve) => setTimeout(resolve, 1));
+    controller.abort();
+    await expect(audio).rejects.toMatchObject({ name: 'AbortError' });
+    await video;
+    expect(fetchCalls.some((c) => c.url === JOB_URL && c.method === 'DELETE')).toBe(true);
+  });
+
+  test('aborting while the job is being created still cancels it', async () => {
+    const controller = new AbortController();
+    fetchHandler = (call) => {
+      if (call.method === 'POST') controller.abort();
+      return json({ jobId: 'j1' });
+    };
+    const { audio } = downloadTrack(TRACK, { signal: controller.signal });
+    await expect(audio).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchCalls.some((c) => c.url === JOB_URL && c.method === 'DELETE')).toBe(true);
   });
 });

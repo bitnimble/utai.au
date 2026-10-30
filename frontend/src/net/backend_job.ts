@@ -36,7 +36,7 @@ export async function runJob(path: string, form: FormData, { signal, onProgress 
 
 /** Streams the job at `path`, passing each progress envelope to `onEvent`; resolves
  *  with the `result` envelope, rejects with an `error` envelope's message. */
-export async function streamJob(
+async function streamJob(
   path: string,
   init: RequestInit,
   onEvent: (event: JobEnvelope) => void,

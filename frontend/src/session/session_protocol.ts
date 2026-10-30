@@ -20,6 +20,7 @@ const remoteQueueStatusSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('loadingModels') }),
   z.object({ kind: z.literal('separating') }),
   z.object({ kind: z.literal('aligning') }),
+  z.object({ kind: z.literal('downloadingVideo') }),
   z.object({ kind: z.literal('ready') }),
   z.object({ kind: z.literal('failed'), message: z.string() }),
 ]);

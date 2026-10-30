@@ -27,7 +27,7 @@ import { separateStems, type SeparatedStems } from 'src/lyrics/separate_stems';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import { ModelsMissingError, type JobProgress } from 'src/net/backend_job';
 import type { JobAudio } from 'src/net/job_audio';
-import { fetchTrack, type TrackResult } from 'src/net/music_source_client';
+import { downloadTrack, type TrackResult } from 'src/net/music_source_client';
 import {
   fetchSkipSegments,
   musicDurationSec,
@@ -38,7 +38,6 @@ import {
 import type { SongIdentity } from 'src/song_identity/identify_song';
 import { identifyTrack } from 'src/song_identity/identify_track';
 import { toastStore } from 'src/ui/toasts/toasts';
-import { prefetchBackingVideo } from 'src/video/video_client';
 import { songVideoId } from 'src/video/youtube';
 
 export type QueueSource =
@@ -57,37 +56,21 @@ export type PrepareOptions = {
   onStage: (stage: PrepareStage) => void;
   /** A streaming track's identity, if already being looked up. */
   identity?: Promise<SongIdentity>;
+  /** A streaming track's audio, if already downloading. */
+  audio?: Promise<JobAudio>;
 };
 
 export type PrepareSong = (source: QueueSource, opts: PrepareOptions) => Promise<PreparedSong>;
 
 export const prepareSong: PrepareSong = async (source, opts) => {
   if (source.kind === 'bundle') {
-    const prepared = fromBundle(await unpackSongBundle(new Uint8Array(await source.file.arrayBuffer())));
-    await warmBackingVideo(prepared.meta, opts.signal);
-    return prepared;
+    return fromBundle(await unpackSongBundle(new Uint8Array(await source.file.arrayBuffer())));
   }
   if (source.kind === 'file') {
     return prepareFile(source.file, opts);
   }
-  const { track } = source;
-  const video = warmBackingVideo({ sourceUrl: track.sourceUrl }, opts.signal);
-  const prepared = await prepareStreaming(track, opts);
-  await video;
-  return prepared;
+  return prepareStreaming(source.track, opts);
 };
-
-/** Best-effort: the video area just starts blank (or falls back to the embed)
- *  when this fails. */
-async function warmBackingVideo(meta: SongMeta, signal: AbortSignal): Promise<void> {
-  const videoId = songVideoId(meta);
-  if (videoId == null) return;
-  try {
-    await prefetchBackingVideo(videoId, { signal });
-  } catch (err) {
-    if (!signal.aborted) console.warn('[video] prefetch failed:', message(err));
-  }
-}
 
 async function prepareFile(file: File, opts: PrepareOptions): Promise<PreparedSong> {
   const music = { durationSec: await decodeDurationSec(file), startSec: 0, durationSlackSec: 0, isCover: false };
@@ -98,18 +81,20 @@ async function prepareFile(file: File, opts: PrepareOptions): Promise<PreparedSo
 /** The lyrics search starts once the song is identified, without waiting for the download. */
 async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promise<PreparedSong> {
   opts.onStage({ kind: 'downloading', frac: 0 });
-  const download = fetchTrack(track, {
-    signal: opts.signal,
-    onProgress: (p) => opts.onStage({ kind: 'downloading', frac: p.frac }),
-  });
+  const audio =
+    opts.audio ??
+    downloadTrack(track, {
+      signal: opts.signal,
+      onProgress: (p) => opts.onStage({ kind: 'downloading', frac: p.frac }),
+    }).audio;
   const identity = opts.identity ?? identifyTrack(track, opts.signal);
-  const music = streamingMusic(track, download, lookUpSkipSegments(track.sourceUrl, opts.signal), identity);
+  const music = streamingMusic(track, audio, lookUpSkipSegments(track.sourceUrl, opts.signal), identity);
   const search = Promise.all([identity, music])
     .then(([song, m]) => searchSyncedLyrics(song.title, song.artist, m, opts.signal))
     // Only rejects when `music` does, i.e. a failed download, which the await below reports.
     .catch(() => undefined);
   const lyrics: PickLyrics = async (language) => (await search)?.(language);
-  const [mix, song, knownMusic] = await Promise.all([download, identity, music]);
+  const [mix, song, knownMusic] = await Promise.all([audio, identity, music]);
   const meta: SongMeta = {
     title: song.title,
     artist: song.artist || undefined,

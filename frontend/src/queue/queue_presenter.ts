@@ -1,9 +1,10 @@
 import { makeAutoObservable, reaction } from 'mobx';
 import type { PlaybackEngine } from 'src/editing/playback/playback_engine';
+import type { PreparedSong } from 'src/karaoke/song_bundle';
 import type { SongIoPresenter } from 'src/karaoke/song_io_presenter';
 import { cleanStreamingTitle, parseSongFilename } from 'src/lyrics/auto_lyrics';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
-import type { TrackResult } from 'src/net/music_source_client';
+import type { DownloadTrackOptions, TrackDownload, TrackResult } from 'src/net/music_source_client';
 import type { SongIdentity } from 'src/song_identity/identify_song';
 import type { IdentifyTrack } from 'src/song_identity/identify_track';
 import { toastStore } from 'src/ui/toasts/toasts';
@@ -14,12 +15,14 @@ const MAX_HISTORY_LENGTH = 100;
 
 type SongLoader = Pick<SongIoPresenter, 'loadPreparedSong' | 'clearSong'>;
 type Transport = Pick<PlaybackEngine, 'state' | 'play' | 'onEnded'>;
+type DownloadTrack = (track: TrackResult, opts?: DownloadTrackOptions) => TrackDownload;
 
 /** Sole writer for {@link QueueStore}. */
 export class QueuePresenter {
   private itemIdCounter = 0;
   private preparing: { id: QueueItemId; controller: AbortController } | undefined;
   private readonly identities = new Map<QueueItemId, Promise<SongIdentity>>();
+  private readonly downloads = new Map<QueueItemId, { download: TrackDownload; controller: AbortController }>();
   private disposers: Array<() => void> = [];
   private disposed = false;
 
@@ -29,6 +32,7 @@ export class QueuePresenter {
     private readonly transport: Transport,
     private readonly prepare: PrepareSong,
     private readonly identify: IdentifyTrack,
+    private readonly download: DownloadTrack,
   ) {
     makeAutoObservable<
       this,
@@ -37,9 +41,11 @@ export class QueuePresenter {
       | 'transport'
       | 'prepare'
       | 'identify'
+      | 'download'
       | 'itemIdCounter'
       | 'preparing'
       | 'identities'
+      | 'downloads'
       | 'disposers'
       | 'disposed'
     >(this, {
@@ -48,9 +54,11 @@ export class QueuePresenter {
       transport: false,
       prepare: false,
       identify: false,
+      download: false,
       itemIdCounter: false,
       preparing: false,
       identities: false,
+      downloads: false,
       disposers: false,
       disposed: false,
     });
@@ -58,6 +66,11 @@ export class QueuePresenter {
 
   init(): void {
     this.disposed = false;
+    for (const { id, source, status } of this.store.items) {
+      if (source.kind === 'streaming' && status.kind !== 'ready' && status.kind !== 'failed') {
+        this.downloadItem(id, source.track);
+      }
+    }
     this.prepareNext();
     this.disposers.push(
       this.transport.onEnded(() => this.setAwaitingNext()),
@@ -83,6 +96,8 @@ export class QueuePresenter {
     for (const dispose of this.disposers) dispose();
     this.disposers = [];
     this.preparing?.controller.abort();
+    for (const { controller } of this.downloads.values()) controller.abort();
+    this.downloads.clear();
   }
 
   toggleSidebar(): void {
@@ -102,7 +117,10 @@ export class QueuePresenter {
     const id = `queue-${++this.itemIdCounter}`;
     this.store.items.push({ id, ...label, source, status: { kind: 'waiting' } });
     toastStore.showSuccess(`Added ${label.title} to the queue.`, { testId: 'queue-added' });
-    if (source.kind === 'streaming') this.identifyItem(id, source.track);
+    if (source.kind === 'streaming') {
+      this.identifyItem(id, source.track);
+      this.downloadItem(id, source.track);
+    }
     this.prepareNext();
   }
 
@@ -122,6 +140,8 @@ export class QueuePresenter {
   remove(id: QueueItemId): void {
     this.store.items = this.store.items.filter((i) => i.id !== id);
     this.identities.delete(id);
+    this.downloads.get(id)?.controller.abort();
+    this.downloads.delete(id);
     if (this.preparing?.id === id) this.preparing.controller.abort();
   }
 
@@ -145,6 +165,19 @@ export class QueuePresenter {
     void identity.then((song) => this.relabel(id, song));
   }
 
+  private downloadItem(id: QueueItemId, track: TrackResult): void {
+    const controller = new AbortController();
+    const download = this.download(track, {
+      signal: controller.signal,
+      onProgress: ({ frac }) => {
+        if (this.preparing?.id === id) this.setStage(id, { kind: 'downloading', frac });
+      },
+    });
+    // Nothing awaits this until the song's turn to prepare, which reports a failure.
+    download.audio.catch(() => undefined);
+    this.downloads.set(id, { download, controller });
+  }
+
   private relabel(id: QueueItemId, song: SongIdentity): void {
     this.update(id, { title: song.title, artist: song.artist });
   }
@@ -160,6 +193,7 @@ export class QueuePresenter {
     this.store.starting = item;
     this.store.items = this.store.items.filter((i) => i.id !== item.id);
     this.identities.delete(item.id);
+    this.downloads.delete(item.id);
     try {
       await this.songIo.loadPreparedSong(item.status.song);
       await this.transport.play();
@@ -199,12 +233,9 @@ export class QueuePresenter {
         signal: controller.signal,
         onStage: (stage) => this.setStage(item.id, stage),
         identity: this.identities.get(item.id),
+        audio: this.downloads.get(item.id)?.download.audio,
       });
-      this.update(item.id, {
-        status: { kind: 'ready', song },
-        title: song.meta.title || item.title,
-        artist: song.meta.artist ?? item.artist,
-      });
+      void this.markReadyOnceVideoIsDone(item, song);
     } catch (err) {
       if (controller.signal.aborted) {
         // Removed items are already gone; a dispose-aborted one is redone on init.
@@ -219,6 +250,25 @@ export class QueuePresenter {
       this.preparing = undefined;
       this.prepareNext();
     }
+  }
+
+  private async markReadyOnceVideoIsDone(item: QueueItem, song: PreparedSong): Promise<void> {
+    const entry = this.downloads.get(item.id);
+    if (entry != null) {
+      this.update(item.id, { status: { kind: 'downloadingVideo' } });
+      await entry.download.video;
+      if (entry.controller.signal.aborted) {
+        // Removed items are already gone; a dispose-aborted one is redone on init.
+        this.update(item.id, { status: { kind: 'waiting' } });
+        this.prepareNext();
+        return;
+      }
+    }
+    this.update(item.id, {
+      status: { kind: 'ready', song },
+      title: song.meta.title || item.title,
+      artist: song.meta.artist ?? item.artist,
+    });
   }
 
   private setStage(id: QueueItemId, stage: PrepareStage): void {
