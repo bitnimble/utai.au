@@ -327,7 +327,9 @@ test('karaoke counts a line in after a gap: 3, 2, 1 dots above its first word, t
   const dots = () =>
     countIn.locator('> span').evaluateAll((els) => els.map((e) => (e.hasAttribute('data-spent') ? '-' : 'o')).join(''));
 
-  await seek(2.2);
+  await seek(2.46);
+  await expect(page.getByTestId('karaoke-line')).toHaveCount(0);
+  await seek(2.54);
   await expect(page.getByTestId('karaoke-line')).toHaveText('count me in');
   await expect(countIn.locator('> span')).toHaveCount(3);
   await expect.poll(dots).toBe('ooo');

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { LyricLine } from 'src/lyrics/lrc';
 import {
+  countInLeadInSec,
   countInTimes,
   followingLineIdx,
   followsGap,
@@ -230,6 +231,13 @@ describe('shownLineIdx', () => {
     expect(shownLineIdx(lines, 22, 5)).toBe(0);
   });
 
+  test("takes each line's own lead-in, the default where it has none", () => {
+    const leadIn = (idx: number) => (idx === 2 ? 1.5 : undefined);
+    expect(shownLineIdx(lines, 38.4, 0, leadIn)).toBe(undefined);
+    expect(shownLineIdx(lines, 38.5, 0, leadIn)).toBe(2);
+    expect(shownLineIdx(lines, 17, 0, leadIn)).toBe(0);
+  });
+
   test('followingLineIdx stops at a gap that blanks the lyrics', () => {
     expect(followingLineIdx(lines, 0)).toBe(1);
     expect(followingLineIdx(lines, 1)).toBe(undefined);
@@ -296,6 +304,23 @@ describe('countInTimes', () => {
 
   test('counts in before the first tracked beat', () => {
     expect(countInTimes(beats, 0.5, 0.5, 4)).toEqual([-0.5, 0, 0.5]);
+  });
+});
+
+describe('countInLeadInSec', () => {
+  const beats = Array.from({ length: 20 }, (_, i) => i * 0.5);
+
+  test('a beat before the first dot goes out', () => {
+    expect(countInLeadInSec(beats, 4, 0.5, 4)).toBe(1.5);
+    expect(countInLeadInSec(beats, 4, 0.5, 3)).toBe(1);
+  });
+
+  test('plus how far off its beat the line is sung', () => {
+    expect(countInLeadInSec(beats, 4.2, 0.5, 4)).toBeCloseTo(1.7);
+  });
+
+  test('none without dots', () => {
+    expect(countInLeadInSec(beats, 4, 0.5, 1)).toBe(undefined);
   });
 });
 

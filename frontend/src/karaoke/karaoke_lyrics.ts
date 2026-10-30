@@ -6,18 +6,19 @@ const LINE_HOLD_SEC = 0.5;
 const LYRIC_GAP_SEC = 6;
 
 /** The line to display at `audioTimeSec`: the active line until the next is
- *  within the lead-in, then the next; across a gap (see `followingLineIdx`),
- *  the active line only until shortly after its last word. Nothing through
- *  intros and gaps. */
+ *  within its lead-in (`leadInSec`, a default without one), then the next;
+ *  across a gap (see `followingLineIdx`), the active line only until shortly
+ *  after its last word. Nothing through intros and gaps. */
 export function shownLineIdx(
   lines: readonly LyricLine[],
   audioTimeSec: number,
   offsetSec: number,
+  leadInSec: (idx: number) => number | undefined = () => undefined,
 ): number | undefined {
   const t = audioTimeSec - offsetSec;
   const active = activeLineIndexAt(lines, audioTimeSec, offsetSec);
   const next = nextVocalLineIdx(lines, active);
-  const nextDue = next != null && lineSpanSec(lines, next).startSec - t <= LINE_LEAD_IN_SEC;
+  const nextDue = next != null && lineSpanSec(lines, next).startSec - t <= (leadInSec(next) ?? LINE_LEAD_IN_SEC);
   if (active == null) return nextDue ? next : undefined;
   if (t < lineSpanSec(lines, active).endSec + LINE_HOLD_SEC) return active;
   if (nextDue) return next;
@@ -253,11 +254,34 @@ export function countInTimes(
   beatsPerBar: number,
 ): number[] {
   const dots = beatsPerBar - 1;
+  const { onSec, stepSec } = countInBeat(beats, startSec, beatSec, beatsPerBar);
+  return Array.from({ length: dots }, (_, i) => onSec - (dots - 1 - i) * stepSec);
+}
+
+/** How long before `startSec` a line counted in by {@link countInTimes} shows:
+ *  a beat before its first dot goes out. Undefined with no dots. */
+export function countInLeadInSec(
+  beats: readonly number[],
+  startSec: number,
+  beatSec: number,
+  beatsPerBar: number,
+): number | undefined {
+  const dots = beatsPerBar - 1;
+  if (dots <= 0) return undefined;
+  const { onSec, stepSec } = countInBeat(beats, startSec, beatSec, beatsPerBar);
+  return startSec - onSec + dots * stepSec;
+}
+
+function countInBeat(
+  beats: readonly number[],
+  startSec: number,
+  beatSec: number,
+  beatsPerBar: number,
+): { onSec: number; stepSec: number } {
   const onIdx = nearestIdx(beats, startSec);
   const stepSec = localBeatSec(beats, onIdx, beatsPerBar) ?? beatSec;
   const onBeat = beats.length > 0 && Math.abs(beats[onIdx] - startSec) <= stepSec / 2;
-  const onSec = onBeat ? beats[onIdx] : startSec;
-  return Array.from({ length: dots }, (_, i) => onSec - (dots - 1 - i) * stepSec);
+  return { onSec: onBeat ? beats[onIdx] : startSec, stepSec };
 }
 
 function nearestIdx(sorted: readonly number[], value: number): number {
