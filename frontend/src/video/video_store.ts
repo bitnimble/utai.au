@@ -14,6 +14,8 @@ import { songVideoId } from './youtube';
  */
 export class VideoStore {
   readonly nativeFailedIds: Set<string> = new Set();
+  /** The video whose native backing has decoded a frame to show. */
+  firstFrameVideoId: string | undefined = undefined;
 
   constructor(private readonly song: SongStore) {
     makeAutoObservable<this, 'song'>(this, { song: false });

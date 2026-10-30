@@ -5,6 +5,7 @@ import { BackingVideo } from './backing_video';
  *  that a muted backing video stays visually in step. */
 const DRIFT_TOLERANCE_SEC = 0.3;
 const MAX_SEEK_LEAD_SEC = 5;
+const MAX_SEEK_WAIT_SEC = 10;
 
 /** Keeps one backing video on the audio clock: exact while scrubbing (paused),
  *  drift-corrected while playing so it doesn't seek every frame. */
@@ -20,7 +21,7 @@ export class VideoClockFollower {
   follow(audioSec: number, playing: boolean): void {
     if (!playing) {
       this.correction = undefined;
-      this.backing.seek(audioSec);
+      if (this.backing.getTime() !== audioSec) this.backing.seek(audioSec);
       return;
     }
     if (this.correction != null) {
@@ -28,7 +29,7 @@ export class VideoClockFollower {
       const audioJumped = Math.abs(audioSec - (this.correction.audioSec + elapsedSec)) > DRIFT_TOLERANCE_SEC;
       // Mid-seek the backing reports the seek target, not a frame it shows; re-seeking
       // here restarts the load, so a seek slower than the tolerance never lands.
-      if (this.backing.isBuffering() && !audioJumped) return;
+      if (this.backing.isBuffering() && !audioJumped && elapsedSec <= MAX_SEEK_WAIT_SEC) return;
       if (!audioJumped) this.seekLeadSec = Math.min(elapsedSec, MAX_SEEK_LEAD_SEC);
       this.correction = undefined;
     }
