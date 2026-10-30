@@ -7,8 +7,9 @@ type Track = { role: string; effects: readonly string[] };
 type UtaiWindow = { utai?: { playbackEngine?: { audioTracks?: Map<string, Track> } } };
 type ResultWindow = { moduleResult?: Promise<unknown> };
 
-const SIDE_DIFF = 0.8;
-const IMPULSE_TAIL_ENERGY = 2.212318e-4;
+const DIRECT = 0.58582;
+const SIDE_DIFF = 1.33902;
+const IMPULSE_TAIL_ENERGY = 6.197898e-4;
 
 function stemBundle(): { name: string; mimeType: string; buffer: Buffer } {
   const index = {
@@ -103,9 +104,9 @@ test('surround reverb: a centred impulse comes out direct, then wide, then as a 
     `,
   );
 
-  expect(ir.directL).toBeCloseTo(0.35, 5);
-  expect(ir.directR).toBeCloseTo(0.35, 5);
-  expect(ir.sideDiff).toBeCloseTo(SIDE_DIFF, 5);
+  expect(ir.directL).toBeCloseTo(DIRECT, 4);
+  expect(ir.directR).toBeCloseTo(DIRECT, 4);
+  expect(ir.sideDiff).toBeCloseTo(SIDE_DIFF, 4);
   // surround_reverb.rs's IMPULSE_TAIL_ENERGY: off means the committed WASM is stale (`bun run wasm:build`).
   expect(ir.tailEnergy / IMPULSE_TAIL_ENERGY).toBeCloseTo(1, 3);
   expect(Math.abs(ir.tailCorrelation)).toBeLessThan(0.5);
@@ -148,7 +149,7 @@ test('surround reverb: switching a playing track on reroutes it through the effe
   );
 
   expect(out).toMatchObject({ dryL: 1, dryR: 1 });
-  expect(out.wetL).toBeCloseTo(0.35, 2);
+  expect(out.wetL).toBeCloseTo(DIRECT, 2);
   expect(out.wetSideDiff).toBeCloseTo(SIDE_DIFF, 1);
 });
 

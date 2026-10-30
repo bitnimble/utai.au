@@ -18,16 +18,19 @@ pub struct SurroundReverb {
     delay_pos: usize,
     reverb: Convolver,
     lowpass: [Biquad; 2],
+    makeup_gain: f32,
 }
 
 impl SurroundReverb {
     pub fn new(sample_rate: u32) -> Self {
         let rate = sample_rate as f32;
         let delay_frames = ((HAAS_DELAY_SEC * rate).round() as usize).max(1);
+        let ir = impulse_response(sample_rate);
         Self {
             delay: vec![0.0; delay_frames],
             delay_pos: 0,
-            reverb: Convolver::new(impulse_response(sample_rate), PARTITION_FRAMES),
+            makeup_gain: makeup_gain(&ir),
+            reverb: Convolver::new(ir, PARTITION_FRAMES),
             lowpass: [Biquad::lowpass(WET_LOWPASS_HZ, rate), Biquad::lowpass(WET_LOWPASS_HZ, rate)],
         }
     }
@@ -43,10 +46,17 @@ impl SurroundReverb {
             let direct = mono * DIRECT_GAIN;
             // In phase on the left, inverted on the right: widens, cancels in mono.
             let side = delayed * SIDE_GAIN;
-            frame[0] = direct + side + self.lowpass[0].process(wet_l) * WET_GAIN;
-            frame[1] = direct - side + self.lowpass[1].process(wet_r) * WET_GAIN;
+            frame[0] = (direct + side + self.lowpass[0].process(wet_l) * WET_GAIN) * self.makeup_gain;
+            frame[1] = (direct - side + self.lowpass[1].process(wet_r) * WET_GAIN) * self.makeup_gain;
         }
     }
+}
+
+/// Restores a centred vocal's dry power per channel; its three paths are near
+/// uncorrelated, so their powers add.
+fn makeup_gain(ir: &[Vec<f32>; 2]) -> f32 {
+    let ir_energy = ir.iter().flatten().map(|s| s * s).sum::<f32>() / 2.0;
+    1.0 / (DIRECT_GAIN.powi(2) + SIDE_GAIN.powi(2) + WET_GAIN.powi(2) * ir_energy).sqrt()
 }
 
 /// Exponentially decaying noise, independent per channel so the tail is wide,
@@ -242,11 +252,11 @@ mod tests {
         let input = noise(1000, 3);
         let mut conv = Convolver::new(ir.clone(), partition);
         let out: Vec<(f32, f32)> = input.iter().map(|&x| conv.process(x)).collect();
-        for n in partition..input.len() {
+        for (n, &(l, r)) in out.iter().enumerate().skip(partition) {
             let t = n - partition;
             for (channel, h) in ir.iter().enumerate() {
                 let expected: f32 = (0..h.len()).filter(|&k| k <= t).map(|k| h[k] * input[t - k]).sum();
-                let got = if channel == 0 { out[n].0 } else { out[n].1 };
+                let got = if channel == 0 { l } else { r };
                 assert!((got - expected).abs() < 1e-3, "frame {n} ch {channel}: {got} vs {expected}");
             }
         }
@@ -262,10 +272,11 @@ mod tests {
         block[1] = 1.0;
         fx.process(&mut block);
 
-        assert!((block[0] - DIRECT_GAIN).abs() < 1e-6);
-        assert!((block[1] - DIRECT_GAIN).abs() < 1e-6);
+        let gain = fx.makeup_gain;
+        assert!((block[0] - DIRECT_GAIN * gain).abs() < 1e-6);
+        assert!((block[1] - DIRECT_GAIN * gain).abs() < 1e-6);
         let delay = (HAAS_DELAY_SEC * rate as f32).round() as usize;
-        assert!((block[delay * 2] - block[delay * 2 + 1] - 2.0 * SIDE_GAIN).abs() < 1e-6);
+        assert!((block[delay * 2] - block[delay * 2 + 1] - 2.0 * SIDE_GAIN * gain).abs() < 1e-5);
 
         let tail = &block[rate as usize..];
         let energy: f32 = tail.iter().map(|s| s * s).sum();
@@ -278,7 +289,7 @@ mod tests {
 
     /// `surround_reverb.e2e.ts` asserts the same value from the committed WASM,
     /// so a stale build fails there.
-    const IMPULSE_TAIL_ENERGY: f64 = 2.212318e-4;
+    const IMPULSE_TAIL_ENERGY: f64 = 6.197898e-4;
 
     #[test]
     fn impulse_tail_energy_matches_the_web_golden() {
@@ -290,6 +301,24 @@ mod tests {
         fx.process(&mut block);
         let energy: f64 = block[rate as usize * 2..].iter().map(|&s| (s as f64) * (s as f64)).sum();
         assert!((energy / IMPULSE_TAIL_ENERGY - 1.0).abs() < 1e-3, "{energy:e}");
+    }
+
+    #[test]
+    fn a_centred_vocal_band_signal_keeps_its_power() {
+        let rate = 48_000;
+        let mut band = Biquad::lowpass(4000.0, rate as f32);
+        let mono: Vec<f32> = noise(rate as usize * 8, 7).into_iter().map(|x| band.process(x)).collect();
+        let mut block: Vec<f32> = mono.iter().flat_map(|&x| [x, x]).collect();
+        SurroundReverb::new(rate).process(&mut block);
+
+        let settled = rate as usize * 3;
+        let power = |s: &[f32]| s.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / s.len() as f64;
+        let dry = power(&mono[settled..]);
+        let (l, r): (Vec<f32>, Vec<f32>) = block[settled * 2..].chunks_exact(2).map(|f| (f[0], f[1])).unzip();
+        for wet in [power(&l), power(&r)] {
+            let db = 10.0 * (wet / dry).log10();
+            assert!(db.abs() < 0.5, "{db} dB");
+        }
     }
 
     /// Chromium's `BiquadFilterNode` lowpass measures 1.12202 here too.
