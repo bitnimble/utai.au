@@ -79,7 +79,8 @@ header `backendFetch` attaches.
   `bun run release [version]` (on `main`, clean tree) bumps it, has `claude -p`
   write the user-facing changelog of the commits since the last `v*` tag
   (`scripts/changelog.ts`) into `changelog.json`, commits, and tags `v<version>`.
-  `git push --follow-tags` starts `.github/workflows/release.yml`.
+  `git push --follow-tags` starts `.github/workflows/release.yml`, on `main` so its
+  caches carry over between releases: the tag must be pushed with its commit, as the tip.
 - **CI** (`release.yml`) builds the backend + OnTheSpot images
   (`ghcr.io/bitnimble/utai.au-{backend,onthespot}`), macOS arm64 (`.dmg`),
   Windows (NSIS + portable zip) and a debug-key-signed Android APK, then
