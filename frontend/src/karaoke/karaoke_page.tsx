@@ -92,6 +92,7 @@ import { QueuePresenterContext, QueueStoreContext } from 'src/queue/queue_contex
 import { QueueButtons, QueueLoadingScreen, QueueSidebar } from 'src/queue/queue_view';
 import { NowPlayingBanner } from 'src/queue/now_playing_banner';
 import { searchTracks } from 'src/net/music_source_client';
+import { BackendStartingScreen } from 'src/session/backend_starting_screen';
 import type { HostSession } from 'src/session/session_client';
 import { SessionHostPresenterContext, SessionHostStoreContext } from 'src/session/session_host_contexts';
 import { SessionHostPresenter } from 'src/session/session_host_presenter';
@@ -420,25 +421,31 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
                 <FullscreenStoreContext.Provider value={fullscreen}>
                 <FullscreenPresenterContext.Provider value={fullscreenPresenter}>
                 <div className={classNames(styles.page, fullscreen.active && styles.fullscreen)}>
-                  <div className={classNames(styles.chrome, styles.topChrome)}>
-                    <Toolbar />
-                  </div>
-                  <div className={styles.body}>
-                    <div className={styles.main}>
-                      <VideoArea>
-                        {karaokeView && <KaraokeLyricsOverlay />}
-                        <NowPlayingBanner />
-                        <SkipSegmentButton />
-                      </VideoArea>
-                      {!karaokeView && <ScoreArea />}
-                      <QueueLoadingScreen />
-                    </div>
-                    <QueueSidebar />
-                  </div>
-                  <div className={classNames(styles.chrome, styles.bottomChrome)}>
-                    {karaokeView && <SeekBar />}
-                    <TransportBar />
-                  </div>
+                  {appSettingsStore.localBackendPending ? (
+                    <BackendStartingScreen />
+                  ) : (
+                    <>
+                      <div className={classNames(styles.chrome, styles.topChrome)}>
+                        <Toolbar />
+                      </div>
+                      <div className={styles.body}>
+                        <div className={styles.main}>
+                          <VideoArea>
+                            {karaokeView && <KaraokeLyricsOverlay />}
+                            <NowPlayingBanner />
+                            <SkipSegmentButton />
+                          </VideoArea>
+                          {!karaokeView && <ScoreArea />}
+                          <QueueLoadingScreen />
+                        </div>
+                        <QueueSidebar />
+                      </div>
+                      <div className={classNames(styles.chrome, styles.bottomChrome)}>
+                        {karaokeView && <SeekBar />}
+                        <TransportBar />
+                      </div>
+                    </>
+                  )}
                   <Modals />
                   <ToastContainer />
                 </div>

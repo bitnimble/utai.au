@@ -21,7 +21,7 @@ export class HostPagePresenter {
       this.setState(await this.resolveExisting(target.apiBase, target.sessionId));
       return;
     }
-    // Plays straight away; its own backend may take a while to start, and phones can join once it has.
+    // Ready before its backend is up: the Settings its starting screen offers reads the player's stores.
     this.setState({ kind: 'ready', host: undefined });
     try {
       this.setState({ kind: 'ready', host: await createSession(await target.apiBase()) });

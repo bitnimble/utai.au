@@ -15,7 +15,7 @@ const { toastStore } = await import('src/ui/toasts/toasts');
 
 const session: HostSession = { info: { id: 'AB12CD', publicUrl: null }, apiBase: 'http://127.0.0.1:5000', hostToken: 't' };
 
-test('a device host plays at once and attaches its session once it exists', async () => {
+test('a device host is ready at once and attaches its session once it exists', async () => {
   let attach: (s: HostSession) => void = () => {};
   created = new Promise((resolve) => (attach = resolve));
   const store = new HostPageStore();

@@ -35,6 +35,7 @@ const SESSION_HEADER = 'X-Utai-Session';
 export const SERVER_DOWN_TOAST_TEST_ID = 'server-down-toast';
 
 function reportServerDown(): void {
+  if (appSettingsStore.localBackendPending) return;
   // Don't stack identical notices when several backend calls fail together
   // (a page firing list + a user action at once). One sticky toast is enough;
   // once the user dismisses it, the next failure re-notifies.

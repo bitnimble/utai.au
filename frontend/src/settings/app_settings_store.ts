@@ -98,6 +98,11 @@ export class AppSettingsStore {
     return `${origin}/api`;
   }
 
+  /** The desktop app's own backend hasn't come up yet this launch. */
+  get localBackendPending(): boolean {
+    return this.localBackend !== 'none' && this.localApiBase == null;
+  }
+
   get japaneseScript(): JapaneseScript {
     return { kanji: this.showKanji, furigana: this.showFurigana, romaji: this.showRomaji };
   }

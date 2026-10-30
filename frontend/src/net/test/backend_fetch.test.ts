@@ -1,13 +1,15 @@
 import { afterAll, afterEach, expect, test } from 'bun:test';
 import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_settings_presenter';
-import { backendFetch, isBackendUnreachable } from '../backend_fetch';
+import { toastStore } from 'src/ui/toasts/toasts';
+import { backendFetch, isBackendUnreachable, SERVER_DOWN_TOAST_TEST_ID } from '../backend_fetch';
 
 const realFetch = globalThis.fetch;
 const requested: string[] = [];
-globalThis.fetch = (async (input: string | URL | Request) => {
+const fakeFetch = (async (input: string | URL | Request) => {
   requested.push(String(input));
   return new Response('{}');
 }) as typeof fetch;
+globalThis.fetch = fakeFetch;
 
 afterEach(() => {
   requested.length = 0;
@@ -36,6 +38,25 @@ test('the wait ends as unreachable if the desktop backend fails to start', async
   appSettingsPresenter.setLocalBackend('failed');
   expect(isBackendUnreachable(await pending.catch((e: unknown) => e))).toBe(true);
   expect(requested).toEqual([]);
+});
+
+test('a backend still failing to start raises no "Server is down" toast: its starting screen says so', async () => {
+  appSettingsPresenter.setLocalBackend('failed');
+  const err = await backendFetch('/api/music/services').catch((e: unknown) => e);
+  expect(isBackendUnreachable(err)).toBe(true);
+  expect(toastStore.toasts.filter((t) => t.testId === SERVER_DOWN_TOAST_TEST_ID)).toEqual([]);
+});
+
+test('once the desktop backend has started, losing it raises the "Server is down" toast', async () => {
+  appSettingsPresenter.setLocalBackend('failed');
+  appSettingsPresenter.setLocalApiBase('http://127.0.0.1:5000/api');
+  globalThis.fetch = (async () => {
+    throw new TypeError('connection refused');
+  }) as unknown as typeof fetch;
+  const err = await backendFetch('/api/music/services').catch((e: unknown) => e);
+  globalThis.fetch = fakeFetch;
+  expect(isBackendUnreachable(err)).toBe(true);
+  expect(toastStore.toasts.filter((t) => t.testId === SERVER_DOWN_TOAST_TEST_ID)).toHaveLength(1);
 });
 
 test('aborting a request that is waiting for the desktop backend rejects it as aborted', async () => {

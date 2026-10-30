@@ -65,8 +65,9 @@ backend's; phones reach it through the Rust LAN gateway
 serves the remote page and forwards `/api/sessions*` to the loopback backend;
 the rest of `/api` only to this machine's own `localhost:7337` page (Host,
 Origin and Sec-Fetch-Site checked), so the full app also works in a browser
-there. The desktop host plays at once and attaches its session when its
-backend is up. Advertised join URLs come from the backend's `PUBLIC_URL`
+there. Until its backend first comes up, the desktop host shows a blocking
+starting screen (Settings stays reachable), then attaches its session.
+Advertised join URLs come from the backend's `PUBLIC_URL`
 (`{lan_ip}` is filled in per request; desktop sets
 `http://{lan_ip}:<gateway port>`), overridable per host in the join dialog. The backend's GPU lock serves
 waiting jobs round-robin across sessions, keyed by the `X-Utai-Session`
