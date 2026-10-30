@@ -19,9 +19,8 @@
     "forceConsistentCasingInFileNames": true,
     "experimentalDecorators": true,
     "useUnknownInCatchVariables": false,
-    "baseUrl": ".",
     "paths": {
-      "src/*": ["frontend/src/*"]
+      "src/*": ["./frontend/src/*"]
     },
     "types": ["vite/client", "node", "bun"]
   },

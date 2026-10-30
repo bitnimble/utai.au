@@ -9,10 +9,14 @@
         "Bash(bunx tsc *)",
         "Bash(bun tsc *)",
         "Bash(tsc *)",
+        "Bash(bun x tsrs *)",
+        "Bash(bunx tsrs *)",
+        "Bash(bun tsrs *)",
+        "Bash(tsrs *)",
         "Bash(bun test *)",
         "Bash(bunx --bun vite *)"
       ],
-      "reason": "Run the package.json scripts instead of the raw tools (TypeScript has no wrapper script): `bun run typecheck` (tsc --noEmit), `bun run test` (bun test; trailing args pass through, e.g. `bun run test src/editing/store.test.ts`), `bun run lint:design` (stylelint), or `bun run build` (lint:design + tsc + vite). See AGENTS.md §3."
+      "reason": "Run the package.json scripts instead of the raw tools (TypeScript has no wrapper script): `bun run typecheck` (tsrs --noEmit; `bun run tsc` for other tsc flags), `bun run test` (bun test; trailing args pass through, e.g. `bun run test src/editing/store.test.ts`), `bun run lint:design` (stylelint), or `bun run build` (lint:design + tsrs + vite). See AGENTS.md §3."
     },
     {
       "commands": [

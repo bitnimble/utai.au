@@ -8,9 +8,10 @@
   "license": "MIT",
   "scripts": {
     "dev": "bunx vite",
-    "build": "bun run lint:design && bunx tsc --noEmit && bunx vite build",
+    "build": "bun run lint:design && tsrs --noEmit && bunx vite build",
     "preview": "bunx vite preview",
-    "typecheck": "bunx tsc --noEmit",
+    "typecheck": "tsrs --noEmit",
+    "tsc": "tsrs",
     "lint:design": "stylelint --fix 'frontend/src/**/*.css'",
     "test": "bun test",
     "e2e": "bun --env-file=.env run e2e:run",
@@ -74,6 +75,7 @@
     "postcss": "^8.5.16",
     "storybook": "^9",
     "stylelint": "^17.12.0",
+    "tsrs": "^0.20.1-ts7.1.0-beta",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "vite-css-modules": "^1.16.0"

@@ -116,9 +116,10 @@ header `backendFetch` attaches.
 
 - **Use `bun`, never npm/yarn. Use `bunx`, never npx.**
 - **After any code change, run the post-change checks.**
-  - **TypeScript** (`bun run …`, repo root): `typecheck` (tsc `--noEmit`),
+  - **TypeScript** (`bun run …`, repo root): `typecheck` (tsrs `--noEmit`,
+    the Rust port of tsc; `bun run tsc …` runs it with any tsc flags),
     `test` (bun unit tests; trailing args → single-file), `lint:design`
-    (stylelint `--fix`). `bun run build` runs lint:design + tsc + Vite in
+    (stylelint `--fix`). `bun run build` runs lint:design + tsrs + Vite in
     one shot, the agent compile-check.
   - **Python**: `scripts/check-py [pytest args]` (ruff `--fix` + pytest in
     `aligner/`, from `aligner/.venv`); `scripts/test-py` (pytest only). Never
@@ -194,10 +195,11 @@ Frontend (`bun`, repo root):
 | Command | What it does |
 |---|---|
 | `bun install` | Install deps. |
-| `bun run typecheck` | tsc `--noEmit`. |
+| `bun run typecheck` | tsrs `--noEmit`. |
+| `bun run tsc …` | tsrs with any tsc flags. |
 | `bun run test` | bun unit tests. |
 | `bun run lint:design` | stylelint `--fix` over `src/**/*.css`. |
-| `bun run build` | lint:design + tsc + Vite build. Agent compile-check. |
+| `bun run build` | lint:design + tsrs + Vite build. Agent compile-check. |
 | `bun run e2e` | Playwright suite. |
 | `bun run tauri` | Tauri desktop build (via `scripts/tauri-build.ts`). |
 | `bun run wasm:build` | Rebuild the committed `track_effects.wasm` from `src-tauri/crates/audio` (run after changing a track effect; the web AudioWorklet runs the same Rust effect chain as the desktop mixer). |

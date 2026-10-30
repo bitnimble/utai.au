@@ -13,7 +13,7 @@ The lyrics-alignment tech is shared with the sibling **Drumjot** project.
 
 ```bash
 bun install
-bun run build     # lint:design + tsc + Vite, the compile check
+bun run build     # lint:design + tsrs + Vite, the compile check
 bun run test      # unit tests
 bun run e2e       # Playwright suite
 ```
