@@ -28,6 +28,7 @@ export class NativeAudioOutput implements AudioOutput {
   private channel: Channel<Telemetry> | undefined;
   private anchor: Anchor = { playSec: 0, atMs: 0, playing: false };
   private playing = false;
+  private speed = 1;
   private readonly transport = new CommandQueue();
   private readonly devices = new CommandQueue();
   private monitorInput = NONE_DEVICE_ID;
@@ -44,6 +45,7 @@ export class NativeAudioOutput implements AudioOutput {
       | 'channel'
       | 'anchor'
       | 'playing'
+      | 'speed'
       | 'transport'
       | 'devices'
       | 'monitorInput'
@@ -57,6 +59,7 @@ export class NativeAudioOutput implements AudioOutput {
       channel: false,
       anchor: false,
       playing: false,
+      speed: false,
       transport: false,
       devices: false,
       monitorInput: false,
@@ -112,6 +115,12 @@ export class NativeAudioOutput implements AudioOutput {
     void invoke('audio_set_output_delay', { secs: sec });
   }
 
+  setSpeed(speed: number): void {
+    this.anchor = { ...this.anchor, playSec: this.positionSec(), atMs: performance.now() };
+    this.speed = speed;
+    void this.transport.send('audio_set_speed', { speed });
+  }
+
   async start(fromSec: number): Promise<void> {
     this.playing = true;
     this.anchor = { playSec: fromSec, atMs: performance.now(), playing: false };
@@ -143,7 +152,7 @@ export class NativeAudioOutput implements AudioOutput {
 
   positionSec(): number {
     const a = this.anchor;
-    return a.playing ? a.playSec + (performance.now() - a.atMs) / 1000 : a.playSec;
+    return a.playing ? a.playSec + ((performance.now() - a.atMs) / 1000) * this.speed : a.playSec;
   }
 
   async listDevices(): Promise<AudioDevice[]> {

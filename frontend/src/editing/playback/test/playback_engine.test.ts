@@ -64,6 +64,10 @@ class FakeOutput implements AudioOutput {
   setOutputDelay(sec: number): void {
     this.outputDelay = sec;
   }
+  speeds: number[] = [];
+  setSpeed(speed: number): void {
+    this.speeds.push(speed);
+  }
   async pause(): Promise<void> {}
   async resume(): Promise<void> {}
   seek(sec: number): void {
@@ -265,6 +269,66 @@ test('a stop while the output is starting wins over the start', async () => {
   expect(engine.state).toBe('idle');
   expect(timers.size).toBe(0);
   expect(output.stops).toBe(stopsBeforeStartLands + 1);
+});
+
+test('a speed change reaches the output at once and moves the end, not the song position', async () => {
+  const { engine, output } = loadedEngine();
+  await engine.play();
+  output.position = 40;
+  runFrame();
+  engine.setSpeed(0.5);
+  expect(output.speeds).toEqual([0.5]);
+  expect(engine.speed).toBe(0.5);
+  expect(engine.state).toBe('playing');
+  expect(output.seeks).toEqual([]);
+  expect(engine.currentTime).toBe(40);
+  expect(timerDelays()).toEqual([120_500]);
+  expect(engine.durationSec).toBe(100);
+
+  engine.seek(50);
+  expect(output.seeks).toEqual([50]);
+  expect(timerDelays()).toEqual([100_500]);
+});
+
+test('the audio offset stays in heard time at any speed', async () => {
+  const { engine, output } = loadedEngine();
+  engine.setSpeed(0.5);
+  engine.setAudioOffset(-0.5);
+  engine.seek(10);
+  await engine.play();
+  expect(output.startedFrom).toBe(10.25);
+  expect(engine.currentTime).toBe(10);
+  expect(timerDelays()).toEqual([180_500]);
+
+  engine.stop();
+  engine.setAudioOffset(0.5);
+  await engine.play();
+  output.position = 30;
+  await engine.pause();
+  expect(output.seeks.at(-1)).toBe(29.75);
+});
+
+test('changing speed while paused holds the playhead', async () => {
+  const { engine, output } = loadedEngine();
+  engine.setAudioOffset(-0.5);
+  engine.seek(40);
+  await engine.play();
+  await engine.pause();
+  engine.setSpeed(0.5);
+  expect(engine.currentTime).toBe(40);
+  expect(output.seeks.at(-1)).toBe(40.25);
+});
+
+test('speed is clamped and rounded, and unchanged values stay off the output', () => {
+  const { engine, output } = loadedEngine();
+  engine.setSpeed(9);
+  expect(engine.speed).toBe(1.5);
+  engine.setSpeed(0.1);
+  expect(engine.speed).toBe(0.5);
+  engine.setSpeed(0.95 - 0.05);
+  expect(engine.speed).toBe(0.9);
+  engine.setSpeed(0.9);
+  expect(output.speeds).toEqual([1.5, 0.5, 0.9]);
 });
 
 test('track effects reach the output only when they change', () => {

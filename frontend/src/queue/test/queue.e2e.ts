@@ -150,6 +150,23 @@ test('queue: the stem mix carries over to the next song', async ({ page }) => {
   });
 });
 
+test('queue: the next song starts back at normal speed', async ({ page }) => {
+  type SpeedWindow = {
+    utai: { presenter: { setSpeed: (rate: number) => void }; playbackEngine: { speed: number } };
+  };
+  await page.goto(HOST_PATH);
+  await queueBundles(page, bundle('Alpha', 30, ['backing']), bundle('Bravo', 30, ['backing']));
+  await expectPlaying(page, 'Alpha');
+
+  await page.evaluate(() => (window as unknown as SpeedWindow).utai.presenter.setSpeed(0.75));
+  expect(await page.evaluate(() => (window as unknown as SpeedWindow).utai.playbackEngine.speed)).toBe(0.75);
+
+  await page.getByTestId('queue-open').click();
+  await page.getByTestId('queue-skip').click();
+  await expectPlaying(page, 'Bravo');
+  expect(await page.evaluate(() => (window as unknown as SpeedWindow).utai.playbackEngine.speed)).toBe(1);
+});
+
 test('queue: skipping to a song still preparing shows a loading screen until it plays', async ({ page }) => {
   let releaseSeparation = (): void => {};
   const separationHeld = new Promise<void>((resolve) => {

@@ -4,6 +4,7 @@ import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
 import { ChevronDown, Maximize, Minimize, Pause, Play, Settings, Square } from 'lucide-react';
 import React from 'react';
+import { MAX_SPEED, MIN_SPEED } from 'src/editing/playback/playback_engine';
 import { nativeAudioOutput, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
 import { activeLineIndexAt, lineSpanSec } from 'src/lyrics/lrc';
@@ -984,9 +985,33 @@ const AudioMenu = observer(function AudioMenu() {
           <DropdownSection label="Audio timing (ms)">
             <AudioTimingControl />
           </DropdownSection>
+          <DropdownSection label="Speed">
+            <SpeedControl />
+          </DropdownSection>
         </>
       )}
     </DropdownButton>
+  );
+});
+
+const SPEED_STEP = 0.05;
+
+const SpeedControl = observer(function SpeedControl() {
+  const presenter = React.useContext(KaraokePresenterContext)!;
+  return (
+    <div className={styles.menuControlRow}>
+      <NumberStepper
+        value={playbackEngine.speed}
+        onChange={(v) => presenter.setSpeed(v)}
+        step={SPEED_STEP}
+        min={MIN_SPEED}
+        max={MAX_SPEED}
+        precision={2}
+        ariaLabel="Playback speed"
+        title="Changes the tempo and keeps the pitch"
+        testId="audio-speed"
+      />
+    </div>
   );
 });
 

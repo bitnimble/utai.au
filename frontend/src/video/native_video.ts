@@ -57,6 +57,9 @@ export function createNativeVideo(
     seek: (seconds) => {
       el.currentTime = seconds;
     },
+    setRate: (rate) => {
+      el.playbackRate = rate;
+    },
     getTime: () => el.currentTime,
     isBuffering: () => el.seeking || el.readyState < el.HAVE_FUTURE_DATA,
     destroy: () => {

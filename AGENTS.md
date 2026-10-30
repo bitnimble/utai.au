@@ -216,6 +216,13 @@ Frontend (`bun`, repo root):
 | `bun run win:build` | **Cross-build** the Windows app (binary + NSIS installer) from Linux via cargo-xwin, no Wine. |
 | `bun run mac:build` | **Cross-build** the macOS `.app` (dev testing only) from Linux via osxcross. Unsigned, no DMG. |
 
+**Speed control.** Pitch-keeping speed change runs live per track, like the
+vocal effects: the Signalsmith Stretch worklet on web and Android
+(`frontend/src/editing/playback/time_stretch.ts`), the same C++ algorithm in the
+mixer on desktop (`src-tauri/crates/audio/src/stretch.rs`, via `ssstretch`), so
+desktop builds need a C++ compiler. Off 1× the song clock stays in song seconds,
+and the audio plays 6 dB down because Signalsmith overshoots full scale.
+
 **Build-output location (`UTAI_BUILD_DIR`).** Set in `.env` to move the
 heavy Rust/Tauri artifacts off the repo disk (maps to `CARGO_TARGET_DIR`).
 

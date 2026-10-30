@@ -13,6 +13,7 @@ type YouTubePlayerApi = {
   playVideo(): void;
   pauseVideo(): void;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
+  setPlaybackRate(rate: number): void;
   getCurrentTime(): number;
   getPlayerState(): number;
   mute(): void;
@@ -100,6 +101,7 @@ export async function createYouTubePlayer(
     play: () => player.playVideo(),
     pause: () => player.pauseVideo(),
     seek: (seconds) => player.seekTo(seconds, true),
+    setRate: (rate) => player.setPlaybackRate(rate),
     getTime: () => player.getCurrentTime(),
     isBuffering: () => player.getPlayerState() === YT_STATE_BUFFERING,
     destroy: () => player.destroy(),

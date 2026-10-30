@@ -57,6 +57,7 @@ export class VideoPresenter {
     this.disposers.push(
       reaction(() => this.store.videoId, () => void this.loadNative(epoch), { fireImmediately: true }),
       reaction(() => playbackEngine.state, () => this.applyTransport()),
+      reaction(() => playbackEngine.speed, () => this.applyTransport()),
       reaction(() => playbackEngine.currentTime, () => this.syncTime()),
     );
   }
@@ -67,6 +68,7 @@ export class VideoPresenter {
     this.disposers.push(
       reaction(() => this.store.videoId, () => this.syncEmbed(), { fireImmediately: true }),
       reaction(() => playbackEngine.state, () => this.syncEmbed()),
+      reaction(() => playbackEngine.speed, () => this.syncEmbed()),
       reaction(() => playbackEngine.currentTime, () => this.syncTime()),
     );
   }
@@ -177,6 +179,7 @@ export class VideoPresenter {
       backing.pause();
       return;
     }
+    backing.setRate(playbackEngine.speed);
     this.syncTime();
     if (playbackEngine.state === 'playing') backing.play();
     else backing.pause();
@@ -184,7 +187,7 @@ export class VideoPresenter {
 
   private syncTime(): void {
     if (!this.backing?.isReady() || this.store.videoId == null) return;
-    this.follower?.follow(playbackEngine.currentTime, playbackEngine.state === 'playing');
+    this.follower?.follow(playbackEngine.currentTime, playbackEngine.state === 'playing', playbackEngine.speed);
   }
 
   private setBacking(backing: BackingVideo | undefined): void {

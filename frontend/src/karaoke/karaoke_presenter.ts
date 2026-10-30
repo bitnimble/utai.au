@@ -100,6 +100,10 @@ export class KaraokePresenter {
     playbackEngine.setTrackMuted(id, muted);
   }
 
+  setSpeed(rate: number): void {
+    playbackEngine.setSpeed(rate);
+  }
+
   setTrackPitchContour(id: AudioTrackId, contour: PitchContour): void {
     playbackEngine.setTrackPitchContour(id, contour);
   }
@@ -108,6 +112,7 @@ export class KaraokePresenter {
    *  and clear the song facts. (Lyrics are the lyrics presenter's to clear.) */
   resetSong(): void {
     playbackEngine.stop();
+    playbackEngine.setSpeed(1);
     for (const id of Array.from(playbackEngine.audioTracks.keys())) {
       playbackEngine.clearAudioTrack(id);
     }

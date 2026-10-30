@@ -15,5 +15,7 @@ pub mod transport;
 #[cfg(feature = "device")]
 pub mod device;
 
+#[cfg(feature = "stretch")]
+pub mod stretch;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;

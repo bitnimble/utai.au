@@ -9,6 +9,7 @@ export type BackingVideo = {
   play(): void;
   pause(): void;
   seek(seconds: number): void;
+  setRate(rate: number): void;
   getTime(): number;
   /** Seeking, or stalled without enough data to play on. */
   isBuffering(): boolean;
