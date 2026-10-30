@@ -88,6 +88,7 @@ import { QueueStore } from 'src/queue/queue_store';
 import { QueuePresenter } from 'src/queue/queue_presenter';
 import { QueuePresenterContext, QueueStoreContext } from 'src/queue/queue_contexts';
 import { QueueButtons, QueueLoadingScreen, QueueSidebar } from 'src/queue/queue_view';
+import { NowPlayingBanner } from 'src/queue/now_playing_banner';
 import { searchTracks } from 'src/net/music_source_client';
 import type { HostSession } from 'src/session/session_client';
 import { SessionHostPresenterContext, SessionHostStoreContext } from 'src/session/session_host_contexts';
@@ -369,6 +370,7 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
                     <div className={styles.main}>
                       <VideoArea>
                         {karaokeView && <KaraokeLyricsOverlay />}
+                        <NowPlayingBanner />
                         <SkipSegmentButton />
                       </VideoArea>
                       {!karaokeView && <ScoreArea />}

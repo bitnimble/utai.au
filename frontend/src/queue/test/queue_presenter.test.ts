@@ -239,6 +239,26 @@ describe('QueuePresenter', () => {
     expect(h.store.history.map((s) => s.title)).toEqual(['c', 'a']);
   });
 
+  test('now playing is the song that last started, cleared on skip', async () => {
+    const h = setup();
+    expect(h.store.nowPlaying).toBeUndefined();
+    await playFirst(h, 'a');
+    expect(h.store.nowPlaying?.title).toBe('a');
+    h.add('silent');
+    h.add('b');
+    h.pending[1].resolve();
+    h.transport.end();
+    await flush();
+    expect(h.loaded).toEqual(['a', 'silent']);
+    expect(h.store.nowPlaying?.title).toBe('a');
+    h.pending[2].resolve();
+    await flush();
+    expect(h.store.nowPlaying?.title).toBe('b');
+    h.add('c');
+    h.presenter.skip();
+    expect(h.store.nowPlaying).toBeUndefined();
+  });
+
   test('restored history goes below songs already played here', async () => {
     const h = setup();
     await playFirst(h, 'a');

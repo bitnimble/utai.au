@@ -100,10 +100,13 @@ test('queue: the next song plays when the current one ends', async ({ page }) =>
   await page.goto(HOST_PATH);
   await queueBundles(page, bundle('Short', 3), bundle('Next'));
   await expectPlaying(page, 'Short');
+  await expect(page.getByTestId('now-playing-banner')).toBeVisible();
+  await expect(page.getByTestId('now-playing-banner')).toHaveText('Short');
   // Still on Short a beat later: Next waits for the end rather than taking over.
   await page.waitForTimeout(1000);
   expect(await currentTitle(page)).toBe('Short');
   await expectPlaying(page, 'Next');
+  await expect(page.getByTestId('now-playing-banner')).toHaveText('Next');
 });
 
 test('queue: skipping to a song still preparing shows a loading screen until it plays', async ({ page }) => {

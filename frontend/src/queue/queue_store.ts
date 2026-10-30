@@ -24,6 +24,8 @@ export type PlayedSong = Pick<QueueItem, 'title' | 'artist'> & {
   readonly source: QueueSource | undefined;
 };
 
+export type NowPlaying = Pick<QueueItem, 'id' | 'title' | 'artist'>;
+
 export type QueueSidebarTab = 'current' | 'search' | 'history';
 
 /**
@@ -41,6 +43,8 @@ export class QueueStore {
   awaitingNext = true;
   /** Being loaded into the session and started; already out of `items`. */
   starting: QueueItem | undefined = undefined;
+  /** The song that last started playing; unset once skipped. */
+  nowPlaying: NowPlaying | undefined = undefined;
 
   constructor() {
     // Shallow: items hold large prepared songs (stems, word-timed lyrics) that

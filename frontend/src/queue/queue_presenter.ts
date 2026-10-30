@@ -134,6 +134,7 @@ export class QueuePresenter {
   skip(): void {
     if (!this.store.canSkip) return;
     this.songIo.clearSong();
+    this.store.nowPlaying = undefined;
     this.store.awaitingNext = true;
   }
 
@@ -170,7 +171,8 @@ export class QueuePresenter {
     }
   }
 
-  private recordPlayed({ title, artist, source }: QueueItem): void {
+  private recordPlayed({ id, title, artist, source }: QueueItem): void {
+    this.store.nowPlaying = { id, title, artist };
     this.store.history = [{ title, artist, source }, ...this.store.history].slice(0, MAX_HISTORY_LENGTH);
   }
 

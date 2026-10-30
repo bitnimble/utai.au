@@ -139,6 +139,20 @@
     line-height: 1.25;
 }
 
+/* Now-playing banner over the video. */
+.karaokeBannerTitle {
+    font-size: clamp(28px, 6cqw, 96px);
+    font-weight: 800;
+    line-height: 1.1;
+}
+
+.karaokeBannerArtist {
+    font-size: clamp(16px, 2.8cqw, 44px);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1.2;
+}
+
 /* ─── Monospace (debug logs / stages) ───────────────────────────────── */
 
 .mono {

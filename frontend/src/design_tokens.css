@@ -153,6 +153,7 @@
     --color-karaoke-outline: #111;
     --color-karaoke-outline-sung: #2f7fd8;
     --color-karaoke-outline-current: #ff5c0a;
+    --color-karaoke-banner-bg: rgba(10, 10, 14, 0.72);
 
     /* ─── Radii ───────────────────────────────────────────────────── */
     --radius-xs: 2px;

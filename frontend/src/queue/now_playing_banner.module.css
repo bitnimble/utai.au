@@ -1,0 +1,111 @@
+.banner {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.9em 8%;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        var(--color-karaoke-banner-bg) 12%,
+        var(--color-karaoke-banner-bg) 88%,
+        transparent
+    );
+    color: var(--color-karaoke-text);
+    text-align: center;
+    text-wrap: balance;
+    text-shadow: 0 0.04em 0.12em var(--color-karaoke-outline);
+    pointer-events: none;
+    z-index: 2;
+    animation: bannerSweep 6s ease-in-out forwards;
+}
+
+.banner::before,
+.banner::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        var(--color-accent) 20%,
+        var(--color-accent) 80%,
+        transparent
+    );
+}
+
+.banner::before {
+    top: 0;
+}
+
+.banner::after {
+    bottom: 0;
+}
+
+.title {
+    composes: karaokeBannerTitle from '../typography.module.css';
+    animation: bannerTextIn 500ms 250ms ease-out both;
+}
+
+.artist {
+    composes: karaokeBannerArtist from '../typography.module.css';
+    animation: bannerTextIn 500ms 450ms ease-out both;
+}
+
+@keyframes bannerSweep {
+    0% {
+        clip-path: inset(0 100% 0 0);
+    }
+    8%,
+    88% {
+        clip-path: inset(0);
+        opacity: 1;
+    }
+    100% {
+        clip-path: inset(0 0 0 100%);
+        opacity: 0;
+        visibility: hidden;
+    }
+}
+
+@keyframes bannerTextIn {
+    from {
+        opacity: 0;
+        transform: translateX(-1.5em);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .banner {
+        animation-name: bannerFade;
+    }
+    .title,
+    .artist {
+        animation: none;
+    }
+    @keyframes bannerFade {
+        0% {
+            opacity: 0;
+        }
+        8%,
+        88% {
+            opacity: 1;
+        }
+        100% {
+            opacity: 0;
+            visibility: hidden;
+        }
+    }
+}
