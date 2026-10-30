@@ -18,6 +18,7 @@ import { lyricsStore } from 'src/lyrics/store';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { downloadBlob } from 'src/utils/download';
+import type { VideoPresenter } from 'src/video/video_presenter';
 import { KaraokePresenter } from './karaoke_presenter';
 import { BundleLyricsInput, BundleStemInput, packSongBundle, PreparedSong } from './song_bundle';
 import { SongStore } from './song_store';
@@ -35,12 +36,14 @@ export class SongIoPresenter {
     private readonly karaoke: KaraokePresenter,
     private readonly lyrics: LyricsPresenter,
     private readonly beats: BeatStore,
+    private readonly video: Pick<VideoPresenter, 'waitForFirstFrame'>,
   ) {
-    makeAutoObservable<this, 'song' | 'karaoke' | 'lyrics' | 'beats'>(this, {
+    makeAutoObservable<this, 'song' | 'karaoke' | 'lyrics' | 'beats' | 'video'>(this, {
       song: false,
       karaoke: false,
       lyrics: false,
       beats: false,
+      video: false,
     });
   }
 
@@ -59,7 +62,8 @@ export class SongIoPresenter {
 
   // --- load ---
 
-  /** Replace the session's song with a prepared one. */
+  /** Replace the session's song with a prepared one, ready to play: stems in the
+   *  audio output and the video paused on its first frame. */
   async loadPreparedSong(prepared: PreparedSong): Promise<void> {
     this.clearSong();
     runInAction(() => {
@@ -77,6 +81,7 @@ export class SongIoPresenter {
       runInAction(() => {
         this.beats.analysis = prepared.beats;
       });
+      await this.video.waitForFirstFrame();
     } finally {
       runInAction(() => {
         this.busy = false;

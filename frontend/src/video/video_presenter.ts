@@ -1,4 +1,4 @@
-import { reaction, runInAction, type IReactionDisposer } from 'mobx';
+import { reaction, runInAction, when, type IReactionDisposer } from 'mobx';
 import { playbackEngine } from 'src/editing/playback/player';
 import { BackingVideo } from './backing_video';
 import { createNativeVideo } from './native_video';
@@ -6,6 +6,8 @@ import { resolveBackingVideoUrl } from './video_client';
 import { VideoClockFollower } from './video_clock_follower';
 import { VideoStore } from './video_store';
 import { createYouTubePlayer, YouTubePlayerHandle } from './youtube_player';
+
+const FIRST_FRAME_TIMEOUT_MS = 3000;
 
 /**
  * Orchestrates the muted backing video against the audio transport
@@ -34,6 +36,20 @@ export class VideoPresenter {
   private follower: VideoClockFollower | undefined;
 
   constructor(private readonly store: VideoStore) {}
+
+  /** Resolves once the song's video has a frame to show, or there's no point waiting
+   *  longer: it failed over to the embed, or {@link FIRST_FRAME_TIMEOUT_MS} passed.
+   *  Never rejects; a video that isn't ready catches up after playback starts. */
+  async waitForFirstFrame(): Promise<void> {
+    const { store } = this;
+    try {
+      await when(() => store.videoId == null || store.useEmbed || store.firstFrameVideoId === store.videoId, {
+        timeout: FIRST_FRAME_TIMEOUT_MS,
+      });
+    } catch {
+      console.warn(`[video] no first frame after ${FIRST_FRAME_TIMEOUT_MS}ms; starting the song anyway`);
+    }
+  }
 
   attachNative(el: HTMLVideoElement): void {
     const epoch = ++this.epoch;
@@ -66,6 +82,7 @@ export class VideoPresenter {
     this.embedHandle = undefined;
     this.videoEl = undefined;
     this.loadedVideoId = undefined;
+    this.setFirstFrameVideoId(undefined);
   }
 
   // --- native <video> backing (primary) ---
@@ -77,6 +94,7 @@ export class VideoPresenter {
     this.backing?.destroy();
     this.setBacking(undefined);
     this.loadedVideoId = undefined;
+    this.setFirstFrameVideoId(undefined);
     this.resolveController?.abort();
     const el = this.videoEl;
     const id = this.store.videoId;
@@ -90,6 +108,7 @@ export class VideoPresenter {
       this.setBacking(
         createNativeVideo(el, src, {
           onReady: () => this.applyTransport(),
+          onFirstFrame: () => this.setFirstFrameVideoId(id),
           onError: () => this.markNativeFailed(id),
         }),
       );
@@ -100,6 +119,12 @@ export class VideoPresenter {
       console.error('[video] backing-video fetch failed; falling back to the embed', err);
       this.markNativeFailed(id);
     }
+  }
+
+  private setFirstFrameVideoId(id: string | undefined): void {
+    runInAction(() => {
+      this.store.firstFrameVideoId = id;
+    });
   }
 
   private markNativeFailed(id: string): void {

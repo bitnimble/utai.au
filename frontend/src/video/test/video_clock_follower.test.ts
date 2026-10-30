@@ -72,6 +72,18 @@ describe('VideoClockFollower', () => {
     expect(backing.seeks).toEqual([1, 60]);
   });
 
+  test('re-seeks when a seek never lands', () => {
+    const { backing, follower, advance } = setup();
+    follower.follow(1, true);
+    advance(9000);
+    follower.follow(10, true);
+    expect(backing.seeks).toEqual([1]);
+
+    advance(2000);
+    follower.follow(12, true);
+    expect(backing.seeks).toEqual([1, 17]);
+  });
+
   test('leaves a video within tolerance alone, and tracks exactly while paused', () => {
     const { backing, follower } = setup();
     backing.time = 4.9;
@@ -80,5 +92,11 @@ describe('VideoClockFollower', () => {
 
     follower.follow(7.25, false);
     expect(backing.seeks).toEqual([7.25]);
+  });
+
+  test('does not seek a paused video already at the position', () => {
+    const { backing, follower } = setup();
+    follower.follow(0, false);
+    expect(backing.seeks).toEqual([]);
   });
 });
