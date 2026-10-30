@@ -62,8 +62,10 @@ localStorage, that a host socket must present; a host whose session the relay
 lost creates a new one and keeps its queue. On desktop the relay is the local
 backend's; phones reach it through the Rust LAN gateway
 (`src-tauri/src/session_gateway.rs`, `0.0.0.0:7337`, `UTAI_SESSION_PORT`), which
-serves the remote page and forwards only `/api/sessions*` to the loopback
-backend. The desktop host plays at once and attaches its session when its
+serves the remote page and forwards `/api/sessions*` to the loopback backend;
+the rest of `/api` only to this machine's own `localhost:7337` page (Host,
+Origin and Sec-Fetch-Site checked), so the full app also works in a browser
+there. The desktop host plays at once and attaches its session when its
 backend is up. Advertised join URLs come from the backend's `PUBLIC_URL`
 (`{lan_ip}` is filled in per request; desktop sets
 `http://{lan_ip}:<gateway port>`), overridable per host in the join dialog. The backend's GPU lock serves

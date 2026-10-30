@@ -254,7 +254,11 @@ mod tests {
         if cfg!(windows) {
             command.args(["/C", "exit 1"]);
         }
-        let mut process = Process::spawn("dud", free_port().unwrap(), command, &ChildProcesses::default()).unwrap();
+        // Bound, never listening: a released port could be taken by a parallel test's listener.
+        let reserved = tokio::net::TcpSocket::new_v4().unwrap();
+        reserved.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = reserved.local_addr().unwrap().port();
+        let mut process = Process::spawn("dud", port, command, &ChildProcesses::default()).unwrap();
         let started = tokio::time::Instant::now();
         let error = process.wait_until_listening().await.unwrap_err();
         assert!(error.contains("exited on startup"), "{error}");

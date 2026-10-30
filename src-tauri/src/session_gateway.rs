@@ -1,5 +1,6 @@
 //! The desktop app's LAN endpoint for phones: the remote page, and the local
-//! backend's `/api/sessions*` (nothing else of the backend leaves loopback).
+//! backend's `/api/sessions*`. The rest of the API is served only to pages this
+//! machine loads from the gateway itself (`localhost:7337` in a browser).
 
 use std::future::Future;
 use std::io;
@@ -20,7 +21,9 @@ use tokio::sync::mpsc;
 use crate::local_backend::LocalBackend;
 
 const DEFAULT_PORT: u16 = 7337;
-const SESSIONS_PREFIX: &str = "/api/sessions";
+const API_PREFIX: &str = "/api";
+const BAD_REQUEST: &[u8] = b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+const FORBIDDEN: &[u8] = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 const MAX_HEAD_BYTES: usize = 16 * 1024;
 const ROUTE_TIMEOUT: Duration = Duration::from_secs(10);
 const PEEK_RETRY: Duration = Duration::from_millis(10);
@@ -97,8 +100,8 @@ async fn serve(
         let to_assets = to_assets.clone();
         let backend_port = backend_port.clone();
         tokio::spawn(async move {
-            match tokio::time::timeout(ROUTE_TIMEOUT, is_session_request(&stream)).await {
-                Ok(Ok(true)) => splice_to_backend(stream, backend_port()).await,
+            match tokio::time::timeout(ROUTE_TIMEOUT, is_api_request(&stream)).await {
+                Ok(Ok(true)) => splice_to_backend(stream, addr.ip().is_loopback(), backend_port()).await,
                 Ok(Ok(false)) => {
                     let _ = to_assets.send((stream, addr)).await;
                 }
@@ -135,8 +138,8 @@ impl axum::serve::Listener for Handoff {
     }
 }
 
-/// Reads the request line without consuming it, so a non-session connection reaches axum intact.
-async fn is_session_request(stream: &TcpStream) -> io::Result<bool> {
+/// Reads the request line without consuming it, so a non-API connection reaches axum intact.
+async fn is_api_request(stream: &TcpStream) -> io::Result<bool> {
     let mut buf = [0u8; 64];
     loop {
         let n = stream.peek(&mut buf).await?;
@@ -144,8 +147,8 @@ async fn is_session_request(stream: &TcpStream) -> io::Result<bool> {
             return Ok(false);
         }
         let seen = &buf[..n];
-        if let Some(is_session) = targets_sessions(seen) {
-            return Ok(is_session);
+        if let Some(is_api) = targets(seen, API_PREFIX) {
+            return Ok(is_api);
         }
         if n == buf.len() || seen.contains(&b'\n') {
             return Ok(false);
@@ -155,10 +158,10 @@ async fn is_session_request(stream: &TcpStream) -> io::Result<bool> {
     }
 }
 
-/// Whether the request line targets a session route; None until enough of it has arrived to tell.
-fn targets_sessions(line: &[u8]) -> Option<bool> {
+/// Whether the request line targets `prefix` or a path under it; None until enough of it has arrived to tell.
+fn targets(line: &[u8], prefix: &str) -> Option<bool> {
     let target = &line[line.iter().position(|&b| b == b' ')? + 1..];
-    let prefix = SESSIONS_PREFIX.as_bytes();
+    let prefix = prefix.as_bytes();
     let compared = target.len().min(prefix.len());
     if target[..compared] != prefix[..compared] {
         return Some(false);
@@ -167,15 +170,17 @@ fn targets_sessions(line: &[u8]) -> Option<bool> {
     Some(matches!(after_prefix, b'/' | b'?' | b' '))
 }
 
-async fn splice_to_backend(mut client: TcpStream, backend_port: Option<u16>) {
+async fn splice_to_backend(mut client: TcpStream, from_this_machine: bool, backend_port: Option<u16>) {
     let Ok(Some((head, rest))) = tokio::time::timeout(ROUTE_TIMEOUT, read_head(&mut client)).await else {
+        let _ = client.write_all(BAD_REQUEST).await;
         return;
     };
-    let Some(head) = rewrite_head(&head) else {
-        let _ = client
-            .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-            .await;
-        return;
+    let head = match rewrite_head(&head, from_this_machine) {
+        Ok(head) => head,
+        Err(response) => {
+            let _ = client.write_all(response).await;
+            return;
+        }
     };
     let backend = match backend_port {
         Some(port) => TcpStream::connect(("127.0.0.1", port)).await.ok(),
@@ -200,6 +205,9 @@ async fn read_head(stream: &mut TcpStream) -> Option<(String, Vec<u8>)> {
     let mut chunk = [0u8; 4096];
     loop {
         if let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            if end > MAX_HEAD_BYTES {
+                return None;
+            }
             let head = String::from_utf8(buf[..end].to_vec()).ok()?;
             return Some((head, buf[end + 4..].to_vec()));
         }
@@ -214,21 +222,39 @@ async fn read_head(stream: &mut TcpStream) -> Option<(String, Vec<u8>)> {
     }
 }
 
-/// `/api/sessions…` to the backend's `/sessions…`, as exactly one request: a
-/// websocket upgrade, or one the backend closes the connection after. None for a
-/// head that could smuggle a second, unrouted request past that.
-fn rewrite_head(head: &str) -> Option<String> {
-    let mut lines = head.split("\r\n");
+/// `/api/…` to the backend's `/…`, as exactly one request: a websocket upgrade, or
+/// one the backend closes the connection after. Only the session routes are open to
+/// the LAN. Err is the response for a refused head.
+fn rewrite_head(head: &str, from_this_machine: bool) -> Result<String, &'static [u8]> {
+    // A bare CR/LF could hide a second, unrouted request from the backend.
     if head.split("\r\n").any(|line| line.contains(['\r', '\n'])) {
-        return None;
+        return Err(BAD_REQUEST);
     }
-    let request_line = lines.next()?.replacen(" /api/sessions", " /sessions", 1);
+    let mut lines = head.split("\r\n");
+    let (method, rest) = lines.next().and_then(|line| line.split_once(' ')).ok_or(BAD_REQUEST)?;
+    let (target, version) = rest.split_once(' ').ok_or(BAD_REQUEST)?;
+    let path = target.strip_prefix(API_PREFIX).ok_or(BAD_REQUEST)?;
+    let path_only = path.split('?').next().unwrap_or_default();
+    // Routing is decided on the raw path: `/sessions/../music` must not count as a session route.
+    if path_only.split('/').any(|segment| segment == "..") || path_only.to_ascii_lowercase().contains("%2e") {
+        return Err(BAD_REQUEST);
+    }
+    let separator = if path.starts_with('/') { "" } else { "/" };
+    let request_line = format!("{method} {separator}{path} {version}");
     let headers: Vec<(String, &str)> = lines
         .map(|line| {
             let (name, value) = line.split_once(':')?;
             Some((name.trim().to_ascii_lowercase(), value))
         })
-        .collect::<Option<_>>()?;
+        .collect::<Option<_>>()
+        .ok_or(BAD_REQUEST)?;
+    let header = |name: &str| headers.iter().find(|(n, _)| n == name).map(|(_, v)| v.trim());
+    let is_session = targets(request_line.as_bytes(), "/sessions") == Some(true);
+    let allowed = is_session
+        || (from_this_machine && is_own_page(header("host"), header("origin"), header("sec-fetch-site")));
+    if !allowed {
+        return Err(FORBIDDEN);
+    }
     let has = |name: &str, matches: fn(&str) -> bool| headers.iter().any(|(n, v)| n == name && matches(v.trim()));
     let websocket = has("upgrade", |v| v.eq_ignore_ascii_case("websocket"))
         && has("connection", |v| v.split(',').any(|t| t.trim().eq_ignore_ascii_case("upgrade")));
@@ -244,7 +270,18 @@ fn rewrite_head(head: &str) -> Option<String> {
     } else {
         out.push("Connection: close".to_string());
     }
-    Some(out.join("\r\n") + "\r\n\r\n")
+    Ok(out.join("\r\n") + "\r\n\r\n")
+}
+
+/// Port 7337 is fixed, so any site the user opens could aim requests at it: refuse
+/// other sites' pages (Origin, or Sec-Fetch-Site on GETs that carry no Origin) and
+/// DNS names rebound to loopback (Host).
+fn is_own_page(host: Option<&str>, origin: Option<&str>, fetch_site: Option<&str>) -> bool {
+    let Some(host) = host else { return false };
+    let name = host.rsplit_once(':').map_or(host, |(name, _)| name);
+    matches!(name, "localhost" | "127.0.0.1")
+        && origin.map_or(true, |origin| origin == format!("http://{host}"))
+        && fetch_site.map_or(true, |site| matches!(site, "same-origin" | "none"))
 }
 
 fn serve_asset<R: Runtime>(resolver: &AssetResolver<R>, uri: &Uri) -> Response {
@@ -273,16 +310,44 @@ mod tests {
     fn plain_requests_are_rewritten_to_close_after_one_response() {
         let head = "GET /api/sessions/AB12CD HTTP/1.1\r\nHost: 10.0.0.2:7337\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5";
         assert_eq!(
-            rewrite_head(head).unwrap(),
+            rewrite_head(head, false).unwrap(),
             "GET /sessions/AB12CD HTTP/1.1\r\nhost: 10.0.0.2:7337\r\nConnection: close\r\n\r\n"
         );
+    }
+
+    #[test]
+    fn the_rest_of_the_api_is_only_for_this_machines_own_pages() {
+        let head = "GET /api/music/services HTTP/1.1\r\nHost: localhost:7337";
+        assert_eq!(
+            rewrite_head(head, true).unwrap(),
+            "GET /music/services HTTP/1.1\r\nhost: localhost:7337\r\nConnection: close\r\n\r\n"
+        );
+        let post = "POST /api/music/config HTTP/1.1\r\nHost: 127.0.0.1:7337\r\nOrigin: http://127.0.0.1:7337";
+        assert!(rewrite_head(post, true).is_ok());
+        assert_eq!(rewrite_head("GET /api HTTP/1.1\r\nHost: localhost", true).unwrap(), "GET / HTTP/1.1\r\nhost: localhost\r\nConnection: close\r\n\r\n");
+
+        assert_eq!(rewrite_head(head, false), Err(FORBIDDEN));
+        assert_eq!(rewrite_head("GET /api/music/services HTTP/1.1\r\nHost: rebound.example:7337", true), Err(FORBIDDEN));
+        assert_eq!(rewrite_head("GET /api/music/services HTTP/1.1", true), Err(FORBIDDEN));
+        let cross_site = "POST /api/music/accounts HTTP/1.1\r\nHost: localhost:7337\r\nOrigin: https://evil.example";
+        assert_eq!(rewrite_head(cross_site, true), Err(FORBIDDEN));
+        let cross_site_get = "GET /api/music/search?q=x HTTP/1.1\r\nHost: localhost:7337\r\nSec-Fetch-Site: cross-site";
+        assert_eq!(rewrite_head(cross_site_get, true), Err(FORBIDDEN));
+    }
+
+    #[test]
+    fn dot_segments_cannot_pass_for_a_session_route() {
+        assert_eq!(rewrite_head("GET /api/sessions/../music/config HTTP/1.1\r\nHost: x", false), Err(BAD_REQUEST));
+        assert_eq!(rewrite_head("GET /api/sessions/%2E%2E/music/config HTTP/1.1\r\nHost: x", false), Err(BAD_REQUEST));
+        let search = "GET /api/music/search?q=wait... HTTP/1.1\r\nHost: localhost:7337";
+        assert!(rewrite_head(search, true).is_ok());
     }
 
     #[test]
     fn websocket_upgrades_stay_upgrades() {
         let head = "GET /api/sessions/AB12CD/ws?role=remote HTTP/1.1\r\nConnection: keep-alive, Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: k";
         assert_eq!(
-            rewrite_head(head).unwrap(),
+            rewrite_head(head, false).unwrap(),
             "GET /sessions/AB12CD/ws?role=remote HTTP/1.1\r\nsec-websocket-key: k\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"
         );
     }
@@ -291,26 +356,27 @@ mod tests {
     fn a_bogus_upgrade_still_closes_after_one_response() {
         // Without the close, the backend would serve a pipelined request to any route.
         let head = "GET /api/sessions HTTP/1.1\r\nUpgrade: x";
-        assert_eq!(rewrite_head(head).unwrap(), "GET /sessions HTTP/1.1\r\nConnection: close\r\n\r\n");
+        assert_eq!(rewrite_head(head, false).unwrap(), "GET /sessions HTTP/1.1\r\nConnection: close\r\n\r\n");
     }
 
     #[test]
     fn heads_hiding_headers_behind_a_bare_cr_or_lf_are_refused() {
-        assert_eq!(rewrite_head("GET /api/sessions HTTP/1.1\r\nX: a\nConnection: keep-alive"), None);
-        assert_eq!(rewrite_head("GET /api/sessions HTTP/1.1\r\nX: a\rConnection: keep-alive"), None);
-        assert_eq!(rewrite_head("GET /api/sessions HTTP/1.1\r\nno colon"), None);
+        assert_eq!(rewrite_head("GET /api/sessions HTTP/1.1\r\nX: a\nConnection: keep-alive", false), Err(BAD_REQUEST));
+        assert_eq!(rewrite_head("GET /api/sessions HTTP/1.1\r\nX: a\rConnection: keep-alive", false), Err(BAD_REQUEST));
+        assert_eq!(rewrite_head("GET /api/sessions HTTP/1.1\r\nno colon", false), Err(BAD_REQUEST));
     }
 
     #[test]
     fn routing_is_decided_from_the_start_of_the_target() {
         let long_socket = format!("GET /api/sessions/AB12CD/ws?role=host&token={}", "f".repeat(64));
-        assert_eq!(targets_sessions(&long_socket.as_bytes()[..32]), Some(true));
-        assert_eq!(targets_sessions(b"POST /api/sessions HTTP/1.1"), Some(true));
-        assert_eq!(targets_sessions(b"GET /api/sessions?x"), Some(true));
-        assert_eq!(targets_sessions(b"GET /index.h"), Some(false));
-        assert_eq!(targets_sessions(b"GET /api/sessionsfoo HTTP/1.1"), Some(false));
-        assert_eq!(targets_sessions(b"GET /api/sess"), None);
-        assert_eq!(targets_sessions(b"GET /api/sessions"), None);
+        assert_eq!(targets(&long_socket.as_bytes()[..32], API_PREFIX), Some(true));
+        assert_eq!(targets(b"POST /api/sessions HTTP/1.1", API_PREFIX), Some(true));
+        assert_eq!(targets(b"GET /api?x", API_PREFIX), Some(true));
+        assert_eq!(targets(b"GET /index.h", API_PREFIX), Some(false));
+        assert_eq!(targets(b"GET /apifoo HTTP/1.1", API_PREFIX), Some(false));
+        assert_eq!(targets(b"GET /ap", API_PREFIX), None);
+        assert_eq!(targets(b"GET /api", API_PREFIX), None);
+        assert_eq!(targets(b"GET /sessionsfoo HTTP/1.1", "/sessions"), Some(false));
     }
 
     #[tokio::test]
@@ -340,6 +406,38 @@ mod tests {
 
         let asset = request(gateway_addr, "GET /session/AB12CD/remote HTTP/1.1\r\nHost: x\r\n\r\n").await;
         assert!(asset.ends_with("\r\n\r\nasset"), "{asset}");
+
+        let refused = request(gateway_addr, "GET /api/music/services HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert!(refused.starts_with("HTTP/1.1 403"), "{refused}");
+
+        let oversized = format!("GET /api/sessions HTTP/1.1\r\nCookie: {}\r\n\r\n", "c".repeat(MAX_HEAD_BYTES));
+        let refused = request(gateway_addr, &oversized).await;
+        assert!(refused.starts_with("HTTP/1.1 400"), "{refused}");
+    }
+
+    #[tokio::test]
+    async fn this_machines_own_page_reaches_the_whole_api() {
+        let backend = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_port = backend.local_addr().unwrap().port();
+        let (seen_tx, mut seen_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let (mut stream, _) = backend.accept().await.unwrap();
+            let (head, _) = read_head(&mut stream).await.unwrap();
+            seen_tx.send(head).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .await
+                .unwrap();
+        });
+        let gateway = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway_addr = gateway.local_addr().unwrap();
+        tokio::spawn(serve(gateway, Router::new(), move || Some(backend_port)));
+
+        let raw = format!("GET /api/music/services HTTP/1.1\r\nHost: localhost:{}\r\n\r\n", gateway_addr.port());
+        let response = request(gateway_addr, &raw).await;
+        assert!(response.ends_with("\r\n\r\n{}"), "{response}");
+        let seen = seen_rx.recv().await.unwrap();
+        assert!(seen.starts_with("GET /music/services HTTP/1.1\r\n"), "{seen}");
     }
 
     #[tokio::test]
