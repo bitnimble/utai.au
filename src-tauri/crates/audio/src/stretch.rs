@@ -18,6 +18,7 @@ pub struct TrackStretch {
     output: [Vec<f32>; 2],
     /// The transport discontinuity this stream of input follows on from.
     epoch: Option<u64>,
+    rate: f64,
 }
 
 // SAFETY: the wrapped C++ object owns its memory and has no thread affinity, and every
@@ -40,6 +41,7 @@ impl TrackStretch {
                 Vec::with_capacity(RESERVED_OUTPUT_FRAMES),
             ],
             epoch: None,
+            rate: 1.0,
         }
     }
 
@@ -58,7 +60,13 @@ impl TrackStretch {
         let lead = self.stretch.input_latency() as f64 + rate * self.stretch.output_latency() as f64;
         let read_frame = start_frame + lead.round() as usize;
         if self.epoch != Some(epoch) {
+            // Seek keeps the overlap-add tail: wanted across a speed change, but after a jump
+            // it would play the old position for a moment.
+            if rate == self.rate {
+                self.stretch.reset();
+            }
             self.epoch = Some(epoch);
+            self.rate = rate;
             self.seek(track, read_frame, rate);
         }
         let output_frames = out.len() / 2;
@@ -82,7 +90,9 @@ impl TrackStretch {
 
     /// The track went unrendered, so the next render has to pick it up with a seek.
     pub fn skip(&mut self) {
-        self.epoch = None;
+        if self.epoch.take().is_some() {
+            self.stretch.reset();
+        }
     }
 
     fn seek(&mut self, track: &[f32], read_frame: usize, rate: f64) {
@@ -211,6 +221,49 @@ mod tests {
             peak = peak.max(block.iter().fold(0.0f32, |max, s| max.max(s.abs())));
         }
         assert!(peak > 0.1, "peak {peak}");
+    }
+
+    /// A second of tone at half speed, then a `TrackStretch` left mid-tone, in a track that's
+    /// silent from `SILENT_FROM`.
+    fn stretch_left_mid_tone() -> (TrackStretch, Vec<f32>) {
+        let mut track = sine(RATE as usize * 2, 440.0);
+        track.extend(vec![0.0f32; RATE as usize * 4 * 2]);
+        let mut stretch = TrackStretch::new(RATE);
+        let mut block = vec![0.0; BLOCK_FRAMES * 2];
+        for i in 0..100 {
+            stretch.render(&mut block, &track, i * BLOCK_FRAMES / 2, BLOCK_FRAMES / 2, 0.5, 0);
+        }
+        (stretch, track)
+    }
+
+    const SILENT_FROM: usize = RATE as usize * 3;
+
+    fn peak_of_next_block(stretch: &mut TrackStretch, track: &[f32], start: usize, rate: f64, epoch: u64) -> f32 {
+        let mut block = vec![0.0; BLOCK_FRAMES * 2];
+        stretch.render(&mut block, track, start, BLOCK_FRAMES / 2, rate, epoch);
+        block.iter().fold(0.0f32, |max, s| max.max(s.abs()))
+    }
+
+    #[test]
+    fn a_jump_does_not_play_on_from_where_it_left() {
+        let (mut stretch, track) = stretch_left_mid_tone();
+        let peak = peak_of_next_block(&mut stretch, &track, SILENT_FROM, 0.5, 1);
+        assert!(peak < 0.01, "peak {peak}");
+    }
+
+    #[test]
+    fn coming_back_from_a_skip_does_not_play_what_came_before_it() {
+        let (mut stretch, track) = stretch_left_mid_tone();
+        stretch.skip();
+        let peak = peak_of_next_block(&mut stretch, &track, SILENT_FROM, 0.5, 0);
+        assert!(peak < 0.01, "peak {peak}");
+    }
+
+    #[test]
+    fn a_speed_change_carries_on_without_fading_from_silence() {
+        let (mut stretch, track) = stretch_left_mid_tone();
+        let peak = peak_of_next_block(&mut stretch, &track, 100 * BLOCK_FRAMES / 2, 0.75, 1);
+        assert!(peak > 0.05, "peak {peak}");
     }
 
     #[test]

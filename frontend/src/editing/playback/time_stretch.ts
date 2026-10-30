@@ -9,6 +9,7 @@ export type TrackStretcher = { node: SignalsmithStretchNode; output: GainNode };
  *  the processor has no way to end: dropped nodes would each keep a WASM instance alive. */
 export class TrackStretchers {
   private readonly free: TrackStretcher[] = [];
+  failed = false;
 
   async acquire(ctx: BaseAudioContext, buffer: AudioBuffer): Promise<TrackStretcher> {
     const stretcher = this.free.pop() ?? (await create(ctx));

@@ -191,7 +191,6 @@ type ActiveAudioTrack = {
   source: AudioBufferSourceNode | undefined;
   stretcher: TrackStretcher | undefined;
   stretcherLoad: Promise<void> | undefined;
-  stretchFailed: boolean;
   /** What should be playing once the stretcher has loaded. */
   awaitingStretcher: { audioStartTime: number; mediaSec: number; speed: number } | undefined;
 };
@@ -254,11 +253,11 @@ export class AudioTrackPlaybackController {
       return;
     }
     const when = Math.max(audioStartTime, this.ctx.currentTime + SCHEDULE_PAD_SEC);
-    if (speed !== 1 && !slot.stretchFailed) {
+    if (speed !== 1 && !this.stretchers.failed) {
       this.scheduleStretched(slot, when, offset, speed);
       return;
     }
-    this.stopStretcher(slot);
+    this.releaseStretcher(slot);
     this.startSource(slot, when, offset, speed);
   }
 
@@ -295,12 +294,17 @@ export class AudioTrackPlaybackController {
       slot.stretcher = stretcher;
     } catch (err) {
       console.error('[audio-tracks] time stretch failed to load', err);
-      toastStore.showError('Could not keep the pitch at this speed.');
-      slot.stretchFailed = true;
+      if (!this.stretchers.failed) toastStore.showError('Could not keep the pitch at this speed.');
+      this.stretchers.failed = true;
     }
+    slot.stretcherLoad = undefined;
     const awaiting = slot.awaitingStretcher;
     slot.awaitingStretcher = undefined;
-    if (awaiting == null || this.active.get(slot.id) !== slot) return;
+    if (this.active.get(slot.id) !== slot) return;
+    if (awaiting == null) {
+      this.releaseStretcher(slot);
+      return;
+    }
     const when = this.ctx.currentTime + SCHEDULE_PAD_SEC;
     const mediaSec = awaiting.mediaSec + Math.max(0, when - awaiting.audioStartTime) * awaiting.speed;
     if (mediaSec >= slot.buffer.duration) {
@@ -327,7 +331,6 @@ export class AudioTrackPlaybackController {
       source: undefined,
       stretcher: undefined,
       stretcherLoad: undefined,
-      stretchFailed: false,
       awaitingStretcher: undefined,
     };
     this.applyEffects(slot, trackEffectMask(track.effects));
@@ -361,9 +364,7 @@ export class AudioTrackPlaybackController {
 
   private disconnectSlot(slot: ActiveAudioTrack): void {
     this.stopSource(slot);
-    slot.awaitingStretcher = undefined;
-    if (slot.stretcher != null) this.stretchers.release(slot.stretcher);
-    slot.stretcher = undefined;
+    this.releaseStretcher(slot);
     slot.input.disconnect();
     this.endEffects(slot);
     try {
@@ -371,6 +372,14 @@ export class AudioTrackPlaybackController {
     } catch (err) {
       console.debug('[audio-tracks] gain.disconnect threw', err);
     }
+  }
+
+  /** A connected node keeps running its FFTs on silence, so one not in use goes back to the pool. */
+  private releaseStretcher(slot: ActiveAudioTrack): void {
+    slot.awaitingStretcher = undefined;
+    if (slot.stretcher == null) return;
+    this.stretchers.release(slot.stretcher);
+    slot.stretcher = undefined;
   }
 
   private stopStretcher(slot: ActiveAudioTrack): void {

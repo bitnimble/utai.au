@@ -118,7 +118,15 @@ test('playback: the Audio menu speed is heard at once, at the same pitch, and fo
   expect(await page.evaluate(() => (window as unknown as EngineWindow).utai.playbackEngine.speed)).toBe(0.5);
 
   // The stretcher takes a moment to load the first time, and the level drops once it's in.
-  await expect.poll(async () => (await heard()).peak, { timeout: 15_000 }).toBeLessThan(0.3);
+  await expect
+    .poll(
+      async () => {
+        const { peak } = await heard();
+        return peak > 0.1 && peak < 0.3;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
   const slowed = await heard();
   expect(slowed.hz).toBeGreaterThan(420);
   expect(slowed.hz).toBeLessThan(460);

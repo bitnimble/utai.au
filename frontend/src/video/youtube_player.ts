@@ -25,7 +25,7 @@ type YouTubePlayerCtorOptions = {
   width: string;
   height: string;
   playerVars: Record<string, number>;
-  events: { onReady: () => void };
+  events: { onReady: () => void; onStateChange: () => void };
 };
 
 type YouTubeNamespace = {
@@ -73,6 +73,7 @@ export async function createYouTubePlayer(
 ): Promise<YouTubePlayerHandle> {
   const YT = await loadYouTubeApi();
   let ready = false;
+  let rate = 1;
   const inner = document.createElement('div');
   host.appendChild(inner);
   const player = new YT.Player(inner, {
@@ -93,6 +94,8 @@ export async function createYouTubePlayer(
         player.mute(); // this player is the video only; audio comes from the stems
         onReady();
       },
+      // Cueing a video resets the rate to 1, and a rate set before the cue lands is lost.
+      onStateChange: () => player.setPlaybackRate(rate),
     },
   });
   return {
@@ -101,7 +104,10 @@ export async function createYouTubePlayer(
     play: () => player.playVideo(),
     pause: () => player.pauseVideo(),
     seek: (seconds) => player.seekTo(seconds, true),
-    setRate: (rate) => player.setPlaybackRate(rate),
+    setRate: (next) => {
+      rate = next;
+      player.setPlaybackRate(next);
+    },
     getTime: () => player.getCurrentTime(),
     isBuffering: () => player.getPlayerState() === YT_STATE_BUFFERING,
     destroy: () => player.destroy(),

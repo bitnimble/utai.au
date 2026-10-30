@@ -66,6 +66,22 @@ describe('VideoClockFollower', () => {
     expect(backing.seeks).toEqual([1, 3]);
   });
 
+  test('a seek timed at one speed leads the next by the song time it takes at the new speed', () => {
+    const { backing, follower, advance } = setup();
+    follower.follow(1, true);
+    advance(2000);
+    backing.buffering = false;
+    follower.follow(3, true);
+    expect(backing.seeks).toEqual([1, 5]);
+
+    backing.buffering = false;
+    advance(2000);
+    backing.time = 5;
+    follower.follow(5, true, 0.5);
+    follower.follow(10, true, 0.5);
+    expect(backing.seeks).toEqual([1, 5, 11]);
+  });
+
   test('caps the lead', () => {
     const { backing, follower, advance } = setup();
     follower.follow(1, true);
