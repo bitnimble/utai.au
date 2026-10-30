@@ -164,12 +164,24 @@ export class KaraokePresenter {
     }
   }
 
+  play(): void {
+    if (playbackEngine.state !== 'playing') this.togglePlay();
+  }
+
+  pause(): void {
+    if (playbackEngine.state === 'playing') this.togglePlay();
+  }
+
   stop(): void {
     playbackEngine.stop();
   }
 
   seek(sec: number): void {
     playbackEngine.seek(sec);
+  }
+
+  seekBy(sec: number): void {
+    playbackEngine.seek(playbackEngine.currentTime + sec);
   }
 
   /** Click-to-seek from a bars-row-local pixel x (0 == the row's left edge,

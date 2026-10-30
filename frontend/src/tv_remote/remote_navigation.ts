@@ -1,4 +1,4 @@
-import { TV_BACK } from './tv';
+import { TV_BACK, TV_KEY } from './tv';
 
 type Direction = 'up' | 'down' | 'left' | 'right';
 
@@ -30,7 +30,7 @@ const ACROSS_WEIGHT = 2;
 /**
  * Moves the focus with a TV remote's D-pad, which the WebView delivers as arrow keys: to the
  * nearest control that way. Controls that move through themselves (menus, sliders, tabs) keep
- * their arrows. Also installs the page's half of the Back button.
+ * their arrows. Also installs the page's half of the Back and media buttons.
  */
 export function followRemote(): () => void {
   const onKey = (e: KeyboardEvent): void => {
@@ -75,10 +75,17 @@ export function followRemote(): () => void {
   };
   window.addEventListener('keydown', onKey, { capture: true });
   window[TV_BACK] = goBack;
+  window[TV_KEY] = pressKey;
   return () => {
     window.removeEventListener('keydown', onKey, { capture: true });
     delete window[TV_BACK];
+    delete window[TV_KEY];
   };
+}
+
+function pressKey(key: string, repeat: boolean): void {
+  const target = document.activeElement ?? document.body;
+  target.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, repeat, bubbles: true, cancelable: true }));
 }
 
 function focusToward(from: HTMLElement, direction: Direction): void {

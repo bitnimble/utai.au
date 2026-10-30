@@ -108,6 +108,10 @@ export class NativeAudioOutput implements AudioOutput {
     void this.transport.send('audio_set_track_effects', { id, effects: trackEffectMask(effects) });
   }
 
+  setOutputDelay(sec: number): void {
+    void invoke('audio_set_output_delay', { secs: sec });
+  }
+
   async start(fromSec: number): Promise<void> {
     this.playing = true;
     this.anchor = { playSec: fromSec, atMs: performance.now(), playing: false };

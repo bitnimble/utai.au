@@ -48,9 +48,9 @@ impl Transport {
         self.frame.load(Ordering::Relaxed)
     }
 
+    /// Past the end too, like playback: the frontend decides when the song is over.
     pub fn seek_frames(&self, frame: u64) {
-        self.frame
-            .store(frame.min(self.total_frames()), Ordering::Relaxed);
+        self.frame.store(frame, Ordering::Relaxed);
     }
 
     /// Advance the playhead by `n` frames while playing, past the end of the
@@ -93,11 +93,11 @@ mod tests {
     }
 
     #[test]
-    fn seek_clamps_to_total() {
+    fn seek_may_pass_the_end() {
         let t = Transport::new();
         t.set_total_frames(100);
         t.seek_frames(250);
-        assert_eq!(t.frame(), 100);
+        assert_eq!(t.frame(), 250);
     }
 
     #[test]

@@ -14,6 +14,7 @@ import { waveformWorker } from './waveform_worker_client';
 export type PlayerState = 'idle' | 'loading' | 'playing' | 'paused';
 
 const PLAYBACK_TAIL_SECONDS = 0.5;
+export const MAX_AUDIO_OFFSET_SEC = 1;
 
 /** The Web Audio graph (web, Android) or the Rust/cpal engine (desktop). */
 export interface AudioOutput {
@@ -22,6 +23,9 @@ export interface AudioOutput {
   removeTrack(id: AudioTrackId): void;
   setTrackGain(id: AudioTrackId, gain: number): void;
   setTrackEffects(id: AudioTrackId, effects: readonly TrackEffect[]): void;
+  /** Delays the song tracks (not the mic monitor) by `sec`, in [0, {@link MAX_AUDIO_OFFSET_SEC}].
+   *  Pause, seek and stop drop whatever the delay still holds. */
+  setOutputDelay(sec: number): void;
   start(fromSec: number): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
@@ -33,7 +37,10 @@ export interface AudioOutput {
 
 export class PlaybackEngine {
   state: PlayerState = 'idle';
+  /** The song position everything but the audio follows (lyrics, video, scoring, seek bar). */
   currentTime = 0;
+  /** How far the audio is heard after `currentTime`; negative = before. */
+  audioOffsetSec = 0;
   timeline: UtaiTimeline = EMPTY_TIMELINE;
   /** The playhead was positioned while idle; the next play starts there. */
   cued = false;
@@ -45,14 +52,17 @@ export class PlaybackEngine {
   private endTimerId: number | undefined;
   private trackIdCounter = 0;
   private playToken = 0;
+  /** Where the output last began feeding audio into its delay. */
+  private feedStartSec = 0;
   private readonly endedListeners = new Set<() => void>();
 
   constructor(private readonly output: AudioOutput) {
     makeAutoObservable<
       this,
-      'output' | 'rafId' | 'endTimerId' | 'trackIdCounter' | 'playToken' | 'endedListeners'
+      'output' | 'rafId' | 'endTimerId' | 'trackIdCounter' | 'playToken' | 'feedStartSec' | 'endedListeners'
     >(this, {
       output: false,
+      feedStartSec: false,
       rafId: false,
       endTimerId: false,
       trackIdCounter: false,
@@ -121,12 +131,23 @@ export class PlaybackEngine {
     this.output.setTrackEffects(id, effects);
   }
 
+  /** Positive delays the audio itself; negative holds everything else back by as much instead. */
+  setAudioOffset(sec: number): void {
+    const offset = Math.max(-MAX_AUDIO_OFFSET_SEC, Math.min(MAX_AUDIO_OFFSET_SEC, sec));
+    if (offset === this.audioOffsetSec) return;
+    this.audioOffsetSec = offset;
+    this.output.setOutputDelay(this.outputDelaySec);
+    if (this.state === 'paused') this.seekOutput(this.currentTime + this.presentationLagSec);
+    if (this.state === 'playing') this.scheduleEndTimer();
+  }
+
   async play(): Promise<void> {
     const dur = this.durationSec;
     if (dur <= 0) return;
-    const fromSec = this.cued ? this.currentTime : 0;
+    const fromSec = this.cued ? this.currentTime + this.presentationLagSec : 0;
     this.stop();
     this.state = 'loading';
+    this.feedStartSec = fromSec;
     const token = ++this.playToken;
     try {
       await this.output.start(fromSec);
@@ -144,7 +165,7 @@ export class PlaybackEngine {
     runInAction(() => {
       this.state = 'playing';
       this.timeline = buildLinearTimeline(dur);
-      this.currentTime = fromSec;
+      this.currentTime = this.presentedAt(fromSec);
     });
     this.startRaf();
     this.scheduleEndTimer();
@@ -155,6 +176,10 @@ export class PlaybackEngine {
     this.clearEndTimer();
     this.stopRaf();
     await this.output.pause();
+    // The output dropped the audio still in its delay: resume from the last of it actually heard.
+    if (this.outputDelaySec > 0) {
+      this.seekOutput(Math.max(this.feedStartSec, this.output.positionSec() - this.outputDelaySec));
+    }
     runInAction(() => {
       this.state = 'paused';
       this.currentTime = this.clampedPosition();
@@ -195,8 +220,13 @@ export class PlaybackEngine {
       this.cued = true;
       return;
     }
-    this.output.seek(target);
+    this.seekOutput(target + this.presentationLagSec);
     if (this.state === 'playing') this.scheduleEndTimer();
+  }
+
+  private seekOutput(sec: number): void {
+    this.feedStartSec = sec;
+    this.output.seek(sec);
   }
 
   private async installTrack(
@@ -219,8 +249,20 @@ export class PlaybackEngine {
     return this.state !== 'idle';
   }
 
+  private get outputDelaySec(): number {
+    return Math.max(0, this.audioOffsetSec);
+  }
+
+  private get presentationLagSec(): number {
+    return Math.max(0, -this.audioOffsetSec);
+  }
+
   private clampedPosition(): number {
-    return Math.min(Math.max(0, this.output.positionSec()), this.durationSec);
+    return this.presentedAt(this.output.positionSec());
+  }
+
+  private presentedAt(outputSec: number): number {
+    return Math.min(Math.max(0, outputSec - this.presentationLagSec), this.durationSec);
   }
 
   private startRaf(): void {
@@ -247,7 +289,8 @@ export class PlaybackEngine {
   // A timer, not the rAF loop: rAF stops in a background tab, and the queue must still advance.
   private scheduleEndTimer(): void {
     this.clearEndTimer();
-    const remainingSec = this.durationSec - this.output.positionSec();
+    // Whichever of the audio and the rest is behind finishes |offset| after the output does.
+    const remainingSec = this.durationSec + Math.abs(this.audioOffsetSec) - this.output.positionSec();
     this.endTimerId = window.setTimeout(
       () => this.finish(),
       Math.max(0, (remainingSec + PLAYBACK_TAIL_SECONDS) * 1000),

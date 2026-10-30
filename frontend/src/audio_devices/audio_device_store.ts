@@ -23,6 +23,8 @@ export class AudioDeviceStore {
   /** Overall output level in [0, 1] (tracks + monitor). */
   outputVolume = 1;
   outputMuted = false;
+  /** How late the song audio is heard relative to the lyrics and video; negative = early. */
+  audioOffsetMs = 0;
 
   /** Live input RMS in [0, 1]; 0 when the mic isn't capturing. */
   micLevel = 0;
