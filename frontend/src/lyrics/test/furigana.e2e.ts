@@ -7,7 +7,97 @@ type Utai = {
   playbackEngine: { seek: (n: number) => void };
 };
 
+type Seg = { base: string; reading?: string };
+/** A morpheme the stub backend knows: its ruby, its romaji word, and whether a
+ *  phrase starts at it. */
+type Entry = { surface: string; segments: Seg[]; romaji: string; phrase?: boolean };
+
+const kana = (surface: string, romaji: string, phrase?: boolean): Entry => ({
+  surface,
+  segments: [{ base: surface }],
+  romaji,
+  phrase,
+});
+const LEXICON: Entry[] = [
+  { surface: '本当', segments: [{ base: '本当', reading: 'ほんとう' }], romaji: 'hontou' },
+  kana('に', 'ni'),
+  {
+    surface: '書き散らしていく',
+    segments: [{ base: '書', reading: 'か' }, { base: 'き' }, { base: '散', reading: 'ち' }, { base: 'らしていく' }],
+    romaji: 'kakichirashite iku',
+  },
+  { surface: '君', segments: [{ base: '君', reading: 'きみ' }], romaji: 'kimi' },
+  kana('と', 'to'),
+  { surface: '二人', segments: [{ base: '二人', reading: 'ふたり' }], romaji: 'futari' },
+  kana('で', 'de'),
+  { surface: '行った', segments: [{ base: '行', reading: 'い' }, { base: 'った' }], romaji: 'itta' },
+  { surface: '笑わないで', segments: [{ base: '笑', reading: 'わら' }, { base: 'わないで' }], romaji: 'warawanaide' },
+  { surface: '嗤って', segments: [{ base: '嗤', reading: 'わら' }, { base: 'って' }], romaji: 'waratte' },
+  kana('きた', 'kita'),
+  { surface: '奴ら', segments: [{ base: '奴', reading: 'やつ' }, { base: 'ら' }], romaji: 'yatsura' },
+  { surface: '上がって', segments: [{ base: '上', reading: 'あ' }, { base: 'がって' }], romaji: 'agatte' },
+  kana('いる', 'iru'),
+  { surface: '生', segments: [{ base: '生', reading: 'なま' }], romaji: 'nama' },
+  kana('の', 'no'),
+  { surface: '名前', segments: [{ base: '名前', reading: 'なまえ' }], romaji: 'namae', phrase: true },
+  kana('を', 'o'),
+  { surface: '呼んで', segments: [{ base: '呼', reading: 'よ' }, { base: 'んで' }], romaji: 'yonde', phrase: true },
+  kana('いたんだ', 'itanda'),
+  kana('ずっと', 'zutto', true),
+  { surface: '遠い', segments: [{ base: '遠', reading: 'とお' }, { base: 'い' }], romaji: 'tooi', phrase: true },
+  { surface: '空', segments: [{ base: '空', reading: 'そら' }], romaji: 'sora', phrase: true },
+  { surface: '向こう', segments: [{ base: '向', reading: 'む' }, { base: 'こう' }], romaji: 'mukou', phrase: true },
+  kana('へ', 'e'),
+];
+const HEARD_ROMAJI: Record<string, string> = { せい: 'sei' };
+
+/** Annotates a line the way `POST /lyrics/japanese` does: the words read
+ *  together, each taking back its span and the romaji of the words starting
+ *  in it; a heard reading wins. */
+function annotate(words: { text: string; reading?: string }[]) {
+  const line = words.map((w) => w.text).join('');
+  const morphemes: { start: number; entry?: Entry; text: string }[] = [];
+  for (let at = 0; at < line.length; ) {
+    const entry = LEXICON.filter((e) => line.startsWith(e.surface, at)).sort((a, b) => b.surface.length - a.surface.length)[0];
+    morphemes.push({ start: at, entry, text: entry?.surface ?? line[at] });
+    at += entry?.surface.length ?? 1;
+  }
+  let start = 0;
+  const out = words.map((w) => {
+    const end = start + w.text.length;
+    const span = [start, end] as const;
+    start = end;
+    if (w.reading != null) return { segments: [{ base: w.text, reading: w.reading }], romaji: HEARD_ROMAJI[w.reading] ?? '' };
+    const segments: Seg[] = [];
+    for (const m of morphemes) {
+      let off = m.start;
+      for (const seg of m.entry?.segments ?? [{ base: m.text }]) {
+        const [a, b] = [Math.max(off, span[0]), Math.min(off + seg.base.length, span[1])];
+        if (a < b) {
+          const whole = a === off && b === off + seg.base.length;
+          segments.push(whole && seg.reading ? seg : { base: seg.base.slice(a - off, b - off) });
+        }
+        off += seg.base.length;
+      }
+    }
+    const romaji = morphemes
+      .filter((m) => m.entry && m.start >= span[0] && m.start < span[1])
+      .map((m) => m.entry!.romaji)
+      .join(' ');
+    return { segments, romaji };
+  });
+  return { words: out, phraseStarts: morphemes.filter((m) => m.entry?.phrase).map((m) => m.start) };
+}
+
+async function stubJapaneseReadings(page: Page): Promise<void> {
+  await page.route('**/api/lyrics/japanese', async (route) => {
+    const { lines } = route.request().postDataJSON() as { lines: { words: { text: string; reading?: string }[] }[] };
+    await route.fulfill({ json: { lines: lines.map((l) => annotate(l.words)) } });
+  });
+}
+
 async function loadJapaneseSong(page: Page): Promise<void> {
+  await stubJapaneseReadings(page);
   await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -55,15 +145,11 @@ async function loadJapaneseSong(page: Page): Promise<void> {
   );
 }
 
-// Each test cold-loads the kuromoji dictionary and the furigana table.
-test.describe.configure({ timeout: 60_000 });
-const DICT_TIMEOUT = { timeout: 20_000 };
-
 test('furigana: tracks view annotates word-aligned and line-level lyrics', async ({ page }) => {
   await loadJapaneseSong(page);
   await showTracksView(page);
-  await expect(page.getByTestId('lyrics-line-0').locator('rt')).toHaveText(['ほんとう'], DICT_TIMEOUT);
-  await expect(page.getByTestId('lyrics-line-1').locator('rt')).toHaveText(['か', 'ち'], DICT_TIMEOUT);
+  await expect(page.getByTestId('lyrics-line-0').locator('rt')).toHaveText(['ほんとう']);
+  await expect(page.getByTestId('lyrics-line-1').locator('rt')).toHaveText(['か', 'ち']);
   const annotatedBases = await page
     .getByTestId('lyrics-line-1')
     .locator('ruby:has(> rt)')
@@ -75,29 +161,29 @@ test('romaji: View option adds romaji under the lyrics in both views, and stays 
   await loadJapaneseSong(page);
   await showTracksView(page);
   const romaji = (testId: string) => page.getByTestId(testId).locator('rt[data-romaji]');
-  await expect(page.getByTestId('lyrics-line-0').locator('rt')).toHaveText(['ほんとう'], DICT_TIMEOUT);
+  await expect(page.getByTestId('lyrics-line-0').locator('rt')).toHaveText(['ほんとう']);
   await expect(romaji('lyrics-line-0')).toHaveCount(0);
 
   await page.getByTestId('view-menu').click();
   await page.getByTestId('show-romaji').click();
   await page.keyboard.press('Escape');
-  await expect(romaji('lyrics-line-0')).toHaveText(['hontou', 'ni'], DICT_TIMEOUT);
-  await expect(romaji('lyrics-line-2')).toHaveText(['kimi to futari de itta'], DICT_TIMEOUT);
-  await expect(romaji('lyrics-line-4')).toHaveText(['waratte kita yatsura'], DICT_TIMEOUT);
-  await expect(romaji('lyrics-line-5')).toHaveText(['kimi to', 'futari'], DICT_TIMEOUT);
+  await expect(romaji('lyrics-line-0')).toHaveText(['hontou', 'ni']);
+  await expect(romaji('lyrics-line-2')).toHaveText(['kimi to futari de itta']);
+  await expect(romaji('lyrics-line-4')).toHaveText(['waratte kita yatsura']);
+  await expect(romaji('lyrics-line-5')).toHaveText(['kimi to', 'futari']);
 
   const [hontou, ni] = await romaji('lyrics-line-0').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON()));
   expect(hontou.right).toBeLessThanOrEqual(ni.left);
 
   await loadJapaneseSong(page);
-  await expect(romaji('lyrics-line-0')).toHaveText(['hontou', 'ni'], DICT_TIMEOUT);
+  await expect(romaji('lyrics-line-0')).toHaveText(['hontou', 'ni']);
 
   await page.getByTestId('view-menu').click();
   await page.getByTestId('view-mode-karaoke').click();
   await page.getByTestId('karaoke-two-lines').click();
   await page.keyboard.press('Escape');
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(9.2));
-  await expect(romaji('karaoke-line')).toHaveText(['kimi to futari de itta'], DICT_TIMEOUT);
+  await expect(romaji('karaoke-line')).toHaveText(['kimi to futari de itta']);
 });
 
 test('karaoke keeps romaji wider than its kanji clear of the next word', async ({ page }) => {
@@ -176,7 +262,7 @@ test('kanji off: lyrics show as furigana alone, or romaji alone, in both views',
   await loadJapaneseSong(page);
   await showTracksView(page);
   const line0 = page.getByTestId('lyrics-line-0');
-  await expect(line0.locator('rt')).toHaveText(['ほんとう'], DICT_TIMEOUT);
+  await expect(line0.locator('rt')).toHaveText(['ほんとう']);
 
   await page.getByTestId('view-menu').click();
   await page.getByTestId('show-kanji').click();
@@ -185,7 +271,7 @@ test('kanji off: lyrics show as furigana alone, or romaji alone, in both views',
 
   await page.getByTestId('show-furigana').click();
   await page.getByTestId('show-romaji').click();
-  await expect(page.getByTestId('lyrics-word-0-0')).toHaveText('hontou', DICT_TIMEOUT);
+  await expect(page.getByTestId('lyrics-word-0-0')).toHaveText('hontou');
   await expect(page.getByTestId('lyrics-word-0-1')).toHaveText('ni');
   await expect(line0.locator('rt')).toHaveCount(0);
 
@@ -193,32 +279,33 @@ test('kanji off: lyrics show as furigana alone, or romaji alone, in both views',
   await page.getByTestId('karaoke-two-lines').click();
   await page.keyboard.press('Escape');
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(17.2));
-  await expect(page.getByTestId('karaoke-line')).toHaveText('kimi to futari', DICT_TIMEOUT);
+  await expect(page.getByTestId('karaoke-line')).toHaveText('kimi to futari');
 });
 
-test('furigana: reads numeral + counter compounds, 行った, repeated okurigana, and kanji kuromoji lacks (嗤)', async ({ page }) => {
+test('furigana: a line-level lyric shows its readings over each kanji run', async ({ page }) => {
   await loadJapaneseSong(page);
   await showTracksView(page);
-  await expect(page.getByTestId('lyrics-line-2').locator('rt')).toHaveText(['きみ', 'ふたり', 'い'], DICT_TIMEOUT);
-  await expect(page.getByTestId('lyrics-line-3').locator('rt')).toHaveText(['わら'], DICT_TIMEOUT);
-  await expect(page.getByTestId('lyrics-line-4').locator('rt')).toHaveText(['わら', 'やつ'], DICT_TIMEOUT);
+  await expect(page.getByTestId('lyrics-line-2').locator('rt')).toHaveText(['きみ', 'ふたり', 'い']);
+  await expect(page.getByTestId('lyrics-line-3').locator('rt')).toHaveText(['わら']);
+  await expect(page.getByTestId('lyrics-line-4').locator('rt')).toHaveText(['わら', 'やつ']);
 });
 
 test("furigana + romaji: a word's heard reading wins over the dictionary's", async ({ page }) => {
   await loadJapaneseSong(page);
   await showTracksView(page);
-  await expect(page.getByTestId('lyrics-line-6').locator('rt')).toHaveText(['あ', 'せい'], DICT_TIMEOUT);
+  await expect(page.getByTestId('lyrics-line-6').locator('rt')).toHaveText(['あ', 'せい']);
 
   await page.getByTestId('view-menu').click();
   await page.getByTestId('show-romaji').click();
-  await expect(page.getByTestId('lyrics-word-6-3').locator('rt[data-romaji]')).toHaveText('sei', DICT_TIMEOUT);
+  await expect(page.getByTestId('lyrics-word-6-3').locator('rt[data-romaji]')).toHaveText('sei');
   await page.getByTestId('view-mode-karaoke').click();
   await page.keyboard.press('Escape');
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(19.4));
-  await expect(page.getByTestId('karaoke-line').locator('rt:not([data-romaji])')).toHaveText(['あ', 'せい'], DICT_TIMEOUT);
+  await expect(page.getByTestId('karaoke-line').locator('rt:not([data-romaji])')).toHaveText(['あ', 'せい']);
 });
 
 test('karaoke splits a long Japanese line between phrases, never inside a word', async ({ page }) => {
+  await stubJapaneseReadings(page);
   await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -247,7 +334,7 @@ test('karaoke splits a long Japanese line between phrases, never inside a word',
     });
 
   await seek(1.2);
-  await expect.poll(baseText, DICT_TIMEOUT).toBe('君の名前を呼んでいたんだ');
+  await expect.poll(baseText).toBe('君の名前を呼んでいたんだ');
   await seek(4.1);
   await expect.poll(baseText).toBe('ずっと遠い空の向こうへ');
 });
@@ -260,7 +347,7 @@ test('furigana: karaoke view annotates word-aligned and line-level lyrics', asyn
   const utai = (sec: number) => page.evaluate((s) => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(s), sec);
 
   await utai(1.2);
-  await expect(page.getByTestId('karaoke-line').locator('rt')).toHaveText(['ほんとう'], DICT_TIMEOUT);
+  await expect(page.getByTestId('karaoke-line').locator('rt')).toHaveText(['ほんとう']);
   await utai(5.2);
-  await expect(page.getByTestId('karaoke-line').locator('rt')).toHaveText(['か', 'ち'], DICT_TIMEOUT);
+  await expect(page.getByTestId('karaoke-line').locator('rt')).toHaveText(['か', 'ち']);
 });

@@ -60,11 +60,6 @@ venv
 .ruff_cache/
 .ipynb_checkpoints/
 
-# kuromoji dictionary, copied from node_modules into public/ by
-# scripts/copy-kuromoji-dict.ts (postinstall). Lazy-fetched at runtime
-# for Japanese lyrics; a few MB of generated assets, not source.
-frontend/public/kuromoji-dict/
-
 # Storybook static build output (`bun run build-storybook`).
 storybook-static/
 

@@ -74,7 +74,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
       return splitLongLines(
         t.lines,
         lineSplitLimits(this.lineWidthEm),
-        (text) => furiganaAnnotator.phraseStartsFor(text),
+        (segments) => furiganaAnnotator.phraseStartsFor(segments),
         (segments) => {
           const shown = shownTexts(segments);
           const spaced = spacesBefore(segments, shown);

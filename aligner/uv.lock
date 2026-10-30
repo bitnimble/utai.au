@@ -3051,12 +3051,15 @@ name = "utai-aligner"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cutlet" },
     { name = "fastapi" },
+    { name = "fugashi" },
     { name = "httpx" },
     { name = "imageio-ffmpeg" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
+    { name = "unidic-lite" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "yt-dlp", extra = ["default", "deno"] },
     { name = "ytmusicapi" },
@@ -3090,25 +3093,6 @@ lyrics = [
     { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'" },
     { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'" },
     { name = "transformers" },
-]
-lyrics-ja = [
-    { name = "ctc-forced-aligner" },
-    { name = "cutlet" },
-    { name = "fugashi" },
-    { name = "librosa" },
-    { name = "numpy" },
-    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "onnx" },
-    { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
-    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "soundfile" },
-    { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'" },
-    { name = "transformers" },
-    { name = "unidic-lite" },
 ]
 music = [
     { name = "librespot" },
@@ -3164,12 +3148,15 @@ torch = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cutlet", specifier = ">=0.4" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "fugashi", specifier = ">=1.3" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "imageio-ffmpeg", specifier = ">=0.6" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.4" },
     { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "unidic-lite", specifier = ">=1.0.8" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "yt-dlp", extras = ["default", "deno"], specifier = ">=2026.10.26" },
     { name = "ytmusicapi", specifier = ">=1.10" },
@@ -3202,24 +3189,6 @@ lyrics = [
     { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'", specifier = ">=10,<11" },
     { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'", index = "https://pypi.nvidia.com/" },
     { name = "transformers", specifier = ">=4.40" },
-]
-lyrics-ja = [
-    { name = "ctc-forced-aligner", git = "https://github.com/MahmoudAshraf97/ctc-forced-aligner.git?rev=264e7a1f81bff9ff5e787a5537020c2ad0b0df02" },
-    { name = "cutlet", specifier = ">=0.4" },
-    { name = "fugashi", specifier = ">=1.3" },
-    { name = "librosa", specifier = ">=0.10.2" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'", specifier = ">=9,<10" },
-    { name = "onnx", specifier = ">=1.16" },
-    { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.19,<1.26" },
-    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'", specifier = ">=1.19,<1.26" },
-    { name = "scipy", specifier = ">=1.11" },
-    { name = "soundfile", specifier = ">=0.12" },
-    { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'", specifier = ">=10,<11" },
-    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'", index = "https://pypi.nvidia.com/" },
-    { name = "transformers", specifier = ">=4.40" },
-    { name = "unidic-lite", specifier = ">=1.0.8" },
 ]
 music = [{ name = "librespot", git = "https://github.com/justin025/librespot-python.git" }]
 onthespot = [

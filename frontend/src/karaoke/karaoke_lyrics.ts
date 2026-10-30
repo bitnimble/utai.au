@@ -71,13 +71,13 @@ export function lineSplitLimits(lineWidthEm: number): LineSplitLimits {
 
 /** Word-timed lines wider than `splitAboveEm`, split into the fewest lines that
  *  each fit `maxPartEm`, as even as possible. `phraseStarts` gives offsets into
- *  the line's {@link lineSegments} text where unspaced text may break; a line
- *  with nowhere to break stays whole. `shownText` is each segment's text as it
- *  shows, which widths are measured from. */
+ *  the joined text of a line's {@link lineSegments} where unspaced text may
+ *  break; a line with nowhere to break stays whole. `shownText` is each
+ *  segment's text as it shows, which widths are measured from. */
 export function splitLongLines(
   lines: readonly LyricLine[],
   limits: LineSplitLimits,
-  phraseStarts: (text: string) => readonly number[] | undefined,
+  phraseStarts: (segments: readonly LineSegment[]) => readonly number[] | undefined,
   shownText: (segments: readonly LineSegment[]) => string[] = (segments) => segments.map((s) => s.text),
 ): LyricLine[] {
   return lines.flatMap((line) => splitLongLine(line, limits, phraseStarts, shownText));
@@ -94,7 +94,7 @@ export function spacesBefore(segments: readonly LineSegment[], shown: readonly s
 function splitLongLine(
   line: LyricLine,
   { splitAboveEm, maxPartEm }: LineSplitLimits,
-  phraseStarts: (text: string) => readonly number[] | undefined,
+  phraseStarts: (segments: readonly LineSegment[]) => readonly number[] | undefined,
   shownText: (segments: readonly LineSegment[]) => string[],
 ): LyricLine[] {
   const words = line.words;
@@ -117,7 +117,7 @@ function splitLongLine(
   });
   wordStarts.push(text.length);
   shownStarts.push(shownLine.length);
-  const phrases = phraseStarts(text);
+  const phrases = phraseStarts(segments);
   const slice = (from: number, to: number): string => text.slice(wordStarts[from], wordStarts[to]).trim();
   const shownEm = (from: number, to: number): number => textEm(shownLine.slice(shownStarts[from], shownStarts[to]).trim());
   const breaks: Break[] = [{ at: 0, bonus: 0 }];

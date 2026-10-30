@@ -4,8 +4,8 @@ Browser-based **karaoke** tool built on word-level lyrics alignment: load
 an audio track, import lyrics (LRCLIB or pasted), and get a lyrics track
 whose word chips are time-aligned to the vocal, each chip's position and
 width track when and how long each word is sung, over the audio waveform.
-Runs as a website (with WebGPU/WebNN local ML on the roadmap) or as a
-Tauri desktop/Android app (desktop runs the Python ML backend locally).
+Runs as a website or as a Tauri desktop/Android app (desktop runs the
+Python ML backend locally).
 
 It reuses the lyrics-alignment tech from the sibling **Drumjot** project;
 the domain knowledge lives in [docs/lyrics-alignment.md](docs/lyrics-alignment.md), read it before touching the alignment pipeline.
@@ -20,7 +20,7 @@ the domain knowledge lives in [docs/lyrics-alignment.md](docs/lyrics-alignment.m
 ## Repo layout
 
 Three components at the repo root: **`frontend/`** (the web UI, all web
-*code*: `frontend/src/`, `frontend/public/`, `frontend/index.html`),
+*code*: `frontend/src/`, `frontend/index.html`),
 **`src-tauri/`** (the Rust desktop/Android shell), and **`aligner/`** (the
 Python backend/ML, vocal separation + CTC forced alignment). The web
 **build configs stay at the repo root** (`vite.config.ts`, `tsconfig.json`,
@@ -249,9 +249,7 @@ name), not inline. Do NOT use a `tmp_*`-prefixed path (denied).
 
 - [docs/lyrics-alignment.md](docs/lyrics-alignment.md), the alignment
   domain: models (BS-Roformer, wav2vec2/MMS CTC), pipeline stages, JP
-  romaji/furigana, ONNX/accel, capability provisioning, LRCLIB, browser-
-  side plans. **Read before touching the pipeline.**
+  romaji/furigana, ONNX/accel, capability provisioning, LRCLIB.
+  **Read before touching the pipeline.**
 - [docs/design-system.md](docs/design-system.md), design tokens,
   typography classes, shared UI primitives, stylelint rules.
-- `research/lyrics-alignment-browser.md`, feasibility of fully in-browser
-  alignment (WebGPU/WebNN + onnxruntime-web).

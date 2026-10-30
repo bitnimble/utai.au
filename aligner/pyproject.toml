@@ -31,6 +31,11 @@ dependencies = [
     # A static ffmpeg for the desktop app, which links it onto PATH
     # (src-tauri/src/capability.rs); Docker images use their system ffmpeg.
     "imageio-ffmpeg>=0.6",
+    # Japanese readings (app/pipeline/jp_romaji.py): the aligner's romaji and
+    # the furigana / romaji every install shows, with or without models.
+    "cutlet>=0.4",
+    "fugashi>=1.3",
+    "unidic-lite>=1.0.8",
 ]
 
 # Capability dependency-groups (PEP 735).
@@ -105,15 +110,6 @@ pitch = [
     { include-group = "separation" },
 ]
 
-# Japanese-aware romanization for lyrics: cutlet (fugashi/MeCab + unidic-lite)
-# produces contextual readings before they reach the aligner's preprocess_text.
-lyrics-ja = [
-    { include-group = "lyrics" },
-    "cutlet>=0.4",
-    "fugashi>=1.3",
-    "unidic-lite>=1.0.8",
-]
-
 # Music-source (OnTheSpot) Spotify OAuth. librespot logs in with a pasted OAuth
 # code and produces the reusable `{username, credentials, type}` blob OnTheSpot
 # stores for a Spotify account. The SAME fork OnTheSpot depends on, so the blob
@@ -169,7 +165,7 @@ dev = [
 # `uv sync` installs all groups so dev / Docker keep full parity; the desktop
 # installer pulls capabilities via `uv sync --no-default-groups --group <cap>`
 # (base deps plus the selected group(s)).
-default-groups = ["dev", "lyrics", "lyrics-ja", "music", "pitch"]
+default-groups = ["dev", "lyrics", "music", "pitch"]
 # Drop torchvision: unused, and on cu128/WSL its compiled ops fail to load and
 # break transformers model loading. The impossible marker removes it from the
 # resolved graph.

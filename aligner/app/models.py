@@ -10,6 +10,39 @@ class HealthResponse(BaseModel):
     gpu_name: str | None = None
 
 
+class JapaneseWordIn(BaseModel):
+    text: str
+    # The reading the aligner heard for this word, which wins over the dictionary's.
+    reading: str | None = None
+
+
+class JapaneseLineIn(BaseModel):
+    words: list[JapaneseWordIn]
+
+
+class JapaneseRequest(BaseModel):
+    lines: list[JapaneseLineIn]
+
+
+class RubySegment(BaseModel):
+    base: str
+    reading: str | None = None
+
+
+class JapaneseWordOut(BaseModel):
+    segments: list[RubySegment]
+    romaji: str
+
+
+class JapaneseLineOut(BaseModel):
+    words: list[JapaneseWordOut]
+    phraseStarts: list[int]
+
+
+class JapaneseResponse(BaseModel):
+    lines: list[JapaneseLineOut]
+
+
 class ProvisionAsset(BaseModel):
     name: str
     # "pending" | "missing" | "outdated" | "current" | "checking" | "downloading" | "done" | "skipped"

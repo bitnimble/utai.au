@@ -151,7 +151,7 @@ COPY aligner/pyproject.toml ./
 # pytorch extra-index: the torch layer above already satisfies the torch pins,
 # and uv's first-index rule would pin common deps (certifi, requests) to that
 # index's stale copies and fail to resolve.
-RUN uv pip install --group dev --group separation --group lyrics --group lyrics-ja --group music -e .
+RUN uv pip install --group dev --group separation --group lyrics --group music -e .
 
 # Models / weights caches. Pointed at /models (and HF/torch subdirs) so
 # audio-separator, HF transformers, and torch.hub reuse the same cache

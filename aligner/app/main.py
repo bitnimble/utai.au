@@ -1,8 +1,9 @@
 """Utai aligner HTTP API (FastAPI): the one API the web and desktop builds talk to.
 
 Routes live with their feature: /music/align (`align_routes`), /music/separate +
-/music/beats + /music/pitch (`analysis_routes`), /video (`video_routes`),
-/provision (`provisioning`), the music source (`music.routes`) and /sessions.
+/music/beats + /music/pitch (`analysis_routes`), /lyrics/japanese
+(`japanese_routes`), /video (`video_routes`), /provision (`provisioning`), the
+music source (`music.routes`) and /sessions.
 In the pipeline role a background task checks + loads the models at startup;
 uvicorn accepts connections immediately. /health is a liveness probe (process +
 GPU); /provision/status is the readiness signal.
@@ -18,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.align_routes import router as align_router
 from app.analysis_routes import router as analysis_router
 from app.config import settings
+from app.japanese_routes import router as japanese_router
 from app.models import HealthResponse
 from app.music.routes import aclose_facade as aclose_music_facade
 from app.music.routes import router as music_router
@@ -93,6 +95,7 @@ for router in (
     provisioning_router,
     align_router,
     analysis_router,
+    japanese_router,
     video_router,
     music_router,
     sessions_router,
