@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -24,11 +26,14 @@ def clock(monkeypatch) -> FakeClock:
 
 
 @pytest.fixture
-def client(clock, monkeypatch) -> TestClient:
+def client(clock, monkeypatch) -> Iterator[TestClient]:
     monkeypatch.setattr(sessions.settings, "public_url", "")
     app = FastAPI()
     app.include_router(sessions.router)
-    return TestClient(app)
+    # Entered, so every socket shares one event loop: an outbox put from another
+    # loop's thread doesn't wake the writer, and receive_json() then hangs forever.
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 def _create(client: TestClient) -> tuple[str, str]:
