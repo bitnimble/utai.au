@@ -48,7 +48,7 @@ import {
 import { MusicSourcePresenter } from 'src/music_source/music_source_presenter';
 import { MusicSourceStore } from 'src/music_source/music_source_store';
 import { AudioDeviceStore } from 'src/audio_devices/audio_device_store';
-import { AudioDevicePresenter } from 'src/audio_devices/audio_device_presenter';
+import { AudioDevicePresenter, MAX_AUDIO_OFFSET_MS } from 'src/audio_devices/audio_device_presenter';
 import { WebAudioBackend } from 'src/audio_devices/web_audio_backend';
 import { NativeAudioBackend } from 'src/audio_devices/native_audio_backend';
 import {
@@ -112,6 +112,10 @@ import { SongDetailsModal } from './song_details_modal';
 import { KaraokeLyricsOverlay } from './karaoke_lyrics_overlay';
 import styles from './karaoke_page.module.css';
 
+const MEDIA_SEEK_STEP_SEC = 10;
+const MEDIA_SEEK_REPEAT_MS = 250;
+const REPEATING_MEDIA_KEYS = new Set(['MediaFastForward', 'MediaRewind']);
+
 /** Peer stores + presenters, constructed once at the view root and passed
  *  down independently via React contexts (never a single aggregate store). */
 type Session = {
@@ -161,7 +165,7 @@ function buildSession(): Session {
   const audioBackend = nativeAudioOutput
     ? new NativeAudioBackend(nativeAudioOutput)
     : new WebAudioBackend();
-  const audioDevicePresenter = new AudioDevicePresenter(audioDevice, audioBackend);
+  const audioDevicePresenter = new AudioDevicePresenter(audioDevice, audioBackend, playbackEngine);
   const scoring = new ScoringStore();
   const scoringClock: ScoringClock = {
     get currentTime() {
@@ -304,6 +308,32 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [presenter]);
+
+  React.useEffect(() => {
+    const actions: Partial<Record<string, () => void>> = {
+      MediaPlayPause: () => presenter.togglePlay(),
+      MediaPlay: () => presenter.play(),
+      MediaPause: () => presenter.pause(),
+      MediaStop: () => presenter.stop(),
+      MediaTrackNext: () => queuePresenter.skip(),
+      MediaTrackPrevious: () => presenter.seek(0),
+      MediaFastForward: () => presenter.seekBy(MEDIA_SEEK_STEP_SEC),
+      MediaRewind: () => presenter.seekBy(-MEDIA_SEEK_STEP_SEC),
+    };
+    let lastRepeatMs = -Infinity;
+    const onKeyDown = (e: KeyboardEvent): void => {
+      const action = actions[e.key];
+      if (action == null) return;
+      e.preventDefault();
+      if (e.repeat) {
+        if (!REPEATING_MEDIA_KEYS.has(e.key) || e.timeStamp - lastRepeatMs < MEDIA_SEEK_REPEAT_MS) return;
+        lastRepeatMs = e.timeStamp;
+      }
+      action();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [presenter, queuePresenter]);
 
   // Expose the live session on `window.utai` for e2e specs + debugging.
   React.useEffect(() => {
@@ -930,9 +960,36 @@ const AudioMenu = observer(function AudioMenu() {
       testId="audio-menu"
     >
       {() => (
-        <SubmenuItem label="Vocal track effects">{() => <VocalEffectItems />}</SubmenuItem>
+        <>
+          <SubmenuItem label="Vocal track effects">{() => <VocalEffectItems />}</SubmenuItem>
+          <DropdownSection label="Audio timing (ms)">
+            <AudioTimingControl />
+          </DropdownSection>
+        </>
       )}
     </DropdownButton>
+  );
+});
+
+const AUDIO_OFFSET_STEP_MS = 50;
+
+const AudioTimingControl = observer(function AudioTimingControl() {
+  const store = React.useContext(AudioDeviceStoreContext)!;
+  const presenter = React.useContext(AudioDevicePresenterContext)!;
+  return (
+    <div className={styles.menuControlRow}>
+      <NumberStepper
+        value={store.audioOffsetMs}
+        onChange={(v) => presenter.setAudioOffsetMs(v)}
+        step={AUDIO_OFFSET_STEP_MS}
+        min={-MAX_AUDIO_OFFSET_MS}
+        max={MAX_AUDIO_OFFSET_MS}
+        precision={0}
+        ariaLabel="Audio timing in milliseconds"
+        title="Positive plays the audio later than the lyrics and video, negative earlier"
+        testId="audio-offset"
+      />
+    </div>
   );
 });
 

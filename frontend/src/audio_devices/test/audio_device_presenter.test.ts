@@ -52,6 +52,13 @@ class FakeBackend implements AudioIoBackend {
   }
 }
 
+class FakeTiming {
+  offsetSec: number | undefined;
+  setAudioOffset(sec: number): void {
+    this.offsetSec = sec;
+  }
+}
+
 /** In-memory localStorage so persistence is exercised without a DOM. */
 function installLocalStorage(): void {
   const map = new Map<string, string>();
@@ -71,13 +78,15 @@ function installLocalStorage(): void {
 describe('AudioDevicePresenter', () => {
   let store: AudioDeviceStore;
   let backend: FakeBackend;
+  let timing: FakeTiming;
   let presenter: AudioDevicePresenter;
 
   beforeEach(() => {
     installLocalStorage();
     store = new AudioDeviceStore();
     backend = new FakeBackend();
-    presenter = new AudioDevicePresenter(store, backend);
+    timing = new FakeTiming();
+    presenter = new AudioDevicePresenter(store, backend, timing);
   });
 
   test('mirrors backend output support into the store', () => {
@@ -155,18 +164,40 @@ describe('AudioDevicePresenter', () => {
     presenter.setMicVolume(0.5);
     presenter.setMicMuted(true);
     await presenter.setOutputDevice('spk9');
+    presenter.setAudioOffsetMs(-150);
 
     const store2 = new AudioDeviceStore();
     const backend2 = new FakeBackend();
-    const presenter2 = new AudioDevicePresenter(store2, backend2);
+    const timing2 = new FakeTiming();
+    const presenter2 = new AudioDevicePresenter(store2, backend2, timing2);
     await presenter2.init();
 
     expect(store2.outputVolume).toBe(0.4);
     expect(store2.micVolume).toBe(0.5);
     expect(store2.micMuted).toBe(true);
     expect(store2.selectedOutputId).toBe('spk9');
-    // saved output route + volume re-applied to the engine on boot
+    expect(store2.audioOffsetMs).toBe(-150);
+    // saved output route + volume + timing re-applied to the engine on boot
     expect(backend2.sink).toBe('spk9');
     expect(backend2.lastOutputVolume).toBe(0.4);
+    expect(timing2.offsetSec).toBe(-0.15);
+  });
+
+  test('an out-of-range saved audio timing is clamped on load', async () => {
+    localStorage.setItem('utai.audioDevices', JSON.stringify({ audioOffsetMs: 9000 }));
+    const loaded = new AudioDeviceStore();
+    const loadedTiming = new FakeTiming();
+    await new AudioDevicePresenter(loaded, new FakeBackend(), loadedTiming).init();
+    expect(loaded.audioOffsetMs).toBe(1000);
+    expect(loadedTiming.offsetSec).toBe(1);
+  });
+
+  test('audio timing is rounded to whole ms and clamped to the engine range', () => {
+    presenter.setAudioOffsetMs(120.4);
+    expect(store.audioOffsetMs).toBe(120);
+    expect(timing.offsetSec).toBe(0.12);
+    presenter.setAudioOffsetMs(-5000);
+    expect(store.audioOffsetMs).toBe(-1000);
+    expect(timing.offsetSec).toBe(-1);
   });
 });

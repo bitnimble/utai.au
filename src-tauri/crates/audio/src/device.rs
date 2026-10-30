@@ -19,12 +19,13 @@ use cpal::{
     Device, FromSample, Host, Sample, SampleFormat, SampleRate, SizedSample, Stream, StreamConfig,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 const CHANNELS: u16 = 2;
+pub const MAX_TRACK_DELAY_SECS: f32 = 1.0;
 
 /// An `f32` in an `AtomicU32` (bit pattern) for lock-free gain/level updates
 /// from control threads, read in the audio callback.
@@ -78,6 +79,10 @@ pub struct Shared {
     pub output_rate: AtomicU32,
     pub mic_gain: AtomicF32,
     pub master_gain: AtomicF32,
+    /// How late the tracks (not the mic) are heard, in [0, `MAX_TRACK_DELAY_SECS`].
+    pub track_delay_secs: AtomicF32,
+    /// Set by pause / seek / stop; the output callback empties the track delay on it.
+    clear_track_delay: AtomicBool,
     /// Latest input RMS in [0, 1].
     pub level: AtomicF32,
     /// Measured output / input latency (ms), from the stream callback timestamps.
@@ -101,6 +106,8 @@ impl Shared {
             output_rate: AtomicU32::new(0),
             mic_gain: AtomicF32::new(0.0), // muted by default, matching the app
             master_gain: AtomicF32::new(1.0),
+            track_delay_secs: AtomicF32::new(0.0),
+            clear_track_delay: AtomicBool::new(false),
             level: AtomicF32::new(0.0),
             out_latency_ms: AtomicF32::new(0.0),
             in_latency_ms: AtomicF32::new(0.0),
@@ -298,10 +305,12 @@ impl AudioEngine {
     }
     pub fn pause(&self) {
         self.shared.transport.pause();
+        self.shared.clear_track_delay.store(true, Ordering::Relaxed);
     }
     /// Stop and rewind; effects restart empty, so the next play carries no old tail.
     pub fn stop(&self) {
         self.shared.transport.stop();
+        self.shared.clear_track_delay.store(true, Ordering::Relaxed);
         let mut sources = self.shared.sources.lock().unwrap();
         let rate = self.rate();
         for s in sources.iter_mut() {
@@ -311,6 +320,7 @@ impl AudioEngine {
     }
     pub fn seek_secs(&self, secs: f64) {
         self.shared.transport.seek_secs(secs, self.rate());
+        self.shared.clear_track_delay.store(true, Ordering::Relaxed);
     }
     pub fn position_secs(&self) -> f64 {
         self.shared.transport.position_secs(self.rate())
@@ -344,6 +354,11 @@ impl AudioEngine {
     }
     pub fn set_output_volume(&self, v: f32) {
         self.shared.master_gain.store(v);
+    }
+    pub fn set_track_delay_secs(&self, secs: f32) {
+        self.shared
+            .track_delay_secs
+            .store(secs.clamp(0.0, MAX_TRACK_DELAY_SECS));
     }
     pub fn set_devices(&self, sel: DeviceSelection) {
         let _ = self.cmd_tx.send(EngineCmd::SetDevices(sel));
@@ -500,6 +515,8 @@ where
     let mut mic = Vec::<f32>::new();
     let mut mix = Vec::<f32>::new();
     let mut effected = Vec::<f32>::new();
+    let rate = cfg.sample_rate.0 as f32;
+    let mut track_delay = mixer::DelayLine::new((rate * MAX_TRACK_DELAY_SECS).ceil() as usize);
     dev.build_output_stream(
         cfg,
         move |out: &mut [T], info: &cpal::OutputCallbackInfo| {
@@ -527,7 +544,7 @@ where
 
             let playing = shared.transport.is_playing();
             let start = shared.transport.advance_playing(frames as u64) as usize;
-            // Sum every track at its own gain, then the mic, then master. Tracks
+            // Sum every track at its own gain, delay that sum, add the mic, then master. Tracks
             // are gated by `playing` (the mic monitor stays live when stopped).
             let tracks = shared.tracks.load();
             mixer::silence(&mut mix);
@@ -548,6 +565,11 @@ where
                     None => {}
                 }
             }
+            if shared.clear_track_delay.swap(false, Ordering::Relaxed) {
+                track_delay.clear();
+            }
+            let delay_frames = (shared.track_delay_secs.load() * rate).round() as usize;
+            track_delay.process(&mut mix, delay_frames);
             mixer::add_block(&mut mix, &mic, shared.mic_gain.load());
             mixer::apply_master(&mut mix, shared.master_gain.load());
             write_interleaved(out, &mix, out_ch);

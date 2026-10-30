@@ -1,7 +1,12 @@
 import { autorun, makeAutoObservable, runInAction } from 'mobx';
+import { MAX_AUDIO_OFFSET_SEC, type PlaybackEngine } from 'src/editing/playback/playback_engine';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { AudioDeviceStore } from './audio_device_store';
 import { NONE_DEVICE_ID, type AudioIoBackend } from './audio_io_backend';
+
+type AudioTiming = Pick<PlaybackEngine, 'setAudioOffset'>;
+
+export const MAX_AUDIO_OFFSET_MS = MAX_AUDIO_OFFSET_SEC * 1000;
 
 const STORAGE_KEY = 'utai.audioDevices';
 
@@ -21,16 +26,19 @@ const LEVEL_EPSILON = 0.01;
 export class AudioDevicePresenter {
   private readonly store: AudioDeviceStore;
   private readonly backend: AudioIoBackend;
+  private readonly timing: AudioTiming;
   private unsubDevices: (() => void) | undefined;
   private stopPersist: (() => void) | undefined;
   private started = false;
 
-  constructor(store: AudioDeviceStore, backend: AudioIoBackend) {
+  constructor(store: AudioDeviceStore, backend: AudioIoBackend, timing: AudioTiming) {
     this.store = store;
     this.backend = backend;
-    makeAutoObservable<this, 'store' | 'backend' | 'unsubDevices' | 'stopPersist' | 'started'>(this, {
+    this.timing = timing;
+    makeAutoObservable<this, 'store' | 'backend' | 'timing' | 'unsubDevices' | 'stopPersist' | 'started'>(this, {
       store: false,
       backend: false,
+      timing: false,
       unsubDevices: false,
       stopPersist: false,
       started: false,
@@ -55,6 +63,7 @@ export class AudioDevicePresenter {
     await this.refreshDevices();
 
     this.backend.setOutputVolume(this.effectiveOutputVolume());
+    this.timing.setAudioOffset(this.store.audioOffsetMs / 1000);
     if (this.store.selectedOutputId) {
       await this.backend.setOutputSink(this.store.selectedOutputId).catch(() => {});
     }
@@ -118,6 +127,13 @@ export class AudioDevicePresenter {
       this.store.outputMuted = muted;
     });
     this.backend.setOutputVolume(this.effectiveOutputVolume());
+  }
+
+  setAudioOffsetMs(ms: number): void {
+    runInAction(() => {
+      this.store.audioOffsetMs = clampAudioOffsetMs(ms);
+    });
+    this.timing.setAudioOffset(this.store.audioOffsetMs / 1000);
   }
 
   /** Fully reverse {@link init} so a remount (React StrictMode) can re-run it
@@ -192,6 +208,7 @@ export class AudioDevicePresenter {
         micMuted: this.store.micMuted,
         outputVolume: this.store.outputVolume,
         outputMuted: this.store.outputMuted,
+        audioOffsetMs: this.store.audioOffsetMs,
       });
       try {
         localStorage.setItem(STORAGE_KEY, snapshot);
@@ -219,6 +236,7 @@ export class AudioDevicePresenter {
       if (typeof obj.micMuted === 'boolean') this.store.micMuted = obj.micMuted;
       if (typeof obj.outputVolume === 'number') this.store.outputVolume = clamp01(obj.outputVolume);
       if (typeof obj.outputMuted === 'boolean') this.store.outputMuted = obj.outputMuted;
+      if (typeof obj.audioOffsetMs === 'number') this.store.audioOffsetMs = clampAudioOffsetMs(obj.audioOffsetMs);
     } catch {
       // corrupt JSON; keep defaults
     }
@@ -227,4 +245,8 @@ export class AudioDevicePresenter {
 
 function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v));
+}
+
+function clampAudioOffsetMs(ms: number): number {
+  return Math.round(Math.min(MAX_AUDIO_OFFSET_MS, Math.max(-MAX_AUDIO_OFFSET_MS, ms)));
 }

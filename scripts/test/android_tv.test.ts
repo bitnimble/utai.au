@@ -8,6 +8,15 @@ test('MainActivity tags the user agent and hands Back to the page', () => {
   expect(activity).toContain('webView.evaluateJavascript("window.utaiBack?.() === true")');
 });
 
+test('MainActivity forwards media buttons to the page by key name', () => {
+  const activity = mainActivity('au.utai.app');
+  expect(activity).toContain('KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE to "MediaPlayPause",');
+  expect(activity).toContain('KeyEvent.KEYCODE_MEDIA_NEXT to "MediaTrackNext",');
+  expect(activity).toContain(
+    'webView.evaluateJavascript("window.utaiKey?.(\'$key\', ${event.repeatCount > 0})", null)',
+  );
+});
+
 const TEMPLATE = `<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 

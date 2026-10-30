@@ -1,5 +1,6 @@
 import { expect, type Page } from '@playwright/test';
 import { HOST_PATH, test } from 'src/testing/e2e_test';
+import { makeWav } from 'src/testing/wav';
 import { TV_AGENT } from '../tv';
 
 test.use({
@@ -56,4 +57,40 @@ test('tv remote: OK ticks a checkbox, and a text field opens its keyboard only o
   expect(await page.getByTestId('tv-field').evaluate((f: HTMLInputElement) => f.readOnly)).toBe(false);
   await page.keyboard.type('abc');
   await expect(page.getByTestId('tv-field')).toHaveValue('abc');
+});
+
+type UtaiWindow = { utai?: { playbackEngine?: { currentTime?: number; state?: string } } };
+
+test('tv remote: the media buttons play, pause, seek and restart', async ({ page }) => {
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(60),
+  });
+  const state = (): Promise<string | undefined> =>
+    page.evaluate(() => (window as unknown as UtaiWindow).utai?.playbackEngine?.state);
+  const currentTime = (): Promise<number> =>
+    page.evaluate(() => (window as unknown as UtaiWindow).utai?.playbackEngine?.currentTime ?? 0);
+  const press = (key: string, repeat = false): Promise<void> =>
+    page.evaluate(([k, r]) => window.utaiKey?.(k, r), [key, repeat] as const);
+  await expect.poll(state, { timeout: 15_000 }).toBe('playing');
+
+  await press('MediaPlayPause');
+  await expect.poll(state).toBe('paused');
+  await press('MediaPlayPause', true);
+  expect(await state()).toBe('paused');
+  await press('MediaPlay');
+  await expect.poll(state).toBe('playing');
+  await press('MediaPause');
+  await expect.poll(state).toBe('paused');
+
+  const pausedAt = await currentTime();
+  await press('MediaFastForward');
+  await press('MediaFastForward', true);
+  expect(await currentTime()).toBeCloseTo(pausedAt + 20, 1);
+  await press('MediaRewind');
+  expect(await currentTime()).toBeCloseTo(pausedAt + 10, 1);
+  await press('MediaTrackPrevious');
+  expect(await currentTime()).toBe(0);
 });

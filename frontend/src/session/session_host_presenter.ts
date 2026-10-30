@@ -1,6 +1,7 @@
 import { comparer, makeAutoObservable, reaction } from 'mobx';
 import type { AudioDevicePresenter } from 'src/audio_devices/audio_device_presenter';
 import type { AudioDeviceStore } from 'src/audio_devices/audio_device_store';
+import type { AudioTrack } from 'src/editing/playback/audio_tracks';
 import type { PlaybackEngine } from 'src/editing/playback/playback_engine';
 import type { KaraokePresenter } from 'src/karaoke/karaoke_presenter';
 import type { SongStore } from 'src/karaoke/song_store';
@@ -25,13 +26,13 @@ import type { SessionHostStore } from './session_host_store';
 
 export type SearchTracks = (query: string, signal?: AbortSignal) => Promise<TrackResult[]>;
 
-type Transport = Pick<PlaybackEngine, 'state' | 'currentTime' | 'pause'>;
+type Transport = Pick<PlaybackEngine, 'state' | 'currentTime' | 'pause' | 'audioTracks'>;
 
 export type SessionHostDeps = {
   queue: QueueStore;
   queuePresenter: Pick<QueuePresenter, 'add' | 'remove' | 'move' | 'playNext' | 'skip' | 'restoreHistory'>;
   song: SongStore;
-  karaoke: Pick<KaraokePresenter, 'togglePlay' | 'seek'>;
+  karaoke: Pick<KaraokePresenter, 'play' | 'pause' | 'seek' | 'setTrackVolume' | 'setTrackMuted'>;
   transport: Transport;
   audioDevice: AudioDeviceStore;
   audioDevicePresenter: Pick<AudioDevicePresenter, 'setOutputVolume'>;
@@ -197,13 +198,13 @@ export class SessionHostPresenter {
   }
 
   private run(command: RemoteCommand, from: string): void {
-    const { transport, karaoke, queuePresenter, song } = this.deps;
+    const { karaoke, queuePresenter, song } = this.deps;
     switch (command.kind) {
       case 'play':
-        if (transport.state !== 'playing' && song.durationSec > 0) karaoke.togglePlay();
+        karaoke.play();
         return;
       case 'pause':
-        if (transport.state === 'playing') karaoke.togglePlay();
+        karaoke.pause();
         return;
       case 'seek':
         karaoke.seek(clamp(command.sec, 0, song.durationSec));
@@ -215,6 +216,16 @@ export class SessionHostPresenter {
       case 'setVolume':
         this.deps.audioDevicePresenter.setOutputVolume(command.volume);
         return;
+      case 'setVocalVolume': {
+        const vocals = this.vocalTrack();
+        if (vocals) karaoke.setTrackVolume(vocals.id, command.volume);
+        return;
+      }
+      case 'setVocalMuted': {
+        const vocals = this.vocalTrack();
+        if (vocals) karaoke.setTrackMuted(vocals.id, command.muted);
+        return;
+      }
       case 'add': {
         const track = this.offered.get(command.track.sourceUrl) ?? this.playedTrack(command.track.sourceUrl);
         if (track == null || this.deps.queue.items.length >= MAX_REMOTE_QUEUE_LENGTH) return;
@@ -234,6 +245,11 @@ export class SessionHostPresenter {
         void this.search(command.query, command.requestId, from);
         return;
     }
+  }
+
+  private vocalTrack(): AudioTrack | undefined {
+    for (const track of this.deps.transport.audioTracks.values()) if (track.role === 'vocals') return track;
+    return undefined;
   }
 
   private async search(query: string, requestId: number, to: string): Promise<void> {
@@ -284,6 +300,7 @@ export class SessionHostPresenter {
 
   private stateWithoutPosition(): Omit<HostState, 'positionSec'> {
     const { queue, song, transport, audioDevice } = this.deps;
+    const vocals = this.vocalTrack();
     return {
       nowPlaying:
         song.durationSec > 0
@@ -296,6 +313,7 @@ export class SessionHostPresenter {
           : null,
       playback: transport.state === 'playing' || transport.state === 'paused' ? transport.state : 'idle',
       outputVolume: audioDevice.outputVolume,
+      vocals: vocals ? { volume: vocals.volume, muted: vocals.muted } : null,
       queue: queue.items.map(toRemoteItem),
       history: queue.history.map(toRemotePlayed),
       waitingForId: queue.waitingFor?.id,

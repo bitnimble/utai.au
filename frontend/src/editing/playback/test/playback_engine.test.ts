@@ -45,6 +45,7 @@ class FakeOutput implements AudioOutput {
   stops = 0;
   pendingStart: (() => void) | undefined;
   deferStart = false;
+  outputDelay = 0;
   decodeContext(): AudioContext {
     throw new Error('unused');
   }
@@ -59,6 +60,9 @@ class FakeOutput implements AudioOutput {
     this.startedFrom = fromSec;
     this.position = fromSec;
     if (this.deferStart) await new Promise<void>((resolve) => (this.pendingStart = resolve));
+  }
+  setOutputDelay(sec: number): void {
+    this.outputDelay = sec;
   }
   async pause(): Promise<void> {}
   async resume(): Promise<void> {}
@@ -177,6 +181,75 @@ test('seeking while playing moves the output and reschedules the end', async () 
   expect(output.seeks).toEqual([60]);
   expect(engine.currentTime).toBe(60);
   expect(timerDelays()).toEqual([40_500]);
+});
+
+test('a positive audio offset delays the output only, and the song ends once the audio has', async () => {
+  const { engine, output } = loadedEngine();
+  engine.setAudioOffset(0.2);
+  expect(output.outputDelay).toBe(0.2);
+  engine.seek(10);
+  await engine.play();
+  expect(output.startedFrom).toBe(10);
+  expect(engine.currentTime).toBe(10);
+  expect(timerDelays()).toEqual([90_700]);
+});
+
+test('pausing with a positive offset rewinds to the last audio heard, as the output drops its delay', async () => {
+  const { engine, output } = loadedEngine();
+  engine.setAudioOffset(0.2);
+  await engine.play();
+  output.position = 30;
+  await engine.pause();
+  expect(output.seeks).toEqual([29.8]);
+  expect(engine.currentTime).toBe(29.8);
+});
+
+test('a pause sooner than the delay after a resume or seek rewinds no further than where it began', async () => {
+  const { engine, output } = loadedEngine();
+  engine.setAudioOffset(0.5);
+  await engine.play();
+  output.position = 30;
+  await engine.pause();
+  await engine.resume();
+  output.position = 29.6;
+  await engine.pause();
+  expect(engine.currentTime).toBe(29.5);
+
+  await engine.resume();
+  engine.seek(60);
+  output.position = 60.2;
+  await engine.pause();
+  expect(engine.currentTime).toBe(60);
+});
+
+test('a negative audio offset holds everything but the audio back by as much', async () => {
+  const { engine, output } = loadedEngine();
+  engine.setAudioOffset(-0.25);
+  expect(output.outputDelay).toBe(0);
+  engine.seek(10);
+  await engine.play();
+  expect(output.startedFrom).toBe(10.25);
+  expect(engine.currentTime).toBe(10);
+  output.position = 20;
+  runFrame();
+  expect(engine.currentTime).toBe(19.75);
+  engine.seek(30);
+  expect(output.seeks).toEqual([30.25]);
+  expect(timerDelays()).toEqual([70_500]);
+});
+
+test('changing the offset while paused keeps the playhead and moves the audio under it', async () => {
+  const { engine, output } = loadedEngine();
+  await engine.play();
+  output.position = 40;
+  await engine.pause();
+  engine.setAudioOffset(-0.5);
+  expect(engine.currentTime).toBe(40);
+  expect(output.seeks).toEqual([40.5]);
+  engine.setAudioOffset(5);
+  expect(engine.audioOffsetSec).toBe(1);
+  expect(output.outputDelay).toBe(1);
+  expect(output.seeks).toEqual([40.5, 40]);
 });
 
 test('a stop while the output is starting wins over the start', async () => {

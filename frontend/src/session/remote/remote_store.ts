@@ -18,6 +18,7 @@ export class RemoteStore {
   /** Slider values mid-drag, shown until the host's state catches up. */
   seekDraftSec: number | undefined = undefined;
   volumeDraft: number | undefined = undefined;
+  vocalVolumeDraft: number | undefined = undefined;
   tab: RemoteTab = 'queue';
   searchQuery = '';
   searchPhase: SearchPhase = { kind: 'idle' };
@@ -56,5 +57,9 @@ export class RemoteStore {
 
   get outputVolume(): number {
     return this.volumeDraft ?? this.host?.outputVolume ?? 1;
+  }
+
+  get vocalVolume(): number {
+    return this.vocalVolumeDraft ?? this.host?.vocals?.volume ?? 1;
   }
 }

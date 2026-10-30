@@ -50,7 +50,7 @@ gateway) is `#[cfg(desktop)]`-gated.
 
 The website's `/` offers Create a session or Join one as a remote. `/session/<ID>`
 is the playback host (the full player); `/session/<ID>/remote` is a phone
-remote (queue, search, history, transport, volume). The desktop and Android apps skip
+remote (queue, search, history, transport, volume, vocals on/off + level). The desktop and Android apps skip
 the landing page and host their own session at launch. The host owns the queue
 and playback and does all backend work (search included; remotes may only add
 tracks the host's own search returned or it already played); the session server
@@ -101,10 +101,12 @@ header `backendFetch` attaches.
   `read_log_tail` reads. Settings > Logs shows either.
 - **Android TV**: `scripts/android-tv.ts` patches the regenerated `gen/android`
   (banner, touchscreen optional, a `MainActivity` adding `UtaiTV` to the user
-  agent and routing Back to `window.utaiBack`) on every `tauri-build.ts android …`
-  run. On a TV the page's `followRemote()` (`frontend/src/tv_remote/`) moves focus
-  geometrically with the D-pad; Back sends Escape, so anything closable on Escape
-  closes on Back.
+  agent, routing Back to `window.utaiBack` and media buttons to `window.utaiKey`)
+  on every `tauri-build.ts android …` run. On a TV the page's `followRemote()`
+  (`frontend/src/tv_remote/`) moves focus geometrically with the D-pad; Back sends
+  Escape, so anything closable on Escape closes on Back; media buttons arrive as
+  their standard `Media*` keydowns, which the player maps to transport (as it does
+  a keyboard's media keys).
 
 ## Critical rules (apply to every request)
 

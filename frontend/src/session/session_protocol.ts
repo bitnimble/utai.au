@@ -55,6 +55,8 @@ export const hostStateSchema = z.object({
   playback: z.enum(['idle', 'playing', 'paused']),
   positionSec: z.number(),
   outputVolume: z.number(),
+  /** The current song's vocal stem; null until it's separated. */
+  vocals: z.object({ volume: z.number(), muted: z.boolean() }).nullable().default(null),
   queue: z.array(remoteQueueItemSchema),
   history: z.array(remotePlayedSongSchema).default([]),
   waitingForId: z.string().optional(),
@@ -68,6 +70,8 @@ export const remoteCommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('seek'), sec: z.number() }),
   z.object({ kind: z.literal('skip') }),
   z.object({ kind: z.literal('setVolume'), volume: z.number() }),
+  z.object({ kind: z.literal('setVocalVolume'), volume: z.number() }),
+  z.object({ kind: z.literal('setVocalMuted'), muted: z.boolean() }),
   z.object({ kind: z.literal('add'), track: trackResultSchema }),
   z.object({ kind: z.literal('remove'), id: z.string() }),
   z.object({ kind: z.literal('move'), id: z.string(), toIndex: z.number().int() }),

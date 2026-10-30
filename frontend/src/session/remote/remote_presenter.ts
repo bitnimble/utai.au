@@ -15,7 +15,8 @@ const SEARCH_TIMEOUT_MS = 30_000;
 const OFFLINE_TOAST_TEST_ID = 'remote-offline';
 const DRAG_SEND_INTERVAL_MS = 150;
 
-type DragKind = 'seek' | 'setVolume';
+const DRAG_KINDS = ['seek', 'setVolume', 'setVocalVolume'] as const;
+type DragKind = (typeof DRAG_KINDS)[number];
 
 export class RemotePresenter {
   private socket: SessionSocket | undefined;
@@ -73,6 +74,16 @@ export class RemotePresenter {
   setVolume(volume: number): void {
     this.store.volumeDraft = volume;
     this.throttled('setVolume', { kind: 'setVolume', volume });
+  }
+
+  setVocalVolume(volume: number): void {
+    this.store.vocalVolumeDraft = volume;
+    this.throttled('setVocalVolume', { kind: 'setVocalVolume', volume });
+  }
+
+  toggleVocals(): void {
+    const vocals = this.store.host?.vocals;
+    if (vocals != null) this.send({ kind: 'setVocalMuted', muted: !vocals.muted });
   }
 
   /** The drag ended: send its last value now, and drop the draft once the host's next state lands. */
@@ -151,8 +162,7 @@ export class RemotePresenter {
   private setStatus(status: SocketStatus): void {
     this.store.status = status;
     if (status === 'open') return;
-    this.store.seekDraftSec = undefined;
-    this.store.volumeDraft = undefined;
+    for (const kind of DRAG_KINDS) this.clearDraft(kind);
   }
 
   private onFrame(frame: RelayFrame): void {
@@ -180,8 +190,23 @@ export class RemotePresenter {
     if (!parsed.success) return;
     this.store.host = parsed.data;
     this.store.hostReceivedAtMs = Date.now();
-    if (this.releasedDrags.delete('seek')) this.store.seekDraftSec = undefined;
-    if (this.releasedDrags.delete('setVolume')) this.store.volumeDraft = undefined;
+    for (const kind of DRAG_KINDS) if (this.releasedDrags.delete(kind)) this.clearDraft(kind);
+    // The slider unmounts with the vocals, so a drag cut short by that never releases.
+    if (parsed.data.vocals == null) this.clearDraft('setVocalVolume');
+  }
+
+  private clearDraft(kind: DragKind): void {
+    switch (kind) {
+      case 'seek':
+        this.store.seekDraftSec = undefined;
+        return;
+      case 'setVolume':
+        this.store.volumeDraft = undefined;
+        return;
+      case 'setVocalVolume':
+        this.store.vocalVolumeDraft = undefined;
+        return;
+    }
   }
 
   private onReply(reply: HostReply): void {

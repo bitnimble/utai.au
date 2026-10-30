@@ -146,6 +146,11 @@ pub fn audio_set_output_volume(volume: f32, state: State<'_, AudioState>) {
     state.0.set_output_volume(volume);
 }
 
+#[tauri::command]
+pub fn audio_set_output_delay(secs: f32, state: State<'_, AudioState>) {
+    state.0.set_track_delay_secs(secs);
+}
+
 /// `input`/`output` are device names (`None` = system default); `capture`
 /// is false when the mic is set to "None".
 #[tauri::command]

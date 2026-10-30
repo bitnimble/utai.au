@@ -1,5 +1,5 @@
 import type { AudioTrack, AudioTrackId } from './audio_tracks';
-import type { AudioOutput } from './playback_engine';
+import { MAX_AUDIO_OFFSET_SEC, type AudioOutput } from './playback_engine';
 import {
   createTrackEffects,
   endTrackEffects,
@@ -21,6 +21,9 @@ export class WebAudioOutput implements AudioOutput {
 
   private ctx: AudioContext | undefined;
   private masterGain: GainNode | undefined;
+  private trackBus: GainNode | undefined;
+  private trackDelay: DelayNode | undefined;
+  private outputDelaySec = 0;
   private controller: AudioTrackPlaybackController | undefined;
   private readonly tracks = new Map<AudioTrackId, AudioTrack>();
   private playing = false;
@@ -49,10 +52,16 @@ export class WebAudioOutput implements AudioOutput {
     this.controller?.setTrackEffects(id, trackEffectMask(effects));
   }
 
+  setOutputDelay(sec: number): void {
+    this.outputDelaySec = sec;
+    if (this.trackDelay) this.trackDelay.delayTime.value = sec;
+  }
+
   async start(fromSec: number): Promise<void> {
     const ctx = await this.runningContext();
     this.controller?.dispose();
-    this.controller = new AudioTrackPlaybackController(ctx, this.getOutputNode());
+    this.emptyTrackDelay();
+    this.controller = new AudioTrackPlaybackController(ctx, this.getTrackBus());
     this.playing = true;
     this.reschedule(ctx.currentTime + SCHEDULE_LEAD_SECONDS, fromSec);
   }
@@ -61,6 +70,7 @@ export class WebAudioOutput implements AudioOutput {
     this.startPlaySec = this.positionSec();
     this.playing = false;
     this.controller?.cancelSources();
+    this.emptyTrackDelay();
   }
 
   async resume(): Promise<void> {
@@ -70,6 +80,7 @@ export class WebAudioOutput implements AudioOutput {
   }
 
   seek(sec: number): void {
+    this.emptyTrackDelay();
     if (this.playing && this.ctx) this.reschedule(this.ctx.currentTime, sec);
     else this.startPlaySec = sec;
   }
@@ -77,6 +88,7 @@ export class WebAudioOutput implements AudioOutput {
   stop(): void {
     this.controller?.dispose();
     this.controller = undefined;
+    this.emptyTrackDelay();
     this.playing = false;
     this.startPlaySec = 0;
   }
@@ -93,6 +105,8 @@ export class WebAudioOutput implements AudioOutput {
       this.ctx = new AudioContext();
       this.masterGain = this.ctx.createGain();
       this.masterGain.connect(this.ctx.destination);
+      this.trackBus = this.ctx.createGain();
+      this.connectTrackDelay(this.ctx, this.trackBus, this.masterGain);
     }
     return this.ctx;
   }
@@ -116,6 +130,27 @@ export class WebAudioOutput implements AudioOutput {
     const ctx = this.getAudioContext();
     if (typeof ctx.setSinkId !== 'function') return;
     await ctx.setSinkId(sinkId);
+  }
+
+  private getTrackBus(): GainNode {
+    this.getAudioContext();
+    if (!this.trackBus) throw new Error('track bus not initialised');
+    return this.trackBus;
+  }
+
+  /** A DelayNode can't be emptied, and once the sources stop it would still play out up to its delay. */
+  private emptyTrackDelay(): void {
+    if (!this.ctx || !this.trackBus || !this.masterGain || this.outputDelaySec === 0) return;
+    this.trackBus.disconnect();
+    this.trackDelay?.disconnect();
+    this.connectTrackDelay(this.ctx, this.trackBus, this.masterGain);
+  }
+
+  private connectTrackDelay(ctx: AudioContext, bus: GainNode, master: GainNode): void {
+    this.trackDelay = ctx.createDelay(MAX_AUDIO_OFFSET_SEC);
+    this.trackDelay.delayTime.value = this.outputDelaySec;
+    bus.connect(this.trackDelay);
+    this.trackDelay.connect(master);
   }
 
   private async runningContext(): Promise<AudioContext> {

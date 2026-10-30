@@ -4,6 +4,8 @@ import {
   ArrowUp,
   ListPlus,
   ListStart,
+  MicOff,
+  MicVocal,
   Music,
   Pause,
   Play,
@@ -202,6 +204,32 @@ const NowPlaying = observer(function NowPlaying({ store, presenter }: Props) {
           testId="remote-volume"
         />
       </div>
+      {host?.vocals != null && (
+        <div className={styles.volumeRow}>
+          <button
+            type="button"
+            className={styles.iconButton}
+            disabled={!store.connected}
+            onClick={() => presenter.toggleVocals()}
+            aria-pressed={!host.vocals.muted}
+            aria-label={host.vocals.muted ? 'Turn the vocals on' : 'Turn the vocals off'}
+            data-testid="remote-vocals-toggle"
+          >
+            {host.vocals.muted ? <MicOff size={18} aria-hidden="true" /> : <MicVocal size={18} aria-hidden="true" />}
+          </button>
+          <Slider
+            className={styles.seek}
+            value={Math.round(store.vocalVolume * 100)}
+            max={100}
+            step={1}
+            disabled={!store.connected}
+            onChange={(v) => presenter.setVocalVolume(v / 100)}
+            onCommit={() => presenter.release('setVocalVolume')}
+            ariaLabel="Vocal volume"
+            testId="remote-vocal-volume"
+          />
+        </div>
+      )}
     </section>
   );
 });

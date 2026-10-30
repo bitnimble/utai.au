@@ -65,6 +65,38 @@ pub fn apply_master(out: &mut [f32], gain: f32) {
     out.iter_mut().for_each(|s| *s *= gain);
 }
 
+/// Delays interleaved-stereo blocks by a variable number of frames, up to the
+/// capacity it was built with. Allocates only in `new`.
+pub struct DelayLine {
+    buf: Vec<f32>,
+    write: usize,
+}
+
+impl DelayLine {
+    pub fn new(max_frames: usize) -> Self {
+        Self {
+            buf: vec![0.0; (max_frames + 1) * 2],
+            write: 0,
+        }
+    }
+
+    /// Replace `block` with what was fed in `delay_frames` frames earlier
+    /// (clamped to the capacity).
+    pub fn process(&mut self, block: &mut [f32], delay_frames: usize) {
+        let len = self.buf.len();
+        let delay = delay_frames.min(len / 2 - 1) * 2;
+        for s in block.iter_mut() {
+            self.buf[self.write] = *s;
+            *s = self.buf[(self.write + len - delay) % len];
+            self.write = (self.write + 1) % len;
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.buf.fill(0.0);
+    }
+}
+
 /// RMS level of an interleaved buffer in [0, 1], for the input meter.
 pub fn rms(samples: &[f32]) -> f32 {
     if samples.is_empty() {
@@ -87,6 +119,39 @@ mod tests {
         }
         add_block(out, mic, mic_gain);
         apply_master(out, master);
+    }
+
+    #[test]
+    fn delay_line_shifts_frames_across_blocks() {
+        let mut d = DelayLine::new(4);
+        let mut a = [1.0, -1.0, 2.0, -2.0];
+        d.process(&mut a, 3);
+        assert_eq!(a, [0.0; 4]);
+        let mut b = [3.0, -3.0, 4.0, -4.0];
+        d.process(&mut b, 3);
+        assert_eq!(b, [0.0, 0.0, 1.0, -1.0]);
+        let mut c = [5.0, -5.0];
+        d.process(&mut c, 0);
+        assert_eq!(c, [5.0, -5.0]);
+    }
+
+    #[test]
+    fn cleared_delay_line_holds_only_silence() {
+        let mut d = DelayLine::new(4);
+        let mut a = [1.0, 1.0, 2.0, 2.0];
+        d.process(&mut a, 2);
+        d.clear();
+        let mut b = [3.0, 3.0, 4.0, 4.0];
+        d.process(&mut b, 2);
+        assert_eq!(b, [0.0; 4]);
+    }
+
+    #[test]
+    fn delay_line_clamps_to_capacity() {
+        let mut d = DelayLine::new(1);
+        let mut a = [1.0, 1.0, 2.0, 2.0];
+        d.process(&mut a, 10);
+        assert_eq!(a, [0.0, 0.0, 1.0, 1.0]);
     }
 
     #[test]
