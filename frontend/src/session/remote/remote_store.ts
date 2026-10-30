@@ -52,7 +52,7 @@ export class RemoteStore {
     if (host.playback !== 'playing' || !this.connected) return host.positionSec;
     const elapsedSec = (now(POSITION_TICK_MS) - this.hostReceivedAtMs) / 1000;
     const durationSec = host.nowPlaying?.durationSec ?? Infinity;
-    return Math.min(durationSec, host.positionSec + elapsedSec);
+    return Math.min(durationSec, host.positionSec + elapsedSec * host.speed);
   }
 
   get outputVolume(): number {

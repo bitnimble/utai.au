@@ -11,7 +11,8 @@
 //! clock, e.g. an ASIO interface). WASAPI-exclusive + ASIO tuning are follow-ups.
 
 use crate::effects::EffectChain;
-use crate::transport::Transport;
+use crate::stretch::TrackStretch;
+use crate::transport::{SpeedClock, Transport};
 use crate::{decode::DecodedTrack, mixer, resample};
 use arc_swap::ArcSwap;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -50,6 +51,8 @@ pub struct MixTrack {
     pub gain: f32,
     /// Only the output callback locks it.
     pub effects: Option<Arc<Mutex<EffectChain>>>,
+    /// Only the output callback locks it. Present while the speed isn't 1.
+    pub stretch: Option<Arc<Mutex<TrackStretch>>>,
 }
 
 /// One track as the control thread owns it: the decoded source (kept for
@@ -63,6 +66,7 @@ struct SourceTrack {
     gain: f32,
     effect_mask: u32,
     effects: Option<Arc<Mutex<EffectChain>>>,
+    stretch: Option<Arc<Mutex<TrackStretch>>>,
 }
 
 /// State shared with the real-time callbacks. The callbacks touch only the
@@ -127,6 +131,7 @@ fn publish(shared: &Shared, sources: &[SourceTrack]) {
             samples: s.resampled.clone(),
             gain: s.gain,
             effects: s.effects.clone(),
+            stretch: s.stretch.clone(),
         })
         .collect();
     let total = sources
@@ -153,12 +158,17 @@ fn reresample_all(shared: &Shared) {
             rate,
         ));
         s.effects = effect_chain(s.effect_mask, rate);
+        s.stretch = track_stretch(shared.transport.speed(), rate);
     }
     publish(shared, &sources);
 }
 
 fn effect_chain(mask: u32, rate: u32) -> Option<Arc<Mutex<EffectChain>>> {
     (mask != 0 && rate > 0).then(|| Arc::new(Mutex::new(EffectChain::new(mask, rate))))
+}
+
+fn track_stretch(speed: f64, rate: u32) -> Option<Arc<Mutex<TrackStretch>>> {
+    (speed != 1.0 && rate > 0).then(|| Arc::new(Mutex::new(TrackStretch::new(rate))))
 }
 
 /// Switch to a new output rate, preserving the current playback *time* across
@@ -247,6 +257,7 @@ impl AudioEngine {
                 gain: 1.0,
                 effect_mask: 0,
                 effects: None,
+                stretch: track_stretch(self.shared.transport.speed(), rate),
             });
         }
         publish(&self.shared, &sources);
@@ -285,6 +296,28 @@ impl AudioEngine {
             s.effect_mask = mask;
             s.effects = effect_chain(mask, rate);
             publish(&self.shared, &sources);
+        }
+    }
+
+    /// Heard from the next block.
+    pub fn set_speed(&self, speed: f64) {
+        let mut sources = self.shared.sources.lock().unwrap();
+        // Under the lock: `retune` stores the new rate before rebuilding the stretches.
+        let rate = self.rate();
+        // In the order that never pairs an unstretched track with a speed other than 1, which
+        // would stutter for a block.
+        if speed == 1.0 {
+            self.shared.transport.set_speed(speed);
+        }
+        for s in sources.iter_mut() {
+            // Kept between speeds, so a change carries on from what's already overlapping.
+            if speed == 1.0 || s.stretch.is_none() {
+                s.stretch = track_stretch(speed, rate);
+            }
+        }
+        publish(&self.shared, &sources);
+        if speed != 1.0 {
+            self.shared.transport.set_speed(speed);
         }
     }
 
@@ -515,6 +548,7 @@ where
     let mut mic = Vec::<f32>::new();
     let mut mix = Vec::<f32>::new();
     let mut effected = Vec::<f32>::new();
+    let mut speed_clock = SpeedClock::default();
     let rate = cfg.sample_rate.0 as f32;
     let mut track_delay = mixer::DelayLine::new((rate * MAX_TRACK_DELAY_SECS).ceil() as usize);
     dev.build_output_stream(
@@ -542,8 +576,17 @@ where
                 }
             }
 
+            // Before the position and speed: a jump landing mid-read must delay the stretcher's
+            // seek a block, not seek it to the old position under the new epoch.
+            let discontinuity = shared.transport.discontinuity();
             let playing = shared.transport.is_playing();
-            let start = shared.transport.advance_playing(frames as u64) as usize;
+            let speed = shared.transport.speed();
+            let source_frames = if playing {
+                speed_clock.source_frames(frames, speed)
+            } else {
+                frames
+            };
+            let start = shared.transport.advance_playing(source_frames as u64) as usize;
             // Sum every track at its own gain, delay that sum, add the mic, then master. Tracks
             // are gated by `playing` (the mic monitor stays live when stopped).
             let tracks = shared.tracks.load();
@@ -551,19 +594,28 @@ where
             for t in tracks.iter() {
                 // Processed even when muted or paused so the tail decays, as the
                 // web AudioWorklet's does, instead of freezing and replaying later.
-                match t.effects.as_ref().and_then(|fx| fx.try_lock().ok()) {
-                    Some(mut fx) => {
-                        if playing {
-                            mixer::read_track(&mut effected, t.samples.as_slice(), start);
-                        } else {
-                            mixer::silence(&mut effected);
-                        }
-                        fx.process(&mut effected);
-                        mixer::add_block(&mut mix, &effected, t.gain);
+                let effects = t.effects.as_ref().and_then(|fx| fx.try_lock().ok());
+                let mut stretch = t.stretch.as_ref().and_then(|st| st.try_lock().ok());
+                if !playing || (t.gain == 0.0 && effects.is_none()) {
+                    if let Some(st) = stretch.as_mut() {
+                        st.skip();
                     }
-                    None if playing => mixer::add_track(&mut mix, t.samples.as_slice(), start, t.gain),
-                    None => {}
+                    if effects.is_none() {
+                        continue;
+                    }
+                    mixer::silence(&mut effected);
+                } else if let Some(st) = stretch.as_mut() {
+                    st.render(&mut effected, t.samples.as_slice(), start, source_frames, speed, discontinuity);
+                } else if effects.is_none() {
+                    mixer::add_track(&mut mix, t.samples.as_slice(), start, t.gain);
+                    continue;
+                } else {
+                    mixer::read_track(&mut effected, t.samples.as_slice(), start);
                 }
+                if let Some(mut fx) = effects {
+                    fx.process(&mut effected);
+                }
+                mixer::add_block(&mut mix, &effected, t.gain);
             }
             if shared.clear_track_delay.swap(false, Ordering::Relaxed) {
                 track_delay.clear();

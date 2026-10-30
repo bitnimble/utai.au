@@ -131,6 +131,20 @@ test('a pitch sidecar that fails to start rejects and releases the capture', asy
   expect(sent('audio_set_devices').at(-1)).toEqual({ input: null, output: null, capture: false });
 });
 
+test('a speed change tells Rust and runs the position on at the new rate from where it was', async () => {
+  const output = initedOutput();
+  await output.start(0);
+  telemetry?.(frame(0, true));
+  nowMs += 2000;
+  commands.length = 0;
+  output.setSpeed(0.5);
+  await flush();
+  expect(transportCommands()).toEqual([['audio_set_speed', { speed: 0.5 }]]);
+  expect(output.positionSec()).toBeCloseTo(2, 5);
+  nowMs += 1000;
+  expect(output.positionSec()).toBeCloseTo(2.5, 5);
+});
+
 test('a seek while playing moves Rust and keeps the position running from there', async () => {
   const output = initedOutput();
   await output.start(0);

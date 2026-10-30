@@ -29,7 +29,11 @@ rustfft = "6.4"
 cpal = { version = "0.15", optional = true }
 arc-swap = { version = "1", optional = true }
 log = { version = "0.4", optional = true }
+# Compiles the Signalsmith Stretch C++, so behind a feature: the WASM effects
+# build has no C++ toolchain to run it with.
+ssstretch = { version = "0.1", optional = true }
 
 [features]
 default = []
-device = ["dep:cpal", "dep:arc-swap", "dep:log"]
+stretch = ["dep:ssstretch"]
+device = ["stretch", "dep:cpal", "dep:arc-swap", "dep:log"]

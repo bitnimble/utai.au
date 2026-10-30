@@ -1,0 +1,4 @@
+[env]
+# MSVC reports __cplusplus as C++98 without this, so ssstretch's bridge.h defines its own
+# std::make_unique, which collides with the real one and fails the Windows build.
+CXXFLAGS_x86_64_pc_windows_msvc = "/Zc:__cplusplus"

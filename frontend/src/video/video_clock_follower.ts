@@ -18,7 +18,7 @@ export class VideoClockFollower {
     private readonly now: () => number = () => performance.now(),
   ) {}
 
-  follow(audioSec: number, playing: boolean): void {
+  follow(audioSec: number, playing: boolean, rate = 1): void {
     if (!playing) {
       this.correction = undefined;
       if (this.backing.getTime() !== audioSec) this.backing.seek(audioSec);
@@ -26,7 +26,7 @@ export class VideoClockFollower {
     }
     if (this.correction != null) {
       const elapsedSec = (this.now() - this.correction.startedAt) / 1000;
-      const audioJumped = Math.abs(audioSec - (this.correction.audioSec + elapsedSec)) > DRIFT_TOLERANCE_SEC;
+      const audioJumped = Math.abs(audioSec - (this.correction.audioSec + elapsedSec * rate)) > DRIFT_TOLERANCE_SEC;
       // Mid-seek the backing reports the seek target, not a frame it shows; re-seeking
       // here restarts the load, so a seek slower than the tolerance never lands.
       if (this.backing.isBuffering() && !audioJumped && elapsedSec <= MAX_SEEK_WAIT_SEC) return;
@@ -34,7 +34,7 @@ export class VideoClockFollower {
       this.correction = undefined;
     }
     if (Math.abs(this.backing.getTime() - audioSec) <= DRIFT_TOLERANCE_SEC) return;
-    this.backing.seek(audioSec + this.seekLeadSec);
+    this.backing.seek(audioSec + this.seekLeadSec * rate);
     this.correction = { startedAt: this.now(), audioSec };
   }
 }

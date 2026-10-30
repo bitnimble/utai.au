@@ -12,8 +12,7 @@ import path from 'node:path';
  *   - `patchCssModules()`, the CSS-module files use `composes: … from`,
  *     which Vite core mishandles; the app patches it and so must SB.
  *   - the `src` import alias, the codebase imports via `src/…`.
- * The `es2022` esbuild target matches the app (keeps class fields native;
- * see the note in vite.config.ts about the signalsmith-stretch worklet).
+ * The `es2022` esbuild target matches the app.
  */
 const config: StorybookConfig = {
   stories: ['../frontend/src/**/stories/*.stories.@(ts|tsx)'],

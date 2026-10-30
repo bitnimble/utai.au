@@ -20,6 +20,7 @@ function setup(): {
       backing.time = s;
       backing.buffering = true;
     },
+    setRate: () => {},
     getTime: () => backing.time,
     isBuffering: () => backing.buffering,
     destroy: () => {},
@@ -49,6 +50,36 @@ describe('VideoClockFollower', () => {
     backing.time = 5.1;
     follower.follow(5, true);
     expect(backing.seeks).toEqual([1, 5]);
+  });
+
+  test('slowed down, a seek in progress is not mistaken for an audio jump, and leads by song time', () => {
+    const { backing, follower, advance } = setup();
+    follower.follow(1, true, 0.5);
+    for (let ms = 125; ms <= 2000; ms += 125) {
+      advance(125);
+      follower.follow(1 + ms / 2000, true, 0.5);
+    }
+    expect(backing.seeks).toEqual([1]);
+
+    backing.buffering = false;
+    follower.follow(2, true, 0.5);
+    expect(backing.seeks).toEqual([1, 3]);
+  });
+
+  test('a seek timed at one speed leads the next by the song time it takes at the new speed', () => {
+    const { backing, follower, advance } = setup();
+    follower.follow(1, true);
+    advance(2000);
+    backing.buffering = false;
+    follower.follow(3, true);
+    expect(backing.seeks).toEqual([1, 5]);
+
+    backing.buffering = false;
+    advance(2000);
+    backing.time = 5;
+    follower.follow(5, true, 0.5);
+    follower.follow(10, true, 0.5);
+    expect(backing.seeks).toEqual([1, 5, 11]);
   });
 
   test('caps the lead', () => {

@@ -26,7 +26,7 @@ import type { SessionHostStore } from './session_host_store';
 
 export type SearchTracks = (query: string, signal?: AbortSignal) => Promise<TrackResult[]>;
 
-type Transport = Pick<PlaybackEngine, 'state' | 'currentTime' | 'pause' | 'audioTracks'>;
+type Transport = Pick<PlaybackEngine, 'state' | 'currentTime' | 'speed' | 'pause' | 'audioTracks'>;
 
 export type SessionHostDeps = {
   queue: QueueStore;
@@ -312,6 +312,7 @@ export class SessionHostPresenter {
             }
           : null,
       playback: transport.state === 'playing' || transport.state === 'paused' ? transport.state : 'idle',
+      speed: transport.speed,
       outputVolume: audioDevice.outputVolume,
       vocals: vocals ? { volume: vocals.volume, muted: vocals.muted } : null,
       queue: queue.items.map(toRemoteItem),

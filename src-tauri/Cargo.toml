@@ -65,3 +65,6 @@ opt-level = 3
 
 [profile.dev.package.rustfft]
 opt-level = 3
+
+[profile.dev.package.ssstretch]
+opt-level = 3

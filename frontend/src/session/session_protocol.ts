@@ -55,6 +55,7 @@ export const hostStateSchema = z.object({
     .nullable(),
   playback: z.enum(['idle', 'playing', 'paused']),
   positionSec: z.number(),
+  speed: z.number().default(1),
   outputVolume: z.number(),
   /** The current song's vocal stem; null until it's separated. */
   vocals: z.object({ volume: z.number(), muted: z.boolean() }).nullable().default(null),

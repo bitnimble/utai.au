@@ -17,6 +17,8 @@ type TrackMix = { readonly volume: number; readonly muted: boolean };
 
 const PLAYBACK_TAIL_SECONDS = 0.5;
 export const MAX_AUDIO_OFFSET_SEC = 1;
+export const MIN_SPEED = 0.5;
+export const MAX_SPEED = 1.5;
 
 /** The Web Audio graph (web, Android) or the Rust/cpal engine (desktop). */
 export interface AudioOutput {
@@ -28,6 +30,8 @@ export interface AudioOutput {
   /** Delays the song tracks (not the mic monitor) by `sec`, in [0, {@link MAX_AUDIO_OFFSET_SEC}].
    *  Pause, seek and stop drop whatever the delay still holds. */
   setOutputDelay(sec: number): void;
+  /** Keeps pitch; heard at once, from the current position. */
+  setSpeed(speed: number): void;
   start(fromSec: number): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
@@ -43,6 +47,8 @@ export class PlaybackEngine {
   currentTime = 0;
   /** How far the audio is heard after `currentTime`; negative = before. */
   audioOffsetSec = 0;
+  /** Song seconds per second heard. */
+  speed = 1;
   timeline: UtaiTimeline = EMPTY_TIMELINE;
   /** The playhead was positioned while idle; the next play starts there. */
   cued = false;
@@ -149,14 +155,23 @@ export class PlaybackEngine {
     if (offset === this.audioOffsetSec) return;
     this.audioOffsetSec = offset;
     this.output.setOutputDelay(this.outputDelaySec);
-    if (this.state === 'paused') this.seekOutput(this.currentTime + this.presentationLagSec);
+    if (this.state === 'paused') this.seekOutput(this.outputSecAt(this.currentTime));
+    if (this.state === 'playing') this.scheduleEndTimer();
+  }
+
+  setSpeed(rate: number): void {
+    const speed = Math.round(Math.max(MIN_SPEED, Math.min(MAX_SPEED, rate)) * 100) / 100;
+    if (speed === this.speed) return;
+    this.speed = speed;
+    this.output.setSpeed(speed);
+    if (this.state === 'paused') this.seekOutput(this.outputSecAt(this.currentTime));
     if (this.state === 'playing') this.scheduleEndTimer();
   }
 
   async play(): Promise<void> {
     const dur = this.durationSec;
     if (dur <= 0) return;
-    const fromSec = this.cued ? this.currentTime + this.presentationLagSec : 0;
+    const fromSec = this.cued ? this.outputSecAt(this.currentTime) : 0;
     this.stop();
     this.state = 'loading';
     this.feedStartSec = fromSec;
@@ -190,7 +205,7 @@ export class PlaybackEngine {
     await this.output.pause();
     // The output dropped the audio still in its delay: resume from the last of it actually heard.
     if (this.outputDelaySec > 0) {
-      this.seekOutput(Math.max(this.feedStartSec, this.output.positionSec() - this.outputDelaySec));
+      this.seekOutput(Math.max(this.feedStartSec, this.output.positionSec() - this.outputDelaySec * this.speed));
     }
     runInAction(() => {
       this.state = 'paused';
@@ -232,7 +247,7 @@ export class PlaybackEngine {
       this.cued = true;
       return;
     }
-    this.seekOutput(target + this.presentationLagSec);
+    this.seekOutput(this.outputSecAt(target));
     if (this.state === 'playing') this.scheduleEndTimer();
   }
 
@@ -285,7 +300,11 @@ export class PlaybackEngine {
   }
 
   private presentedAt(outputSec: number): number {
-    return Math.min(Math.max(0, outputSec - this.presentationLagSec), this.durationSec);
+    return Math.min(Math.max(0, outputSec - this.presentationLagSec * this.speed), this.durationSec);
+  }
+
+  private outputSecAt(songSec: number): number {
+    return songSec + this.presentationLagSec * this.speed;
   }
 
   private startRaf(): void {
@@ -313,7 +332,8 @@ export class PlaybackEngine {
   private scheduleEndTimer(): void {
     this.clearEndTimer();
     // Whichever of the audio and the rest is behind finishes |offset| after the output does.
-    const remainingSec = this.durationSec + Math.abs(this.audioOffsetSec) - this.output.positionSec();
+    const remainingSec =
+      (this.durationSec - this.output.positionSec()) / this.speed + Math.abs(this.audioOffsetSec);
     this.endTimerId = window.setTimeout(
       () => this.finish(),
       Math.max(0, (remainingSec + PLAYBACK_TAIL_SECONDS) * 1000),

@@ -117,6 +117,11 @@ pub fn audio_set_track_effects(id: String, effects: u32, state: State<'_, AudioS
 }
 
 #[tauri::command]
+pub fn audio_set_speed(speed: f64, state: State<'_, AudioState>) {
+    state.0.set_speed(speed);
+}
+
+#[tauri::command]
 pub fn audio_play(state: State<'_, AudioState>) {
     state.0.play();
 }

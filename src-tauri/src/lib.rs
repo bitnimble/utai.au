@@ -121,6 +121,7 @@ pub fn run() {
             audio::audio_remove_track,
             audio::audio_set_track_gain,
             audio::audio_set_track_effects,
+            audio::audio_set_speed,
             audio::audio_play,
             audio::audio_pause,
             audio::audio_stop,
