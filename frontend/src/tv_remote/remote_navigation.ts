@@ -123,7 +123,7 @@ function unlock(field: HTMLInputElement | HTMLTextAreaElement): void {
   field.readOnly = false;
 }
 
-function isTyped(element: Element | null): element is HTMLInputElement | HTMLTextAreaElement {
+export function isTyped(element: Element | null): element is HTMLInputElement | HTMLTextAreaElement {
   return (
     element instanceof HTMLTextAreaElement ||
     (element instanceof HTMLInputElement && !UNTYPED.has(element.type))
@@ -134,10 +134,15 @@ function isTyped(element: Element | null): element is HTMLInputElement | HTMLTex
 function goBack(): boolean {
   const active = document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
   const inLayer =
-    active.closest(`${LAYER}, [aria-haspopup][aria-expanded="true"]`) != null || openLayers().length > 0;
+    active.closest(`${LAYER}, [aria-haspopup][aria-expanded="true"]`) != null || hasOpenLayer();
   const escape = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true });
   // Popups close on Escape without preventing its default.
   return !active.dispatchEvent(escape) || inLayer;
+}
+
+/** A dialog or popup is open, so Escape belongs to it. */
+export function hasOpenLayer(): boolean {
+  return openLayers().length > 0;
 }
 
 /** Open dialogs and popups in document order, which for portals is the order they opened in. */
