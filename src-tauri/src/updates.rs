@@ -70,5 +70,29 @@ pub async fn update_install<R: Runtime>(
         )
         .await
         .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    restart_frontmost(&app);
+    #[cfg(not(target_os = "macos"))]
     app.restart()
+}
+
+#[cfg(target_os = "macos")]
+fn restart_frontmost<R: Runtime>(app: &AppHandle<R>) -> ! {
+    use tauri::Manager;
+
+    app.cleanup_before_exit();
+    crate::shutdown_children(app);
+    let env = app.env();
+    let launched = tauri::process::current_binary(&env).ok().and_then(|exe| {
+        let bundle = exe.ancestors().nth(3)?;
+        // Not restart(): macOS starts a directly exec'd binary behind other apps, LaunchServices
+        // activates it. -n, else `open` just re-activates this exiting instance.
+        let status = std::process::Command::new("open").arg("-n").arg(bundle).status().ok()?;
+        status.success().then_some(())
+    });
+    if launched.is_none() {
+        log::warn!("open failed to relaunch the app; restarting it in the background");
+        tauri::process::restart(&env);
+    }
+    std::process::exit(0)
 }
