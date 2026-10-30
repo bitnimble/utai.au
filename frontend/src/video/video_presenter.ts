@@ -3,13 +3,9 @@ import { playbackEngine } from 'src/editing/playback/player';
 import { BackingVideo } from './backing_video';
 import { createNativeVideo } from './native_video';
 import { resolveBackingVideoUrl } from './video_client';
+import { VideoClockFollower } from './video_clock_follower';
 import { VideoStore } from './video_store';
 import { createYouTubePlayer, YouTubePlayerHandle } from './youtube_player';
-
-/** Re-seek the video when it drifts from the audio clock by more than this
- *  (seconds). Loose enough not to fight normal decode jitter, tight enough
- *  that a muted backing video stays visually in step. */
-const DRIFT_TOLERANCE_SEC = 0.3;
 
 /**
  * Orchestrates the muted backing video against the audio transport
@@ -35,6 +31,7 @@ export class VideoPresenter {
    *  produce). */
   private epoch = 0;
   private resolveController: AbortController | undefined;
+  private follower: VideoClockFollower | undefined;
 
   constructor(private readonly store: VideoStore) {}
 
@@ -65,7 +62,7 @@ export class VideoPresenter {
     for (const dispose of this.disposers) dispose();
     this.disposers = [];
     this.backing?.destroy();
-    this.backing = undefined;
+    this.setBacking(undefined);
     this.embedHandle = undefined;
     this.videoEl = undefined;
     this.loadedVideoId = undefined;
@@ -78,7 +75,7 @@ export class VideoPresenter {
    *  falls back to the embed. */
   private async loadNative(epoch: number): Promise<void> {
     this.backing?.destroy();
-    this.backing = undefined;
+    this.setBacking(undefined);
     this.loadedVideoId = undefined;
     this.resolveController?.abort();
     const el = this.videoEl;
@@ -90,10 +87,12 @@ export class VideoPresenter {
       const src = await resolveBackingVideoUrl(id, { signal: controller.signal });
       // A newer attach/detach or video change superseded this fetch.
       if (this.epoch !== epoch || this.store.videoId !== id) return;
-      this.backing = createNativeVideo(el, src, {
-        onReady: () => this.applyTransport(),
-        onError: () => this.markNativeFailed(id),
-      });
+      this.setBacking(
+        createNativeVideo(el, src, {
+          onReady: () => this.applyTransport(),
+          onError: () => this.markNativeFailed(id),
+        }),
+      );
       this.loadedVideoId = id;
       this.applyTransport();
     } catch (err) {
@@ -118,7 +117,7 @@ export class VideoPresenter {
         return;
       }
       this.embedHandle = handle;
-      this.backing = handle;
+      this.setBacking(handle);
       this.syncEmbed();
     } catch (err) {
       if (this.epoch === epoch) console.error('[video] failed to init YouTube player', err);
@@ -138,6 +137,7 @@ export class VideoPresenter {
     if (id !== this.loadedVideoId) {
       handle.cue(id);
       this.loadedVideoId = id;
+      this.setBacking(handle);
     }
     this.applyTransport();
   }
@@ -152,25 +152,18 @@ export class VideoPresenter {
       backing.pause();
       return;
     }
-    if (playbackEngine.state === 'playing') {
-      this.syncTime();
-      backing.play();
-    } else {
-      backing.seek(playbackEngine.currentTime);
-      backing.pause();
-    }
+    this.syncTime();
+    if (playbackEngine.state === 'playing') backing.play();
+    else backing.pause();
   }
 
-  /** Keep the backing on the audio clock: exact while scrubbing (paused),
-   *  drift-corrected while playing so we don't seek every frame. */
   private syncTime(): void {
-    const backing = this.backing;
-    if (!backing || !backing.isReady() || this.store.videoId == null) return;
-    const t = playbackEngine.currentTime;
-    if (playbackEngine.state === 'playing') {
-      if (Math.abs(backing.getTime() - t) > DRIFT_TOLERANCE_SEC) backing.seek(t);
-    } else {
-      backing.seek(t);
-    }
+    if (!this.backing?.isReady() || this.store.videoId == null) return;
+    this.follower?.follow(playbackEngine.currentTime, playbackEngine.state === 'playing');
+  }
+
+  private setBacking(backing: BackingVideo | undefined): void {
+    this.backing = backing;
+    this.follower = backing && new VideoClockFollower(backing);
   }
 }

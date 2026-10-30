@@ -43,6 +43,7 @@ export function createNativeVideo(
       el.currentTime = seconds;
     },
     getTime: () => el.currentTime,
+    isBuffering: () => el.seeking || el.readyState < el.HAVE_FUTURE_DATA,
     destroy: () => {
       el.removeEventListener('loadedmetadata', handleReady);
       el.removeEventListener('error', handleError);

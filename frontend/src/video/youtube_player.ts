@@ -6,12 +6,15 @@
  * so the rest of the app never touches the global `YT` namespace.
  */
 
+import type { BackingVideo } from './backing_video';
+
 /** The slice of the YT.Player API we use. */
 type YouTubePlayerApi = {
   playVideo(): void;
   pauseVideo(): void;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
+  getPlayerState(): number;
   mute(): void;
   cueVideoById(videoId: string): void;
   destroy(): void;
@@ -35,15 +38,9 @@ declare global {
   }
 }
 
-export type YouTubePlayerHandle = {
-  isReady(): boolean;
-  cue(videoId: string): void;
-  play(): void;
-  pause(): void;
-  seek(seconds: number): void;
-  getTime(): number;
-  destroy(): void;
-};
+export type YouTubePlayerHandle = BackingVideo & { cue(videoId: string): void };
+
+const YT_STATE_BUFFERING = 3;
 
 let apiPromise: Promise<YouTubeNamespace> | undefined;
 
@@ -104,6 +101,7 @@ export async function createYouTubePlayer(
     pause: () => player.pauseVideo(),
     seek: (seconds) => player.seekTo(seconds, true),
     getTime: () => player.getCurrentTime(),
+    isBuffering: () => player.getPlayerState() === YT_STATE_BUFFERING,
     destroy: () => player.destroy(),
   };
 }
