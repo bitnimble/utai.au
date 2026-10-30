@@ -108,6 +108,18 @@ def _profiling() -> bool:
     return os.environ.get("UTAI_COREML_PROFILE", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _dml_body(onnx_path) -> bytes:
+    """The body with its add-scatter as a MatMul: DML's kernel rejects any reduction, and
+    the CPU EP that would inherit the node has no fp16 add."""
+    import onnx
+
+    from app.pipeline.separation.coreml_optimize import rewrite_scatter_add
+
+    model = onnx.load(str(onnx_path))
+    rewrite_scatter_add(model.graph)
+    return model.SerializeToString()
+
+
 def _ort_session(onnx_path, providers):
     import onnxruntime as ort
 
@@ -123,16 +135,15 @@ def _ort_session(onnx_path, providers):
     so.enable_mem_pattern = False
     if _profiling():
         so.log_severity_level = 0  # VERBOSE
-    coreml = any((p if isinstance(p, str) else p[0]) == "CoreMLExecutionProvider" for p in providers)
+    names = [p if isinstance(p, str) else p[0] for p in providers]
     # The CoreML EP writes a Gemm's weights into model.mil as text, a MatMul's to weight.bin.
     # Fused, the Roformer's model.mil is 2.7 GB, which CoreML re-parses on every load.
-    disabled_optimizers = ["MatMulAddFusion"] if coreml else None
+    disabled_optimizers = ["MatMulAddFusion"] if "CoreMLExecutionProvider" in names else None
+    model = _dml_body(onnx_path) if "DmlExecutionProvider" in names else str(onnx_path)
     try:
         sess = ort.InferenceSession(
-            str(onnx_path), sess_options=so, providers=providers, disabled_optimizers=disabled_optimizers
+            model, sess_options=so, providers=providers, disabled_optimizers=disabled_optimizers
         )
-        log_bound_ep(sess, onnx_path)
-        return sess
     except Exception as e:
         # fp16 separation graphs weren't validated on the CPU EP; a silent fallback
         # would run unvalidated numerics (or crash), so fail loud. fp32 runs on CPU.
@@ -143,8 +154,15 @@ def _ort_session(onnx_path, providers):
                 "or provision the fp32 body."
             ) from e
         sess = ort.InferenceSession(str(onnx_path), sess_options=so, providers=["CPUExecutionProvider"])
-        log_bound_ep(sess, onnx_path)
-        return sess
+    log_bound_ep(sess, onnx_path)
+    # ORT doesn't raise when a GPU EP fails to load, it drops to CPU, where the body's fp16
+    # add-ScatterElements has no kernel and every job dies mid-run with an opaque error.
+    if ".fp16." in str(onnx_path) and sess.get_providers() == ["CPUExecutionProvider"]:
+        raise RuntimeError(
+            f"Stem separation needs a GPU, but no GPU execution provider loaded (requested {names}); "
+            "the onnxruntime error in the log says why."
+        )
+    return sess
 
 
 def _coreml_cache_dir(onnx_path) -> str | None:
@@ -180,7 +198,7 @@ def _separation_providers(onnx_path):
     -- the CPU EP can't run the fp16 bodies (it silently mis-runs / falls over),
     so on macOS it's CoreML or nothing (matching `_ort_session`'s refuse-silent-
     CPU-fallback stance). Off macOS the CoreML EP is absent, so this returns the
-    shared default (CUDA->CPU on Linux/Windows). fp16 accumulation on the GPU is
+    shared default (CUDA->CPU on Linux, DirectML->CPU on Windows). fp16 accumulation on the GPU is
     left off -- separation output quality is ear-checked."""
     import onnxruntime as ort
 
@@ -253,10 +271,10 @@ def _fold_stft_enabled(default: bool) -> bool:
     """Whether to run the Roformer STFT/iSTFT on the accelerator (onnx_stft
     graphs chained around the model) instead of numpy. `UTAI_SEP_FOLD_STFT`
     overrides; unset falls to the platform `default`. CUDA defaults ON (measured
-    ~2x, the numpy pre/post is ~half a chunk); CoreML defaults OFF (the ANE runs
-    the mask+iDFT matmuls but the placement / net win isn't yet validated, so it's
-    opt-in). Either way a first-chunk parity self-check reverts to numpy on any
-    divergence."""
+    ~2x, the numpy pre/post is ~half a chunk); CoreML and DirectML default OFF (the
+    ANE runs the mask+iDFT matmuls but the placement / net win isn't yet validated,
+    and the same plain-`run` fold measured slower than numpy on CUDA, so it's opt-in).
+    Either way a first-chunk parity self-check reverts to numpy on any divergence."""
     v = os.environ.get("UTAI_SEP_FOLD_STFT", "").strip().lower()
     if v in ("1", "true", "yes", "on"):
         return True
@@ -396,13 +414,13 @@ class _RoformerFoldFrames:
         return stems[0] if self._n == 1 else stems
 
 
-class _RoformerFoldMac:
-    """Mac fold: the complex mask multiply + iRFFT run on the ANE (an onnx_stft
-    matmul graph), while framing (bs_pack) and the index-heavy overlap-add stay in
-    numpy -- the split the ANE actually accelerates (it runs matmuls, not the
+class _RoformerFoldInverse:
+    """CoreML + DirectML fold: the complex mask multiply + iRFFT run on the accelerator
+    (an onnx_stft matmul graph), while framing (bs_pack) and the index-heavy overlap-add
+    stay in numpy -- the split the ANE actually accelerates (it runs matmuls, not the
     gather/scatter/overlap-add index ops, which every attempt confirmed fall off
     the ANE). Uses Slice (not Gather) for the re/im split so the graph stays on the
-    ANE."""
+    ANE. Plain `run`s, no IOBinding, so no EP-specific device binding."""
 
     def __init__(self, model_session, model_in, providers, n_fft, hop, n_freq,
                  n_frames, n_stems, channels, window) -> None:
@@ -465,7 +483,8 @@ class NumpySeparator:
 
     def _build_fold(self, n_fft, hop, n_frames, n_stems, channels, window):
         """Pick the folded pre/post runner for the bound EP (CUDA: full or hop-agnostic
-        fold; CoreML: mask+iDFT on the ANE, framing/overlap-add in numpy), or None."""
+        fold; CoreML, DirectML: mask+iDFT on the accelerator, framing/overlap-add in
+        numpy), or None."""
         provs = self.session.get_providers()
         n_freq = n_fft // 2 + 1
         # The tiny STFT graphs run on CUDA (fp32/no-TF32 parity with numpy); TensorRT is
@@ -478,8 +497,8 @@ class NumpySeparator:
             if "CUDAExecutionProvider" in provs and _fold_stft_enabled(default=True):
                 # hop | n_fft -> GPU overlap-add (full fold); else emit frames + numpy overlap-add.
                 return (_RoformerFold if n_fft % hop == 0 else _RoformerFoldFrames)(*args)
-            if "CoreMLExecutionProvider" in provs and _fold_stft_enabled(default=False):
-                return _RoformerFoldMac(*args)
+            if {"CoreMLExecutionProvider", "DmlExecutionProvider"} & set(provs) and _fold_stft_enabled(default=False):
+                return _RoformerFoldInverse(*args)
         except Exception:
             log.exception("could not build the folded STFT path; using numpy")
         return None

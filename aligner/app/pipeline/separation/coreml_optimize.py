@@ -22,8 +22,9 @@ CPU. This pass eliminates all of them:
        Pow(x, 2) -> Mul(x, x) (Pow is CoreML-native only at fp32)
   3. A second onnx-simplifier pass cleans up now-dead Shape nodes.
 
-Verified numerically identical to the original on CPU (max|Δ| ~2e-6). Build-time
-only (needs onnx-simplifier, a dev dep); the shipped runtime never imports this.
+Verified numerically identical to the original on CPU (max|Δ| ~2e-6). `coreml_optimize`
+is build-time only (needs onnx-simplifier, a dev dep); DirectML sessions apply
+`rewrite_scatter_add` at load.
 """
 
 from __future__ import annotations
@@ -196,7 +197,7 @@ def rewrite_scatter_add(graph: onnx.GraphProto) -> int:
         if np.any(data) or not same_off_axis or np.any(rows != rows[0]):
             raise ValueError(f"coreml_optimize: unhandled ScatterElements {node.name!r} (indices must vary only along axis {axis} into zeros)")
         width = data.shape[axis]
-        onehot = np.zeros((idx.shape[axis], width), np.float32)
+        onehot = np.zeros((idx.shape[axis], width), data.dtype)
         onehot[np.arange(idx.shape[axis]), rows[0] % width] = 1.0
         fwd = [d for d in range(idx.ndim) if d != axis] + [axis]
         b = node.name or f"scatter_add_{n}"

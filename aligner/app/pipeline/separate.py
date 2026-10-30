@@ -150,7 +150,7 @@ def _write_stem(path: Path, wave: np.ndarray, subtype: str = "PCM_16") -> None:
 
 def _export_fp16() -> bool:
     """UTAI_SEP_EXPORT_FP16 -> the dev local export emits an fp16 body (~half the
-    file, GPU tensor / NPU fp16 path) instead of fp32. CUDA/TensorRT gets the mixed
+    file, GPU tensor / NPU fp16 path) instead of fp32. CUDA/TensorRT/DirectML gets the mixed
     fp16/fp32 body (RMSNorm reductions kept fp32 -> transparent vs fp32); macOS gets
     plain fp16. The STFT/iSTFT stay fp32 outside the graph regardless. Export-only:
     the shipped body is already the provisioned fp16 onnx."""

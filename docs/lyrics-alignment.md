@@ -51,7 +51,7 @@ and align on the vocals stem only.
 - Runtime is **torch-free ONNX** by default (`NumpySeparator` +
   onnxruntime); torch is only the fallback / export path. The STFT/iSTFT
   is either folded into the ONNX graph (CUDA/TensorRT) or done in numpy
-  (matmul-only, macOS). See `separation/np_stft.py`, `onnx_stft.py`.
+  (matmul-only, macOS and Windows). See `separation/np_stft.py`, `onnx_stft.py`.
 
 ## [2] Language detection + Japanese romaji pre-pass
 
@@ -197,14 +197,18 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
 
 - **Everything runs on onnxruntime** (separation + CTC aligner), torch-
   free. Bodies execute **fp16** (GPU-only. ORT's CPU EP can't run fp16 GRU;
-  CPU/MPS pin to fp32). On disk the CUDA/TensorRT vocals body is **weight-only
+  CPU/MPS pin to fp32). On disk the CUDA/TensorRT/DirectML vocals body is **weight-only
   int8** (~half the download, dequantized to fp16 at load); the CTC aligner and
   macOS bodies are plain fp16.
-- **CUDA** (`onnx_cuda.py`): `preload_cuda_libs()` makes onnxruntime-gpu
-  find its runtime libs in a torch-free process (`RTLD_GLOBAL` on Linux,
-  `add_dll_directory` on Windows). `default_providers()` is CUDA-first and
-  drops TensorRT for **variable-length** audio (the CTC aligner) -- a
-  per-shape engine rebuild would dominate.
+- **CUDA** (Linux, `onnx_cuda.py`): `preload_cuda_libs()` makes onnxruntime-gpu
+  find its runtime libs in a torch-free process (`RTLD_GLOBAL`).
+  `default_providers()` is CUDA-first and drops TensorRT for **variable-length**
+  audio (the CTC aligner) -- a per-shape engine rebuild would dominate.
+- **DirectML** (Windows, `onnxruntime-directml`, any DirectX 12 GPU): DML's scatter
+  kernel rejects reductions and the CPU EP has no fp16 add, so the vocals body's
+  add-scatter is rewritten to a MatMul when the session loads (`np_inference._dml_body`).
+  STFT pre/post stays in numpy (`UTAI_SEP_FOLD_STFT=1` opts into `_RoformerFoldInverse`);
+  arena shrinking is off.
 - **VRAM**: models stay loaded (a reload costs 40 s+), so only activation memory
   is trimmed. CUDA sessions get `arena_extend_strategy=kSameAsRequested` and
   `cudnn_conv_use_max_workspace=0` (`onnx_cuda._CUDA_OPTIONS`); every model passes
@@ -228,7 +232,7 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   `MatMulAddFusion`: the EP writes a `Gemm`'s weights into `model.mil` as text
   (2.7 GB for the Roformer), and CoreML parses and re-serializes that on every load.
 - **fp16 / int8 conversion**: `onnx_fp16.py::to_fp16` (plain fp16: the CTC
-  aligner bodies + the macOS separation body). The CUDA/TensorRT separation body
+  aligner bodies + the macOS separation body). The CUDA/TensorRT/DirectML separation body
   uses `export._to_mixed_fp16` (fp16 everywhere except the RMSNorm `Pow`/`ReduceMean`,
   kept fp32 for quality), then `export._to_mixed_int8` compresses its MatMul/Gemm
   weights to per-tensor symmetric int8 on disk (DequantizeLinear -> fp16; ~515 ->
