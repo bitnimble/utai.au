@@ -2,13 +2,38 @@
 
 The heavy acoustic-model parity is validated out-of-band against the torch
 ctc_forced_aligner package (CPU); these cover the vendored numpy/python helpers.
-Importing lyrics_onnx must itself be torch-free (module-level imports only
-math/subprocess/dataclasses/pathlib/numpy).
+Importing lyrics_onnx must itself be torch-free.
 """
 
 import numpy as np
+import pytest
+import soundfile as sf
 
-from app.pipeline.lyrics_onnx import _Segment, _time_to_frame, merge_repeats
+from app.pipeline import lyrics_onnx
+from app.pipeline.lyrics_onnx import _Segment, _time_to_frame, load_audio_np, merge_repeats
+
+
+def test_load_audio_np_decodes_a_file_once_until_it_changes(monkeypatch, tmp_path):
+    decodes = []
+    real = lyrics_onnx.load_samples
+
+    def counting(*args, **kwargs):
+        decodes.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(lyrics_onnx, "load_samples", counting)
+    stem = tmp_path / "vocals.wav"
+    sf.write(stem, np.zeros(1600, np.float32), 16000)
+
+    first = load_audio_np(stem)
+    assert load_audio_np(str(stem)) is first
+    assert len(decodes) == 1
+    with pytest.raises(ValueError):
+        first[0] = 1.0
+
+    sf.write(stem, np.zeros(3200, np.float32), 16000)
+    assert load_audio_np(stem).shape == (3200,)
+    assert len(decodes) == 2
 
 
 def test_time_to_frame_is_50_fps():

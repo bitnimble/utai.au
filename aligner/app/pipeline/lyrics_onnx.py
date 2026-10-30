@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,7 @@ from app.pipeline.onnx_cuda import release_arena_run_options
 from app.request_context import check_cancelled
 
 SR = 16000
+_DECODED_FILES = 2
 
 # --- torch-free access to the package's numpy pieces (no torch __init__) ----
 #
@@ -188,8 +190,16 @@ def load_audio_np(audio_file: str | Path) -> np.ndarray:
     """Mono 16 kHz float32 in [-1, 1] (numpy port of the package's load_audio).
 
     soundfile-direct for compatible containers, ffmpeg-transcode fallback for the
-    rest -- see `audio_io.load_samples`."""
-    audio, _ = load_samples(audio_file, sr=SR, mono=True)
+    rest -- see `audio_io.load_samples`. Read-only: the array is shared between
+    the jobs reading the same file."""
+    stat = Path(audio_file).stat()
+    return _decode_16k_mono(str(audio_file), stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache(maxsize=_DECODED_FILES)
+def _decode_16k_mono(path: str, _mtime_ns: int, _size: int) -> np.ndarray:
+    audio, _ = load_samples(path, sr=SR, mono=True)
+    audio.flags.writeable = False
     return audio
 
 

@@ -15,6 +15,7 @@ import numpy as np
 
 from app.config import settings
 from app.lazy import Lazy
+from app.pipeline.onnx_cuda import log_bound_ep, release_arena_run_options
 
 log = logging.getLogger(__name__)
 
@@ -72,15 +73,14 @@ class LanguageId:
     def __init__(self, onnx_path: str | Path) -> None:
         import onnxruntime as ort
 
-        from app.pipeline.onnx_cuda import log_bound_ep
-
         self._sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
         log_bound_ep(self._sess, onnx_path)
         self._input_name = self._sess.get_inputs()[0].name
         self.labels = self._sess.get_modelmeta().custom_metadata_map[_LABELS_KEY].split(",")
 
     def log_probs(self, chunks: np.ndarray) -> np.ndarray:
-        return self._sess.run(None, {self._input_name: power_spectrogram(chunks)})[0]
+        run_options = release_arena_run_options(self._sess)
+        return self._sess.run(None, {self._input_name: power_spectrogram(chunks)}, run_options)[0]
 
 
 def export_language_id_model(out_path: str | Path, *, opset: int = 17) -> Path:
