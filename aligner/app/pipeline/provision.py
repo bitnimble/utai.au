@@ -120,12 +120,12 @@ def _beat_assets() -> list[_Asset]:
     return [_onnx("beat_this.fp16.onnx")]
 
 
-_KNOWN_CAPABILITIES = ("separation", "lyrics", "pitch", "beat")
+_KNOWN_CAPABILITIES = ("separation", "lyrics", "pitch", "beat", "language")
 
 
 def _capability_assets(capability: str) -> list[_Asset]:
-    """Assets one capability needs. `lyrics` and `pitch` each compose
-    `separation` (both run over the vocals stem), mirroring the pyproject
+    """Assets one capability needs. `lyrics`, `pitch` and `language` each compose
+    `separation` (all run over the vocals stem), mirroring the pyproject
     dependency-groups; `beat` stands alone (it runs on the mix)."""
     if capability == "separation":
         return _separation_assets()
@@ -135,6 +135,8 @@ def _capability_assets(capability: str) -> list[_Asset]:
         return _separation_assets() + _pitch_assets()
     if capability == "beat":
         return _beat_assets()
+    if capability == "language":
+        return [*_separation_assets(), _onnx(settings.language_id_model)]
     return []
 
 

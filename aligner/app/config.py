@@ -50,16 +50,21 @@ class Settings(BaseSettings):
     pitch_model_offline: str = "rmvpe.onnx"
     pitch_model_live: str = "f0_swiftf0.onnx"
 
+    # --- Sung-language ID ---
+    # VoxLingua107 ECAPA (SpeechBrain, Apache-2.0, ~80 MB fp32) off `onnx_repo`,
+    # run on the vocals stem so the lyrics search prefers native-script lyrics.
+    language_id_model: str = "lang_id_voxlingua107_ecapa.onnx"
+
     # --- Startup provisioning ---
     # Comma-separated capabilities whose models are checked at startup (present,
     # outdated against the remote ETag, or missing) and offered to the user to
     # download (`POST /provision/download`). A capability list (not a flat asset
-    # list) keeps provisioning capability-scoped; `lyrics` + `pitch` each compose
-    # `separation`, so the default covers every model. Jobs never download: a
-    # model the user hasn't downloaded is simply skipped. A plain string (not
-    # `list[str]`) so `STARTUP_CAPABILITIES=lyrics,pitch,beat` needs no JSON
-    # quoting; parsed by `startup_capability_list`. Empty opts out.
-    startup_capabilities: str = "lyrics,pitch,beat"
+    # list) keeps provisioning capability-scoped; `lyrics` + `pitch` + `language`
+    # each compose `separation`, so the default covers every model. Jobs never
+    # download: a model the user hasn't downloaded is simply skipped. A plain string
+    # (not `list[str]`) so `STARTUP_CAPABILITIES=lyrics,pitch,beat,language` needs no
+    # JSON quoting; parsed by `startup_capability_list`. Empty opts out.
+    startup_capabilities: str = "lyrics,pitch,beat,language"
     # Compare each present asset's stored ETag against the remote (HF sets it to the
     # LFS content hash), offering the changed ones as updates. Off => presence-only
     # (prod with baked, immutable models: no per-startup network round-trips).

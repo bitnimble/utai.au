@@ -132,7 +132,8 @@ onthespot = [
 # Torch: NOT shipped in the desktop capability install (which runs provisioned
 # fp16 ONNX, torch-free) and NEVER on the runtime path. Needed only for the BUILD
 # side: (1) the one-time ONNX export (separation/export.py +
-# lyrics_onnx.export_ctc_model), (2) the offline torch<->ONNX parity checks
+# lyrics_onnx.export_ctc_model + language_id.export_language_id_model, which
+# loads the SpeechBrain checkpoint), (2) the offline torch<->ONNX parity checks
 # (tests/test_separation_parity.py, via separation/loader.py + runner.py), and
 # (3) the vendored Roformer model classes (einops / rotary-embedding-torch /
 # ml-collections are imported only on that torch path).
@@ -142,6 +143,7 @@ torch = [
     "einops>=0.8",
     "rotary-embedding-torch>=0.6",
     "ml-collections>=1.1",
+    "speechbrain>=1.0",
 ]
 
 # Dev-only: linters, tests, and the ONNX export/fp16-convert toolchain (needs

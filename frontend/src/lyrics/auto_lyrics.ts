@@ -46,7 +46,9 @@ export type MatchTrace = {
  * scoring + accept/reject reason, for debug logging. With `opts.ignoreArtist`
  * the name gate compares title vs trackName only (dropping both artist strings),
  * for the title-only retry where the source's "artist" is unreliable (e.g. a
- * YouTube uploader); the duration gate then carries the confidence.
+ * YouTube uploader); the duration gate then carries the confidence. With
+ * `opts.language` (the sung language), a survivor written in that language's own
+ * script beats a romanised one, see {@link isWrittenIn}.
  */
 export function pickConfidentMatch(
   matches: readonly LrclibMatch[],
@@ -57,6 +59,7 @@ export function pickConfidentMatch(
     durationSlackSec?: number;
     nameThreshold?: number;
     ignoreArtist?: boolean;
+    language?: string;
     onTrace?: (t: MatchTrace) => void;
   } = {},
 ): LrclibMatch | undefined {
@@ -65,7 +68,7 @@ export function pickConfidentMatch(
   const nameThreshold = opts.nameThreshold ?? DEFAULT_NAME_THRESHOLD;
   const ignoreArtist = opts.ignoreArtist ?? false;
   const query = ignoreArtist ? (opts.title ?? '') : `${opts.title ?? ''} ${opts.artist ?? ''}`;
-  let best: { match: LrclibMatch; delta: number; nameSim: number } | undefined;
+  let best: RankedMatch | undefined;
   for (const m of matches) {
     if (m.duration == null || m.syncedLyrics == null || m.syncedLyrics.length === 0) {
       opts.onTrace?.({
@@ -111,11 +114,48 @@ export function pickConfidentMatch(
       reason: accepted ? 'candidate' : 'name-too-weak',
     });
     if (!accepted) continue;
-    if (best == null || delta < best.delta || (delta === best.delta && nameSim > best.nameSim)) {
-      best = { match: m, delta, nameSim };
-    }
+    const ranked = { match: m, native: isWrittenIn(m.syncedLyrics, opts.language), delta, nameSim };
+    if (best == null || isBetterMatch(ranked, best)) best = ranked;
   }
   return best?.match;
+}
+
+type RankedMatch = { match: LrclibMatch; native: boolean; delta: number; nameSim: number };
+
+function isBetterMatch(a: RankedMatch, b: RankedMatch): boolean {
+  if (a.native !== b.native) return a.native;
+  if (a.delta !== b.delta) return a.delta < b.delta;
+  return a.nameSim > b.nameSim;
+}
+
+/** Scripts of the languages not written in Latin, by VoxLingua107 code. */
+const NATIVE_LETTERS = new Map(
+  Object.entries({
+    ja: 'Hiragana Katakana Han', zh: 'Han', ko: 'Hangul',
+    ru: 'Cyrillic', uk: 'Cyrillic', be: 'Cyrillic', bg: 'Cyrillic', mk: 'Cyrillic',
+    kk: 'Cyrillic', mn: 'Cyrillic', tg: 'Cyrillic', tt: 'Cyrillic', ba: 'Cyrillic',
+    el: 'Greek', iw: 'Hebrew', yi: 'Hebrew',
+    ar: 'Arabic', fa: 'Arabic', ur: 'Arabic', ps: 'Arabic', sd: 'Arabic',
+    hi: 'Devanagari', mr: 'Devanagari', ne: 'Devanagari', sa: 'Devanagari',
+    bn: 'Bengali', as: 'Bengali', pa: 'Gurmukhi', gu: 'Gujarati', ta: 'Tamil', te: 'Telugu',
+    kn: 'Kannada', ml: 'Malayalam', si: 'Sinhala', th: 'Thai', lo: 'Lao', km: 'Khmer',
+    my: 'Myanmar', bo: 'Tibetan', ka: 'Georgian', hy: 'Armenian', am: 'Ethiopic',
+  }).map(([language, scripts]) => [
+    language,
+    new RegExp(`[${scripts.split(' ').map((s) => `\\p{Script=${s}}`).join('')}]`, 'u'),
+  ]),
+);
+
+/**
+ * Whether at least half the letters of `lyrics` are in `language`'s own script,
+ * so not a romanisation. Always true for a language written in Latin script or
+ * an unknown one, where romanisation doesn't arise.
+ */
+export function isWrittenIn(lyrics: string, language: string | undefined): boolean {
+  const native = language == null ? undefined : NATIVE_LETTERS.get(language);
+  if (native == null) return true;
+  const letters = lyrics.match(/\p{L}/gu) ?? [];
+  return letters.length > 0 && letters.filter((c) => native.test(c)).length * 2 >= letters.length;
 }
 
 /**

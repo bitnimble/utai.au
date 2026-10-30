@@ -73,10 +73,10 @@ services:
       WORKER_ROLE: pipeline
       MODELS_DIR: /models
       # Capabilities checked at startup (presence + ETag update-check against
-      # `onnx_repo`) and offered for download. Default is lyrics,pitch,beat
+      # `onnx_repo`) and offered for download. Default is lyrics,pitch,beat,language
       # (every model); set here for visibility. Any pre-mounted `/models` weights
       # are adopted (size match) or update-checked rather than re-downloaded.
-      STARTUP_CAPABILITIES: lyrics,pitch,beat
+      STARTUP_CAPABILITIES: lyrics,pitch,beat,language
       # OnTheSpot's downloads volume, mounted at the same path as in its own
       # container, so jobs read a fetched track in place.
       MUSIC_DOWNLOAD_DIR: /root/Music

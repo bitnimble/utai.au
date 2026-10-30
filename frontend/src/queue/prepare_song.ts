@@ -16,7 +16,8 @@ import {
   unpackSongBundle,
 } from 'src/karaoke/song_bundle';
 import type { SongMeta } from 'src/karaoke/song_schema';
-import { parseSongFilename, pickConfidentMatch } from 'src/lyrics/auto_lyrics';
+import { isWrittenIn, parseSongFilename, pickConfidentMatch } from 'src/lyrics/auto_lyrics';
+import { detectLanguage } from 'src/lyrics/detect_language';
 import { extractPitch } from 'src/lyrics/extract_pitch';
 import { alignLyricsForced } from 'src/lyrics/forced_align';
 import { LyricLine, parseLrc, shiftLines } from 'src/lyrics/lrc';
@@ -91,7 +92,7 @@ async function warmBackingVideo(meta: SongMeta, signal: AbortSignal): Promise<vo
 async function prepareFile(file: File, opts: PrepareOptions): Promise<PreparedSong> {
   const music = { durationSec: await decodeDurationSec(file), startSec: 0, durationSlackSec: 0, isCover: false };
   const parsed = parseSongFilename(file.name);
-  return prepareMix({ file }, {}, music, findSyncedLyrics(parsed.title, parsed.artist, music, opts.signal), opts);
+  return prepareMix({ file }, {}, music, searchSyncedLyrics(parsed.title, parsed.artist, music, opts.signal), opts);
 }
 
 /** The lyrics search starts once the song is identified, without waiting for the download. */
@@ -103,10 +104,11 @@ async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promi
   });
   const identity = opts.identity ?? identifyTrack(track, opts.signal);
   const music = streamingMusic(track, download, lookUpSkipSegments(track.sourceUrl, opts.signal), identity);
-  const lyrics = Promise.all([identity, music])
-    .then(([song, m]) => findSyncedLyrics(song.title, song.artist, m, opts.signal))
+  const search = Promise.all([identity, music])
+    .then(([song, m]) => searchSyncedLyrics(song.title, song.artist, m, opts.signal))
     // Only rejects when `music` does, i.e. a failed download, which the await below reports.
     .catch(() => undefined);
+  const lyrics: PickLyrics = async (language) => (await search)?.(language);
   const [mix, song, knownMusic] = await Promise.all([download, identity, music]);
   const meta: SongMeta = {
     title: song.title,
@@ -152,35 +154,39 @@ type KnownMusic = { durationSec: number; startSec: number; durationSlackSec: num
 
 type SyncedLyrics = { lines: LyricLine[]; trackName: string; artistName: string };
 
+/** Picks the song's synced lyrics once its sung language is known (undefined if not). */
+type PickLyrics = (language: string | undefined) => Promise<SyncedLyrics | undefined>;
+
 /** Separate and beat-track a full mix, then align the lyrics (once both the
- *  vocal stem and `lyricsSearch` are in) alongside the vocal pitch pass. */
+ *  vocal stem and the lyrics in its sung language are in) alongside the vocal pitch pass. */
 async function prepareMix(
   mix: JobAudio,
   meta: SongMeta,
   music: KnownMusic,
-  lyricsSearch: Promise<SyncedLyrics | undefined>,
+  pickLyrics: PickLyrics,
   { signal, onStage }: PrepareOptions,
 ): Promise<PreparedSong> {
   const parsed = parseSongFilename(mix.file.name);
   const songLabel = meta.title || parsed.title || mix.file.name;
 
   const separating = trackStage({ kind: 'separating' }, onStage);
+  const separation = separating((onProgress) => separateStems(mix, { signal, onProgress })).catch((err: unknown) => {
+    if (signal.aborted || isBackendUnreachable(err)) return undefined;
+    toastStore.showWarning(
+      err instanceof ModelsMissingError
+        ? `${songLabel}: playing the full mix, as the AI models aren't downloaded.`
+        : `${songLabel}: kept the full mix (stem separation failed: ${message(err)}).`,
+      { testId: KEPT_FULL_MIX_TOAST_TEST_ID },
+    );
+    return undefined;
+  });
   const [stems, beats, match] = await Promise.all([
-    separating((onProgress) => separateStems(mix, { signal, onProgress })).catch((err: unknown) => {
-      if (signal.aborted || isBackendUnreachable(err)) return undefined;
-      toastStore.showWarning(
-        err instanceof ModelsMissingError
-          ? `${songLabel}: playing the full mix, as the AI models aren't downloaded.`
-          : `${songLabel}: kept the full mix (stem separation failed: ${message(err)}).`,
-        { testId: KEPT_FULL_MIX_TOAST_TEST_ID },
-      );
-      return undefined;
-    }),
+    separation,
     separating((onProgress) => analyzeBeats(mix, { signal, onProgress })).catch((err: unknown) => {
       if (!signal.aborted && !isQuietFailure(err)) console.warn('[beats] analysis failed:', message(err));
       return undefined;
     }),
-    lyricsSearch,
+    separation.then((s) => sungLanguage(s, signal)).then(pickLyrics),
   ]);
   signal.throwIfAborted();
 
@@ -275,53 +281,95 @@ async function alignWords(
   }
 }
 
+const MIN_LANGUAGE_CONFIDENCE = 0.5;
+
+/** Best-effort: without it the lyrics pick has no script preference. */
+async function sungLanguage(stems: SeparatedStems | undefined, signal: AbortSignal): Promise<string | undefined> {
+  if (stems == null) return undefined;
+  try {
+    const detected = await detectLanguage(stems.vocals, signal);
+    console.log('[auto-lyrics] sung language', detected);
+    return detected != null && detected.confidence >= MIN_LANGUAGE_CONFIDENCE ? detected.language : undefined;
+  } catch (err) {
+    if (!signal.aborted && !isQuietFailure(err)) console.warn('[language] detection failed:', message(err));
+    return undefined;
+  }
+}
+
 /**
- * Search LRCLIB for the song's synced lyrics and keep a confident match (per
- * {@link pickConfidentMatch}: duration + fuzzy title/artist). On a miss it
- * retries title-only: LRCLIB's search is artist-sensitive and the source's
- * "artist" may be a mislabelling YouTube uploader. Silent on a miss.
+ * Search LRCLIB for the song's synced lyrics now, and keep a confident match
+ * (per {@link pickConfidentMatch}: duration + fuzzy title/artist, preferring the
+ * sung language's own script) once the language is known. Without one in that
+ * script it retries title-only: LRCLIB's search is artist-sensitive, and the
+ * source's "artist" may be a mislabelling YouTube uploader or a romanised name.
+ * Silent on a miss.
  */
-async function findSyncedLyrics(
+function searchSyncedLyrics(
   rawTitle: string,
   rawArtist: string,
   music: KnownMusic,
   signal: AbortSignal,
-): Promise<SyncedLyrics | undefined> {
+): PickLyrics {
   const title = rawTitle.trim();
   const artist = rawArtist.trim();
-  if (title.length === 0 && artist.length === 0) return undefined;
+  if (title.length === 0 && artist.length === 0) return async () => undefined;
   const { durationSec, durationSlackSec } = music;
-  let best = await searchAndPick(title, artist, durationSec, signal, {
+  const artistOpts = {
     title,
     artist,
     durationSlackSec: durationSlackSec + (music.isCover ? COVER_DURATION_SLACK_SEC : 0),
+  };
+  const canRetry = title.length > 0 && artist.length > 0;
+  let titleSearch: Promise<LrclibMatch[]> | undefined;
+  const searchByTitle = (): Promise<LrclibMatch[]> => (titleSearch ??= searchQuietly(title, '', signal));
+  const byArtist = searchQuietly(title, artist, signal).then((matches) => {
+    // A miss retries whatever the language turns out to be, so don't wait for it.
+    if (canRetry && pickConfidentMatch(matches, durationSec, artistOpts) == null) void searchByTitle();
+    return matches;
   });
-  // Title alone is too weak a name gate to also widen for a cover: any same-titled song would pass.
-  if (best == null && title.length > 0 && artist.length > 0) {
-    best = await searchAndPick(title, '', durationSec, signal, { title, ignoreArtist: true, durationSlackSec });
-  }
-  if (best?.syncedLyrics == null) return undefined;
-  const lines = parseLrc(best.syncedLyrics);
-  if (lines.length === 0) return undefined;
-  return { lines, trackName: best.trackName, artistName: best.artistName };
+  return async (language) => {
+    let best = pickMatch(await byArtist, durationSec, { ...artistOpts, language });
+    const inLanguage = (m: LrclibMatch | undefined): boolean =>
+      m?.syncedLyrics != null && isWrittenIn(m.syncedLyrics, language);
+    if (!inLanguage(best) && canRetry) {
+      // Title alone is too weak a name gate to also widen for a cover: any same-titled song would pass.
+      const byTitle = pickMatch(await searchByTitle(), durationSec, {
+        title,
+        ignoreArtist: true,
+        language,
+        durationSlackSec,
+      });
+      if (best == null || inLanguage(byTitle)) best = byTitle;
+    }
+    if (best?.syncedLyrics == null) return undefined;
+    const lines = parseLrc(best.syncedLyrics);
+    if (lines.length === 0) return undefined;
+    return { lines, trackName: best.trackName, artistName: best.artistName };
+  };
 }
 
 const COVER_DURATION_SLACK_SEC = 30;
 
-async function searchAndPick(
-  trackName: string,
-  artistName: string,
-  durationSec: number,
-  signal: AbortSignal,
-  matchOpts: { title: string; artist?: string; ignoreArtist?: boolean; durationSlackSec: number },
-): Promise<LrclibMatch | undefined> {
-  let matches: LrclibMatch[];
+async function searchQuietly(trackName: string, artistName: string, signal: AbortSignal): Promise<LrclibMatch[]> {
   try {
-    matches = await searchLrclib({ trackName, artistName, signal });
+    return await searchLrclib({ trackName, artistName, signal });
   } catch (err) {
     console.log('[auto-lyrics] search failed', err);
-    return undefined;
+    return [];
   }
+}
+
+function pickMatch(
+  matches: readonly LrclibMatch[],
+  durationSec: number,
+  matchOpts: {
+    title: string;
+    artist?: string;
+    ignoreArtist?: boolean;
+    language?: string;
+    durationSlackSec: number;
+  },
+): LrclibMatch | undefined {
   return pickConfidentMatch(matches, durationSec, {
     ...matchOpts,
     onTrace: (t) =>

@@ -32,9 +32,9 @@ wav2vec2-large-robust uses lowercase Latin + space + apostrophe.
 
 Language is resolved entirely from the caller's lyric text by
 `_detect_language_from_text` (script ranges + distinctive-letter
-heuristics), so there is no audio-based language detector: every
-script with letters routes to the MMS + uroman path, and only
-genuinely letter-free text falls back to a plain `en` default.
+heuristics): every script with letters routes to the MMS + uroman
+path, and only genuinely letter-free text falls back to a plain `en`
+default.
 """
 
 from __future__ import annotations
@@ -148,8 +148,8 @@ _READING_MAX_LETTER_COST = 4.0
 # because Japanese songs dominate the typical utai library and a
 # false-positive `zh` on a J-pop lyric shatters every kanji into its
 # own alignment unit (the wav2vec2 ZH aligner tokenises by character
-# the same way JA does, but pulls from a Chinese phoneme map - Whisper
-# loads the wrong model and the timings come out garbage).
+# the same way JA does, but pulls from a Chinese phoneme map, so the
+# timings come out garbage).
 #
 # Conservative on purpose: this set MUST stay entries that are
 # vanishingly rare in Japanese text. Characters that exist in both
@@ -187,8 +187,7 @@ class LyricsAligner:
     CTC aligner via `ctc-forced-aligner`, plus the English-specialised
     wav2vec2 head) is loaded and held in memory. ONE multilingual model
     handles every language with no per-language wav2vec2 pinning, and
-    language is resolved from the caller's text alone (no audio-based
-    detector).
+    language is resolved from the caller's text alone.
 
     Thread safety: callers may invoke `realign_text` concurrently, but
     GPU model inference is single-threaded; we serialise requests on
@@ -549,8 +548,8 @@ def _resolve_cyrillic_lang(text: str) -> str:
 # accepts. uroman romanizes by codepoint (the language hint only refines
 # a few ambiguous letters), so an unclassified script still romanizes
 # correctly and aligns against MMS. The point is purely to stop returning
-# None - which would drop the request onto the audio language detector -
-# whenever the lyric text has *any* letters.
+# None - which would fall through to the English aligner - whenever the
+# lyric text has *any* letters.
 _OTHER_SCRIPT_LANG = "und"
 
 
@@ -1080,7 +1079,7 @@ def _diagnose_get_spans_failure(
 
 
 
-# ISO-639-1 (Whisper / our text detector) -> ISO-639-3 (the language
+# ISO-639-1 (our text detector) -> ISO-639-3 (the language
 # code expected by ctc_forced_aligner.preprocess_text, which feeds MMS
 # romanization). Covers the codes _detect_language_from_text emits
 # (en/ja/ko/zh/th plus the Cyrillic set uk/ru/bg/sr/mk) plus a few common
@@ -1127,8 +1126,7 @@ _ISO639_1_TO_3 = {
 
 
 def _iso1_to_iso3(code: str) -> str:
-    """Map an ISO-639-1 code (Whisper's output / our text detector's
-    output) to ISO-639-3 (what ctc-forced-aligner's `preprocess_text`
+    """Map an ISO-639-1 code (our text detector's output) to ISO-639-3 (what ctc-forced-aligner's `preprocess_text`
     wants). Unknown codes degrade to `eng` rather than raising, so a
     misdetected language still produces output (just with English
     romanization, which is wrong but recoverable)."""

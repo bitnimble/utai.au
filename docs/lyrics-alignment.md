@@ -233,13 +233,15 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   ~290 MB, execution unchanged). Opt out with `UTAI_SEP_INT8=0`.
 - **Provisioning is capability-scoped** (`provision.py`,
   `_capability_assets`): the `lyrics` capability pulls the separation
-  weights + the two CTC aligner fp16 ONNX bodies and **nothing else**.
+  weights + the two CTC aligner fp16 ONNX bodies and **nothing else**;
+  `language` pulls the separation weights + the fp32 language ID model, so an
+  install without it still aligns.
   Never add a global "fetch all models" list, add each asset under the
   one capability that uses it. Model URLs / HF ids are `settings.*`
   build fields (config.py), never hardcoded. Shipped ONNX set lives on the
   live `bitnimble/utai-onnx` HF repo (`settings.onnx_repo`).
 - **Update-detection at startup.** At launch the backend checks
-  `settings.startup_capabilities` (default `lyrics,pitch,beat` = every model) and
+  `settings.startup_capabilities` (default `lyrics,pitch,beat,language` = every model) and
   the frontend offers the missing/outdated ones in a toast, fetching only if the
   user accepts. **Jobs never download a model**: without one, align/separate
   answer 424 (`job_stream.require_models`), so a queued song plays its full mix
@@ -257,7 +259,8 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   process, so `Provisioner` loads every model already on disk at startup
   (`warm_models`), and again after a download. Each model is a process-wide
   `app.lazy.Lazy` (`separate.separator`, `beats.analyze.model`,
-  `lyrics_align.aligner`, `pitch.analyze.extractor`), dropped by `reset_models`.
+  `lyrics_align.aligner`, `language_id.model`, `pitch.analyze.extractor`),
+  dropped by `reset_models`.
   A job that arrives before the load is done streams a `{"type": "loading"}`
   envelope and waits (`ProvisionStatus.once_loaded`); the queue shows it as
   "Loading AI models…" before "Separating stems…" / "Aligning lyrics…".
@@ -288,6 +291,16 @@ every install.
 - We filter to results with `syncedLyrics` (line-level LRC). Those line
   timings seed the forced aligner, the aligner then recomputes tight
   **word-level** timings against the actual vocal stem.
+- **Auto-pick** (`src/queue/prepare_song.ts`, `src/lyrics/auto_lyrics.ts`): a
+  result must match the song's duration and fuzzy title/artist. Among those,
+  lyrics in the **sung language's own script** beat a romanisation
+  (`isWrittenIn`): `/music/language` runs **VoxLingua107 ECAPA** (SpeechBrain,
+  107 languages, fp32 ONNX on the CPU EP, `language_id.py`) over the vocal
+  stem's loudest 10 s chunks, and is ignored below 0.5 confidence. Without a
+  native-script match the search retries title-only, which finds entries filed
+  under the artist's native name. The model is trained on speech and is
+  unreliable on a full mix. A wrong guess of a Latin-script language just
+  loses the preference; of another script, it usually only costs that retry.
 - The user can also paste plain text (no timings) or load a `.lrc` file.
 
 ## Rendering (frontend)

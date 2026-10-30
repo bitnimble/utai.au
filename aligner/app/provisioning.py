@@ -18,6 +18,7 @@ from fastapi import APIRouter, Request
 
 from app.config import settings
 from app.models import ProvisionStatusResponse
+from app.pipeline import language_id
 from app.pipeline.beats import analyze as beats
 from app.pipeline.lyrics_align import aligner
 from app.pipeline.onnx_cuda import preload_cuda_libs
@@ -41,6 +42,7 @@ _MODELS: list[tuple[str, str, Callable[[], object]]] = [
     ("separator", "separation", lambda: separator.get().load()),
     ("beats", "beat", beats.model.get),
     ("CTC aligners", "lyrics", lambda: aligner.get().load_all()),
+    ("language ID", "language", language_id.model.get),
     ("pitch", "pitch", pitch.extractor.get),
 ]
 
@@ -218,7 +220,7 @@ def warm_models() -> None:
 
 def reset_models() -> None:
     """Drop the loaded models, so the next load reads the files on disk now."""
-    for lazy in (separator, beats.model, aligner, pitch.extractor):
+    for lazy in (separator, beats.model, aligner, language_id.model, pitch.extractor):
         lazy.reset()
 
 

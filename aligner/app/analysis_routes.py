@@ -1,13 +1,15 @@
 """The per-song analysis jobs beside alignment: full-quality stems
-(/music/separate), beats (/music/beats) and the vocal pitch contour
-(/music/pitch). Each is content-addressed by the SHA-256 of its input audio, so
-a repeat song reuses the cached result."""
+(/music/separate), beats (/music/beats), the vocal pitch contour
+(/music/pitch) and the sung language (/music/language). Each is
+content-addressed by the SHA-256 of its input audio, so a repeat song reuses
+the cached result."""
 from __future__ import annotations
 
 import json
 import logging
 import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,7 @@ from app.job_stream import (
     require_models,
     require_pipeline_role,
 )
+from app.pipeline import language_id
 from app.pipeline.beats import analyze as beats
 from app.pipeline.pitch import analyze as pitch
 from app.pipeline.separate import separator
@@ -178,25 +181,54 @@ async def music_pitch(
     The stem is an upload, or `vocalsPath` for one this backend separated.
     CPU-only, so it skips the GPU lock and runs alongside the /music/align of the
     same stem."""
+    contour = await _cached_stem_analysis(request, vocals, vocalsPath, "pitch", pitch.extract_pitch_contour)
+    return {"pitch": contour} if contour is not None else {}
+
+
+@router.post("/language")
+async def music_language(
+    request: Request,
+    vocals: UploadFile | None = File(default=None),
+    vocalsPath: str = Form(default=""),
+) -> dict[str, Any]:
+    """The sung language of a vocals stem: `{"language": "ja", "confidence": 0.93}`,
+    or `{}` when the language ID model isn't provisioned.
+
+    The stem is an upload, or `vocalsPath` for one this backend separated.
+    CPU-only, so it skips the GPU lock."""
+    detected = await _cached_stem_analysis(request, vocals, vocalsPath, "language", language_id.detect_language)
+    return detected if detected is not None else {}
+
+
+async def _cached_stem_analysis(
+    request: Request,
+    vocals: UploadFile | None,
+    vocals_path: str,
+    kind: str,
+    analyse: Callable[[Path], Any | None],
+) -> Any | None:
+    """`analyse` of a vocals stem, once per stem: a None result isn't cached, so
+    it runs again once its model is downloaded. None too if the client went away."""
     require_pipeline_role()
-    audio = await read_job_audio(vocals, vocalsPath, "vocals", "utai_pitch_")
+    audio = await read_job_audio(vocals, vocals_path, "vocals", f"utai_{kind}_")
     try:
-        cache_path = settings.cache_dir / "pitch" / f"{audio.hash}.json"
-        contour = _read_json_cache(cache_path)
-        if contour is None:
-            provisioner: Provisioner = request.app.state.provisioner
-            async with cancel_on_disconnect(request):
-                await provisioner.status.wait_loaded()
-                try:
-                    contour = await run_cancellable(pitch.extract_pitch_contour, audio.path)
-                except Cancelled:
-                    log.info("music_pitch: cancelled")
-                    return {}
-            if contour is not None:
-                _write_json_cache(cache_path, contour)
+        cache_path = settings.cache_dir / kind / f"{audio.hash}.json"
+        result = _read_json_cache(cache_path)
+        if result is not None:
+            return result
+        provisioner: Provisioner = request.app.state.provisioner
+        async with cancel_on_disconnect(request):
+            await provisioner.status.wait_loaded()
+            try:
+                result = await run_cancellable(analyse, audio.path)
+            except Cancelled:
+                log.info("music_%s: cancelled", kind)
+                return None
+        if result is not None:
+            _write_json_cache(cache_path, result)
+        return result
     finally:
         shutil.rmtree(audio.scratch_dir, ignore_errors=True)
-    return {"pitch": contour} if contour is not None else {}
 
 
 def _read_json_cache(path: Path) -> Any | None:

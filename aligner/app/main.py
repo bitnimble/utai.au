@@ -1,7 +1,7 @@
 """Utai aligner HTTP API (FastAPI): the one API the web and desktop builds talk to.
 
 Routes live with their feature: /music/align (`align_routes`), /music/separate +
-/music/beats + /music/pitch (`analysis_routes`), /lyrics/japanese
+/music/beats + /music/pitch + /music/language (`analysis_routes`), /lyrics/japanese
 (`japanese_routes`), /video (`video_routes`), /provision (`provisioning`), the
 music source (`music.routes`) and /sessions.
 In the pipeline role a background task checks + loads the models at startup;

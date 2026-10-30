@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   cleanStreamingTitle,
+  isWrittenIn,
   normalizeTokens,
   parseSongFilename,
   pickConfidentMatch,
@@ -94,6 +95,77 @@ describe('pickConfidentMatch', () => {
     ).toBeUndefined();
     // ...but the title-only retry accepts it (the duration gate still applies).
     expect(pickConfidentMatch([song], 220, { title: 'Victorious', ignoreArtist: true })).toBeDefined();
+  });
+
+  test('prefers lyrics in the sung language over a closer-length romanisation', () => {
+    const lemon = { trackName: 'Lemon', artistName: 'Kenshi Yonezu' };
+    const matches = [
+      match({ id: 1, ...lemon, duration: 255, syncedLyrics: '[00:01.00]Yume naraba dore hodo yokatta deshou' }),
+      match({ id: 2, ...lemon, duration: 256.5, syncedLyrics: '[00:01.00]夢ならばどれほどよかったでしょう' }),
+    ];
+    const query = { title: 'Lemon', artist: 'Kenshi Yonezu' };
+
+    expect(pickConfidentMatch(matches, 255, { ...query, language: 'ja' })?.id).toBe(2);
+    expect(pickConfidentMatch(matches, 255, { ...query, language: 'en' })?.id).toBe(1);
+    expect(pickConfidentMatch(matches, 255, query)?.id).toBe(1);
+  });
+
+  test('the script is a preference, not a filter', () => {
+    const romanised = match({ syncedLyrics: '[00:01.00]Yume naraba' });
+    expect(pickConfidentMatch([romanised], 260, { ...QUERY, language: 'ja' })?.id).toBe(romanised.id);
+  });
+
+  test('closest duration wins among lyrics in the sung language', () => {
+    const native = '[00:01.00]夢ならば';
+    const m = pickConfidentMatch(
+      [match({ id: 1, duration: 261.5, syncedLyrics: native }), match({ id: 2, duration: 260.5, syncedLyrics: native })],
+      260,
+      { ...QUERY, language: 'ja' },
+    );
+    expect(m?.id).toBe(2);
+  });
+
+  test('lyrics in the sung language still have to pass the duration gate', () => {
+    const m = pickConfidentMatch(
+      [match({ id: 1, duration: 260 }), match({ id: 2, duration: 300, syncedLyrics: '[00:01.00]夢ならば' })],
+      260,
+      { ...QUERY, language: 'ja' },
+    );
+    expect(m?.id).toBe(1);
+  });
+});
+
+describe('isWrittenIn', () => {
+  test('native script, mixed with some English', () => {
+    expect(isWrittenIn('[00:01.00]夢ならばどれほどよかったでしょう\n[00:05.00]Oh yeah', 'ja')).toBe(true);
+    expect(isWrittenIn('[00:01.00]故事的小黄花', 'zh')).toBe(true);
+    expect(isWrittenIn('[00:01.00]나는 너의 좋은 날', 'ko')).toBe(true);
+    expect(isWrittenIn('[00:01.00]Я люблю тебя', 'ru')).toBe(true);
+    expect(isWrittenIn('[00:01.00]אני אוהב אותך', 'iw')).toBe(true);
+  });
+
+  test('half the letters is enough', () => {
+    expect(isWrittenIn('夢夢ab', 'ja')).toBe(true);
+    expect(isWrittenIn('夢abc', 'ja')).toBe(false);
+  });
+
+  test('timestamps alone are not', () => {
+    expect(isWrittenIn('[00:01.00]', 'ja')).toBe(false);
+  });
+
+  test('a romanisation is not', () => {
+    expect(isWrittenIn('[00:01.00]Yume naraba dore hodo yokatta deshou', 'ja')).toBe(false);
+    expect(isWrittenIn('[00:01.00]Gu shi de xiao huang hua', 'zh')).toBe(false);
+    expect(isWrittenIn('[00:01.00]Ya lyublyu tebya', 'ru')).toBe(false);
+  });
+
+  test('Korean lyrics are not Japanese', () => {
+    expect(isWrittenIn('[00:01.00]나는 너의 좋은 날', 'ja')).toBe(false);
+  });
+
+  test('always for a Latin-script or unknown language', () => {
+    expect(isWrittenIn('[00:01.00]夢ならば', 'en')).toBe(true);
+    expect(isWrittenIn('[00:01.00]Hello', undefined)).toBe(true);
   });
 });
 

@@ -38,6 +38,15 @@ def test_lyrics_composes_separation():
     assert any(f.startswith("ctc_align__") for f in names)
 
 
+def test_language_composes_separation_and_gates_no_other_capability():
+    names = _names("language")
+    assert f"{_sep_stem()}.fp16.onnx" in names  # language ID runs over the vocals stem
+    assert settings.language_id_model in names
+    assert not any("ctc_align" in f for f in names)  # never pulls lyrics weights
+    for other in ("separation", "lyrics", "pitch", "beat"):
+        assert settings.language_id_model not in _names(other)
+
+
 def test_pitch_composes_separation_and_pulls_f0_models():
     names = _names("pitch")
     assert f"{_sep_stem()}.fp16.onnx" in names  # pitch runs over the vocals stem

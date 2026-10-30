@@ -164,7 +164,7 @@ header `backendFetch` attaches.
   ids are `settings.*` build fields (config.py), not hardcoded. fp16 is
   GPU-only. Shipped weights live on HF (`settings.onnx_repo`,
   `bitnimble/utai-onnx`). At startup the backend **checks**
-  `settings.startup_capabilities` (default `lyrics,pitch,beat` = every model),
+  `settings.startup_capabilities` (default `lyrics,pitch,beat,language` = every model),
   **update-checking** each present asset via its ETag, and loads what's on disk;
   the frontend downloads missing/outdated models (`POST /provision/download`)
   when the user accepts the toast's prompt, on web and desktop alike. **A job

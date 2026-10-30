@@ -4,9 +4,10 @@
 Every ML model the aligner runs on onnxruntime, exported once here and uploaded
 to HF so the app downloads ready `.onnx` instead of exporting at first run. fp16
 is the shipping format (GPU EPs only; validated corr >= 0.99998 vs fp32 on CUDA).
-Pass --fp32 for full precision, --only to subset.
+Pass --fp32 for full precision, --only to subset. The language ID model always
+exports fp32 (it runs on the CPU EP).
 
-  aligner/.venv/bin/python3 scripts/export_onnx_models.py [OUT_DIR] [--fp32] [--only sep,lyrics]
+  aligner/.venv/bin/python3 scripts/export_onnx_models.py [OUT_DIR] [--fp32] [--only sep,lyrics,lang]
 
 Runs on CPU (torch.onnx.export). Sequential with gc so peak RAM ~ one model.
 """
@@ -33,7 +34,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir", nargs="?", default="/codebox-workspace/utai/onnx-export")
     ap.add_argument("--fp32", action="store_true", help="export fp32 instead of fp16")
-    ap.add_argument("--only", default="", help="comma list of: sep,lyrics")
+    ap.add_argument("--only", default="", help="comma list of: sep,lyrics,lang")
     args = ap.parse_args()
 
     fp16 = not args.fp32
@@ -68,6 +69,13 @@ def main():
             path = export_ctc_model(model_path, out / f"ctc_align__{_sanitize(model_path)}.{tag}.onnx", fp16=fp16)
             _report(path)
             gc.collect()
+
+    if want("lang"):
+        print("[language id]", flush=True)
+        from app.config import settings
+        from app.pipeline.language_id import export_language_id_model
+
+        _report(export_language_id_model(out / settings.language_id_model))
 
     print("done.", flush=True)
 
