@@ -1,3 +1,4 @@
+import { needsWordSpace } from 'src/editing/lyrics/lyrics_measure';
 import { activeLineIndexAt, isBlankLyricLine, lineSpanSec, LyricLine } from 'src/lyrics/lrc';
 
 const LINE_LEAD_IN_SEC = 3;
@@ -70,35 +71,54 @@ export function lineSplitLimits(lineWidthEm: number): LineSplitLimits {
 /** Word-timed lines wider than `splitAboveEm`, split into the fewest lines that
  *  each fit `maxPartEm`, as even as possible. `phraseStarts` gives offsets into
  *  the line's {@link lineSegments} text where unspaced text may break; a line
- *  with nowhere to break stays whole. */
+ *  with nowhere to break stays whole. `shownText` is each segment's text as it
+ *  shows, which widths are measured from. */
 export function splitLongLines(
   lines: readonly LyricLine[],
   limits: LineSplitLimits,
   phraseStarts: (text: string) => readonly number[] | undefined,
+  shownText: (segments: readonly LineSegment[]) => string[] = (segments) => segments.map((s) => s.text),
 ): LyricLine[] {
-  return lines.flatMap((line) => splitLongLine(line, limits, phraseStarts));
+  return lines.flatMap((line) => splitLongLine(line, limits, phraseStarts, shownText));
+}
+
+/** Whether a space shows before each segment: romaji shown in place of
+ *  unspaced Japanese still needs one between words. */
+export function spacesBefore(segments: readonly LineSegment[], shown: readonly string[]): boolean[] {
+  return shown.map(
+    (text, i) => i > 0 && needsWordSpace(shown[i - 1], text) && !needsWordSpace(segments[i - 1].text, segments[i].text),
+  );
 }
 
 function splitLongLine(
   line: LyricLine,
   { splitAboveEm, maxPartEm }: LineSplitLimits,
   phraseStarts: (text: string) => readonly number[] | undefined,
+  shownText: (segments: readonly LineSegment[]) => string[],
 ): LyricLine[] {
   const words = line.words;
   if (!words || words.length < 2) return [line];
   const segments = lineSegments(line);
   const text = segments.map((s) => s.text).join('');
-  const totalEm = textEm(text);
+  const shown = shownText(segments);
+  const shownLine = shown.join('');
+  const totalEm = textEm(shownLine);
   if (totalEm <= splitAboveEm) return [line];
   const wordStarts: number[] = [];
+  const shownStarts: number[] = [];
   let offset = 0;
-  for (const s of segments) {
+  let shownOffset = 0;
+  segments.forEach((s, i) => {
     wordStarts[s.wordIdx] ??= offset;
+    shownStarts[s.wordIdx] ??= shownOffset;
     offset += s.text.length;
-  }
+    shownOffset += shown[i].length;
+  });
   wordStarts.push(text.length);
+  shownStarts.push(shownLine.length);
   const phrases = phraseStarts(text);
   const slice = (from: number, to: number): string => text.slice(wordStarts[from], wordStarts[to]).trim();
+  const shownEm = (from: number, to: number): number => textEm(shownLine.slice(shownStarts[from], shownStarts[to]).trim());
   const breaks: Break[] = [{ at: 0, bonus: 0 }];
   for (let at = 1; at < words.length; at++) {
     const lastMark = text.slice(0, wordStarts[at]).trimEnd().at(-1) ?? '';
@@ -111,7 +131,7 @@ function splitLongLine(
     breaks.push({ at, bonus: (afterPunctuation ? PUNCTUATION_BONUS : 0) + pauseBonus });
   }
   breaks.push({ at: words.length, bonus: 0 });
-  const bounds = evenestParts(breaks, totalEm, maxPartEm, (from, to) => textEm(slice(from, to)));
+  const bounds = evenestParts(breaks, totalEm, maxPartEm, shownEm);
   if (bounds.length <= 2) return [line];
   let startSec = line.startSec;
   return bounds.slice(0, -1).map((from, i) => {

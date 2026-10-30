@@ -7,6 +7,7 @@ import {
   lineSegments,
   nextVocalLineIdx,
   shownLineIdx,
+  spacesBefore,
   splitLongLines,
   vocalOrdinalSinceGap,
 } from '../karaoke_lyrics';
@@ -163,6 +164,23 @@ describe('splitLongLines', () => {
       '君の名前を呼んでいたんだ',
       'ずっと遠い空の向こうへ',
     ]);
+  });
+
+  test('measures the text as shown: a line fitting as kanji splits as romaji', () => {
+    const line = { startSec: 9, text: '君と二人で', words: timedWords(['君', 'と', '二人', 'で']) };
+    const limits = { splitAboveEm: 6, maxPartEm: 5 };
+    const phrases = () => [2];
+    expect(splitLongLines([line], limits, phrases)).toEqual([line]);
+    const romaji = () => ['kimi', ' to', ' futari', ' de'];
+    expect(texts(splitLongLines([line], limits, phrases, romaji))).toEqual(['君と', '二人で']);
+  });
+});
+
+describe('spacesBefore', () => {
+  test('spaces words romaji runs together, not ones already spaced', () => {
+    expect(spacesBefore([{ text: '君', wordIdx: 0 }, { text: 'と', wordIdx: 1 }], ['kimi', 'to'])).toEqual([false, true]);
+    const latin = [{ text: 'a', wordIdx: 0 }, { text: ' ', wordIdx: 0 }, { text: 'b', wordIdx: 1 }];
+    expect(spacesBefore(latin, ['a', ' ', 'b'])).toEqual([false, false, false]);
   });
 });
 

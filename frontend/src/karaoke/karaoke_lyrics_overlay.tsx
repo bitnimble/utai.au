@@ -12,7 +12,6 @@ import {
   LyricWordPlacement,
   lyricMeasureInputs,
   lyricsMeasurer,
-  needsWordSpace,
 } from 'src/editing/lyrics/lyrics_measure';
 import trackStyles from 'src/editing/lyrics/lyrics_track_view.module.css';
 import { buildLinearTimeline } from 'src/editing/playback/timeline';
@@ -27,8 +26,10 @@ import {
   followingLineIdx,
   followsGap,
   lineSegments,
+  LineSegment,
   lineSplitLimits,
   shownLineIdx,
+  spacesBefore,
   splitLongLines,
   vocalOrdinalSinceGap,
 } from './karaoke_lyrics';
@@ -69,7 +70,16 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     get lines(): readonly LyricLine[] {
       const t = this.track;
       if (!t || this.lineWidthEm <= 0) return t?.lines ?? [];
-      return splitLongLines(t.lines, lineSplitLimits(this.lineWidthEm), (text) => furiganaAnnotator.phraseStartsFor(text));
+      return splitLongLines(
+        t.lines,
+        lineSplitLimits(this.lineWidthEm),
+        (text) => furiganaAnnotator.phraseStartsFor(text),
+        (segments) => {
+          const shown = shownTexts(segments);
+          const spaced = spacesBefore(segments, shown);
+          return shown.map((text, i) => (spaced[i] ? ` ${text}` : text));
+        },
+      );
     },
     get audioTimeNow(): number {
       return playbackEngine.currentTime - playbackEngine.songLeadInSec;
@@ -368,14 +378,12 @@ const LineGlyphs = observer(function LineGlyphs({
 }) {
   const segments = React.useMemo(() => lineSegments(line), [line]);
   const display = furiganaAnnotator.displayForWords(segments, appSettingsStore.japaneseScript);
-  const shownText = display.map((d) => baseText(d.segments));
+  const spaced = spacesBefore(segments, display.map((d) => baseText(d.segments)));
   return segments.map((s, i) => {
     const countInHere = i === 0 ? countIn : undefined;
-    // romaji shown in place of unspaced Japanese still needs spaces between words
-    const spaced = i > 0 && needsWordSpace(shownText[i - 1], shownText[i]) && !needsWordSpace(segments[i - 1].text, s.text);
     return (
       <React.Fragment key={i}>
-        {spaced && ' '}
+        {spaced[i] && ' '}
         <span
           className={classNames(countInHere && styles.countInAnchor)}
           data-word-state={wordState(s.wordIdx, activeWordIdx, activeWordEnded)}
@@ -508,6 +516,10 @@ function fitLineToWidth(
 }
 
 /** The line laid out on a timeline of its own sung span. */
+function shownTexts(segments: readonly LineSegment[]): string[] {
+  return furiganaAnnotator.displayForWords(segments, appSettingsStore.japaneseScript).map((d) => baseText(d.segments));
+}
+
 function positionKaraokeLine(lines: readonly LyricLine[], lineIdx: number): PositionedLine | undefined {
   const span = lineSpanSec(lines, lineIdx);
   const durationSec = span.endSec - span.startSec + 1;
