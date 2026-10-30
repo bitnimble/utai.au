@@ -11,6 +11,7 @@
 
 .fullscreen {
     position: relative;
+    background: var(--color-fullscreen-bg);
 }
 
 .chrome {

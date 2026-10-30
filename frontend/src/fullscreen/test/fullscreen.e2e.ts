@@ -14,12 +14,23 @@ async function enterFullscreenFromTracks(page: Page): Promise<void> {
   await expect(page.getByTestId('queue-sidebar')).toHaveCount(0);
 }
 
+function stageBackground(page: Page): Promise<string> {
+  return page.getByTestId('video-area').evaluate((el) => {
+    for (let node: Element | null = el; node != null; node = node.parentElement) {
+      const color = getComputedStyle(node).backgroundColor;
+      if (color !== 'rgba(0, 0, 0, 0)') return color;
+    }
+    return 'transparent';
+  });
+}
+
 test('fullscreen: enters karaoke, closes the sidebar, reveals the chrome at the edges, restores on exit', async ({
   page,
 }) => {
   await enterFullscreenFromTracks(page);
   const header = page.getByRole('banner');
   const footer = page.getByRole('contentinfo');
+  expect(await stageBackground(page)).toBe('rgb(0, 0, 0)');
 
   const { width, height } = page.viewportSize()!;
   await page.mouse.move(width / 2, height / 2);
@@ -38,6 +49,7 @@ test('fullscreen: enters karaoke, closes the sidebar, reveals the chrome at the 
   await expect.poll(() => page.evaluate(() => document.fullscreenElement != null)).toBe(false);
   await expect(page.getByTestId('score-area')).toBeVisible();
   await expect(header).toHaveCSS('opacity', '1');
+  expect(await stageBackground(page)).not.toBe('rgb(0, 0, 0)');
 });
 
 test('fullscreen: leaving it outside the app returns to the saved view mode', async ({ page }) => {
