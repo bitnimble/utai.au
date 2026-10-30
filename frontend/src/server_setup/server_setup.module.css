@@ -1,0 +1,57 @@
+.page {
+    composes: page from '../ui/launch_page/launch_page.module.css';
+}
+
+.card {
+    composes: card from '../ui/launch_page/launch_page.module.css';
+    width: min(420px, 100%);
+}
+
+.title {
+    composes: title from '../ui/launch_page/launch_page.module.css';
+    margin: 0;
+}
+
+.settings {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 16px;
+}
+
+.hint {
+    composes: bodyMd from '../typography.module.css';
+    margin: 0;
+    color: var(--color-text-secondary);
+}
+
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    text-align: left;
+}
+
+.label {
+    composes: bodyMd from '../typography.module.css';
+    color: var(--color-text-secondary);
+}
+
+.row {
+    display: flex;
+    gap: 8px;
+}
+
+.field {
+    composes: field from '../ui/form/form.module.css';
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.connect {
+    composes: primary from '../ui/button/button.module.css';
+}
+
+.error {
+    composes: error from '../ui/launch_page/launch_page.module.css';
+}

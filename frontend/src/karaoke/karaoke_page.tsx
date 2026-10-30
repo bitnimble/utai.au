@@ -1,3 +1,4 @@
+import { isTauri } from '@tauri-apps/api/core';
 import classNames from 'classnames';
 import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
@@ -211,7 +212,7 @@ function buildSession(): Session {
 }
 
 function buildSessionHost(hostSession: HostSession, session: Session): SessionHost {
-  const sessionHost = new SessionHostStore(hostSession, appSettingsStore, window.location.origin);
+  const sessionHost = new SessionHostStore(hostSession, appSettingsStore, isTauri() ? undefined : window.location.origin);
   const sessionHostPresenter = new SessionHostPresenter(sessionHost, {
     queue: session.queue,
     queuePresenter: session.queuePresenter,

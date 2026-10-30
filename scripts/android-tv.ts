@@ -1,6 +1,7 @@
 // Fits the generated Android project (src-tauri/gen/android, which `tauri android init` writes and
 // git ignores) for Android TV: a launcher banner, no touchscreen required, and a MainActivity that
-// tells the page it is on a TV and hands the remote's Back and media buttons to it. scripts/tauri-build.ts
+// tells the page it is on a TV and hands the remote's Back and media buttons to it. On phones too, it
+// allows cleartext, for a plain-http server. scripts/tauri-build.ts
 // runs it after `android init` and before every other android command; it is idempotent.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,6 +14,9 @@ const TOUCHSCREEN = '<uses-feature android:name="android.hardware.touchscreen" a
 const LAUNCHER = '<category android:name="android.intent.category.LAUNCHER" />';
 const TV_LAUNCHER = '<category android:name="android.intent.category.LEANBACK_LAUNCHER" />';
 const BANNER = 'android:banner="@drawable/tv_banner"';
+// The template allows cleartext in debug builds only; the user's server may be plain http on their LAN.
+const CLEARTEXT_PLACEHOLDER = 'android:usesCleartextTraffic="${usesCleartextTraffic}"';
+const CLEARTEXT = 'android:usesCleartextTraffic="true"';
 
 const BANNER_DRAWABLE = `<?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
@@ -101,6 +105,12 @@ export function patchManifest(manifest: string): string {
   if (!out.includes(TOUCHSCREEN)) out = insert(out, '<application', 'before', `${TOUCHSCREEN}\n\n    `);
   if (!out.includes(TV_LAUNCHER)) out = insert(out, LAUNCHER, 'after', `\n                ${TV_LAUNCHER}`);
   if (!out.includes(BANNER)) out = insert(out, '<application', 'after', `\n        ${BANNER}`);
+  if (!out.includes(CLEARTEXT)) {
+    if (!out.includes(CLEARTEXT_PLACEHOLDER)) {
+      throw new Error(`[android-tv] AndroidManifest.xml has no ${CLEARTEXT_PLACEHOLDER}: the Tauri template changed`);
+    }
+    out = out.replace(CLEARTEXT_PLACEHOLDER, CLEARTEXT);
+  }
   return out;
 }
 

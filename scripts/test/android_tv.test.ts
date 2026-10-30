@@ -21,7 +21,8 @@ const TEMPLATE = `<manifest xmlns:android="http://schemas.android.com/apk/res/an
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="\${usesCleartextTraffic}">
         <activity android:name=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -32,7 +33,7 @@ const TEMPLATE = `<manifest xmlns:android="http://schemas.android.com/apk/res/an
 </manifest>
 `;
 
-test('adds the TV features, launcher and banner once', () => {
+test('adds the TV features, launcher and banner once, and allows a plain-http server', () => {
   const patched = patchManifest(TEMPLATE);
   expect(patched).toBe(`<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
@@ -42,7 +43,8 @@ test('adds the TV features, launcher and banner once', () => {
 
     <application
         android:banner="@drawable/tv_banner"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <activity android:name=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -54,4 +56,9 @@ test('adds the TV features, launcher and banner once', () => {
 </manifest>
 `);
   expect(patchManifest(patched)).toBe(patched);
+});
+
+test('fails loudly when the template no longer has the cleartext placeholder', () => {
+  const changed = TEMPLATE.replace('\n        android:usesCleartextTraffic="${usesCleartextTraffic}"', '');
+  expect(() => patchManifest(changed)).toThrow('usesCleartextTraffic');
 });
