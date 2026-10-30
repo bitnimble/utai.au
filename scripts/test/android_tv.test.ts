@@ -2,14 +2,14 @@ import { expect, test } from 'bun:test';
 import { mainActivity, patchManifest } from '../android-tv';
 
 test('MainActivity tags the user agent and hands Back to the page', () => {
-  const activity = mainActivity('au.utai.app');
-  expect(activity).toStartWith('package au.utai.app\n');
+  const activity = mainActivity('au.utai');
+  expect(activity).toStartWith('package au.utai\n');
   expect(activity).toContain('userAgentString + " UtaiTV"');
   expect(activity).toContain('webView.evaluateJavascript("window.utaiBack?.() === true")');
 });
 
 test('MainActivity forwards media buttons to the page by key name', () => {
-  const activity = mainActivity('au.utai.app');
+  const activity = mainActivity('au.utai');
   expect(activity).toContain('KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE to "MediaPlayPause",');
   expect(activity).toContain('KeyEvent.KEYCODE_MEDIA_NEXT to "MediaTrackNext",');
   expect(activity).toContain(

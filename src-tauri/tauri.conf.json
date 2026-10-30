@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "utai.au",
   "version": "../package.json",
-  "identifier": "au.utai.app",
+  "identifier": "au.utai",
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:5174",
