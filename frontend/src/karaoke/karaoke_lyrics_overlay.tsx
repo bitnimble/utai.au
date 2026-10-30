@@ -2,6 +2,7 @@ import classNames from 'classnames';
 import { observer, useLocalObservable } from 'mobx-react-lite';
 import React from 'react';
 import { flushSync } from 'react-dom';
+import { BeatAnalysis } from 'src/editing/beats/beat_analysis';
 import { BeatStoreContext } from 'src/editing/beats/beat_contexts';
 import { LyricLineChip, RubyText } from 'src/editing/lyrics/lyric_chips';
 import { PositionedLine, positionLyricLines } from 'src/editing/lyrics/lyric_layout';
@@ -22,6 +23,7 @@ import { LyricsTrack, lyricsStore } from 'src/lyrics/store';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { StatusPill } from 'src/ui/status_pill/status_pill';
 import {
+  countInLeadInSec,
   countInTimes,
   followingLineIdx,
   followsGap,
@@ -93,7 +95,15 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     get shownIdx(): number | undefined {
       const t = this.track;
       if (playbackEngine.ended) return undefined;
-      return t ? shownLineIdx(this.lines, this.lyricsTimeNow, t.offsetSec) : undefined;
+      if (!t) return undefined;
+      const lines = this.lines;
+      const analysis = beats?.analysis;
+      return shownLineIdx(lines, this.lyricsTimeNow, t.offsetSec, (idx) => {
+        const countIn = countInArgs(lines, idx, t.offsetSec, analysis);
+        const leadInSec = countIn && countInLeadInSec(...countIn);
+        // lyrics time runs HIGHLIGHT_LEAD_SEC ahead of the audio time the dots go out on
+        return leadInSec != null ? leadInSec - HIGHLIGHT_LEAD_SEC : undefined;
+      });
     },
     get nextIdx(): number | undefined {
       const shown = this.shownIdx;
@@ -121,10 +131,8 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     get countInTimes(): readonly number[] {
       const t = this.track;
       const shown = this.shownIdx;
-      const analysis = beats?.analysis;
-      if (!t || shown == null || !analysis?.beats.length || !followsGap(this.lines, shown)) return [];
-      const startSec = lineSpanSec(this.lines, shown).startSec + t.offsetSec;
-      return countInTimes(analysis.beats, startSec, 60 / analysis.bpm, analysis.timeSignature.numerator);
+      const countIn = t && shown != null ? countInArgs(this.lines, shown, t.offsetSec, beats?.analysis) : undefined;
+      return countIn ? countInTimes(...countIn) : [];
     },
     get countInLeft(): number {
       const now = this.audioTimeNow;
@@ -210,6 +218,18 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     </div>
   );
 });
+
+/** `countInTimes`' arguments for `lines[idx]`, if it gets a count-in. */
+function countInArgs(
+  lines: readonly LyricLine[],
+  idx: number,
+  offsetSec: number,
+  analysis: BeatAnalysis | undefined,
+): [beats: readonly number[], startSec: number, beatSec: number, beatsPerBar: number] | undefined {
+  if (!analysis?.beats.length || !followsGap(lines, idx)) return undefined;
+  const startSec = lineSpanSec(lines, idx).startSec + offsetSec;
+  return [analysis.beats, startSec, 60 / analysis.bpm, analysis.timeSignature.numerator];
+}
 
 type LineView = (idx: number | undefined, lineWidthPx: number, oneRowFontSizePx?: number) => React.ReactNode;
 
