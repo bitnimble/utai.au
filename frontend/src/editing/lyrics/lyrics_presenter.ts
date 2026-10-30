@@ -73,6 +73,7 @@ export class LyricsPresenter {
     const trackId = lyricsStore.add(lines, {
       source: 'lrclib',
       sourceLabel: `LRCLIB · ${match.trackName} - ${match.artistName}`,
+      first: true,
     });
     toastStore.showSuccess(`Loaded ${match.trackName} by ${match.artistName} from LRCLIB`, {
       testId: 'lyrics-search-loaded',
@@ -133,7 +134,7 @@ export class LyricsPresenter {
       startSec: (spreadSec * i) / cleaned.length,
       text: t,
     }));
-    const trackId = lyricsStore.add(lines, { source: 'plaintext', sourceLabel: 'Plain text' });
+    const trackId = lyricsStore.add(lines, { source: 'plaintext', sourceLabel: 'Plain text', first: true });
     if (opts.wordLevel) {
       void this.runWordLevelAlignment(trackId, lines, {
         source: 'plaintext',

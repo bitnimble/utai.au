@@ -56,7 +56,7 @@ function allocLyricsTrackId(): LyricsTrackId {
 }
 
 export class LyricsStore {
-  // Insertion order = render order. Replacing an entry preserves its position.
+  // Render order. Replacing an entry preserves its position.
   private tracksMap: Map<LyricsTrackId, LyricsTrack> = new Map();
 
   constructor() {
@@ -65,21 +65,23 @@ export class LyricsStore {
 
   /** Insert a new track, returning its allocated id. Source-label
    *  collisions are disambiguated with ` (2)`, ` (3)`, etc. so callers
-   *  always pass the natural label (e.g. `LRCLIB · X - Y`). */
+   *  always pass the natural label (e.g. `LRCLIB · X - Y`). `first` puts it
+   *  on top, where it becomes the track karaoke sings from. */
   add(
     lines: readonly LyricLine[],
-    opts: { source: LyricsSource; sourceLabel: string },
+    opts: { source: LyricsSource; sourceLabel: string; first?: boolean },
   ): LyricsTrackId {
     const id = allocLyricsTrackId();
-    const sourceLabel = this.uniqueSourceLabel(opts.sourceLabel);
-    this.tracksMap.set(id, {
+    const track: LyricsTrack = {
       id,
       lines,
       source: opts.source,
-      sourceLabel,
+      sourceLabel: this.uniqueSourceLabel(opts.sourceLabel),
       offsetSec: 0,
       color: LYRICS_FALLBACK_COLOR,
-    });
+    };
+    if (opts.first) this.tracksMap = new Map([[id, track], ...this.tracksMap]);
+    else this.tracksMap.set(id, track);
     return id;
   }
 
@@ -125,9 +127,13 @@ export class LyricsStore {
     return this.tracksMap.get(id);
   }
 
-  /** Snapshot of ids in insertion order. */
+  /** Snapshot of ids in render order. */
   get trackIds(): readonly LyricsTrackId[] {
     return Array.from(this.tracksMap.keys());
+  }
+
+  get firstTrack(): LyricsTrack | undefined {
+    return this.tracksMap.values().next().value;
   }
 
   get hasAnyLyrics(): boolean {

@@ -13,6 +13,8 @@ import { waveformWorker } from './waveform_worker_client';
 
 export type PlayerState = 'idle' | 'loading' | 'playing' | 'paused';
 
+type TrackMix = { readonly volume: number; readonly muted: boolean };
+
 const PLAYBACK_TAIL_SECONDS = 0.5;
 export const MAX_AUDIO_OFFSET_SEC = 1;
 
@@ -55,11 +57,20 @@ export class PlaybackEngine {
   /** Where the output last began feeding audio into its delay. */
   private feedStartSec = 0;
   private readonly endedListeners = new Set<() => void>();
+  /** The last mix set per role, carried onto the next song's track of that role. */
+  private readonly mixByRole = new Map<AudioTrackRole, TrackMix>([['vocals', { volume: 1, muted: true }]]);
 
   constructor(private readonly output: AudioOutput) {
     makeAutoObservable<
       this,
-      'output' | 'rafId' | 'endTimerId' | 'trackIdCounter' | 'playToken' | 'feedStartSec' | 'endedListeners'
+      | 'output'
+      | 'rafId'
+      | 'endTimerId'
+      | 'trackIdCounter'
+      | 'playToken'
+      | 'feedStartSec'
+      | 'endedListeners'
+      | 'mixByRole'
     >(this, {
       output: false,
       feedStartSec: false,
@@ -68,6 +79,7 @@ export class PlaybackEngine {
       trackIdCounter: false,
       playToken: false,
       endedListeners: false,
+      mixByRole: false,
     });
   }
 
@@ -109,14 +121,14 @@ export class PlaybackEngine {
     const track = this.audioTracks.get(id);
     if (!track) return;
     track.volume = Math.max(0, Math.min(1, volume));
-    this.output.setTrackGain(id, track.outputGain);
+    this.applyMix(track);
   }
 
   setTrackMuted(id: AudioTrackId, muted: boolean): void {
     const track = this.audioTracks.get(id);
     if (!track) return;
     track.muted = muted;
-    this.output.setTrackGain(id, track.outputGain);
+    this.applyMix(track);
   }
 
   setTrackPitchContour(id: AudioTrackId, contour: PitchContour): void {
@@ -237,12 +249,23 @@ export class PlaybackEngine {
     const { buffer, sourceBlob } = await decode(this.output.decodeContext());
     const id: AudioTrackId = `track-${++this.trackIdCounter}`;
     const track = new AudioTrack({ id, filename, buffer, sourceBlob, durationSec: buffer.duration, role });
+    const mix = this.mixByRole.get(track.role);
+    if (mix) {
+      track.volume = mix.volume;
+      track.muted = mix.muted;
+    }
     await this.output.addTrack(track);
     runInAction(() => {
       this.audioTracks.set(id, track);
     });
+    this.output.setTrackGain(id, track.outputGain);
     waveformWorker.registerTrack(id, buffer);
     return id;
+  }
+
+  private applyMix(track: AudioTrack): void {
+    this.mixByRole.set(track.role, { volume: track.volume, muted: track.muted });
+    this.output.setTrackGain(track.id, track.outputGain);
   }
 
   private isPlayPending(): boolean {
