@@ -55,6 +55,10 @@ wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 # (resolver v2 keeps dev-dep features out of normal builds).
 tauri = { version = "2.11.3", features = ["test"] }
 
+# tauri's macro brotli-compresses the embedded 27MB ort wasm: 8x slower unoptimised.
+[profile.release.build-override]
+opt-level = 3
+
 # Unoptimised, the real-time reverb eats half a core and the output underruns.
 [profile.dev.package.utai-audio]
 opt-level = 3

@@ -58,11 +58,21 @@ COPY --from=uv /uv /uvx /usr/local/bin/
 ENV VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:$PATH \
     UV_LINK_MODE=copy \
+    UV_NO_CACHE=1 \
     UV_HTTP_TIMEOUT=300
 RUN uv venv /opt/venv --python python3.11
 
-# numpy bedrock first so the layer seeds the dep cache.
 RUN uv pip install 'numpy>=1.26'
+
+# Ahead of pyproject.toml, so a dependency change doesn't push these ~6GB of wheels again.
+RUN uv pip install --no-deps --default-index https://pypi.nvidia.com tensorrt-cu12-libs==10.16.1.11 \
+    && uv pip install \
+        onnxruntime-gpu==1.25.1 \
+        nvidia-cudnn-cu12==9.19.0.56 \
+        nvidia-cublas-cu12==12.8.4.1 \
+        nvidia-cuda-nvrtc-cu12==12.8.93 \
+        tensorrt-cu12==10.16.1.11 \
+        tensorrt-cu12-bindings==10.16.1.11
 
 # The torch-free aligner dependency set. Drop in pyproject.toml + the override
 # file and `uv pip install -e .` with no package source present -- setuptools finds
