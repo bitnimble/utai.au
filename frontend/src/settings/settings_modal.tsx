@@ -6,14 +6,18 @@ import { AudioDevicePresenterContext } from 'src/audio_devices/audio_device_cont
 import { LogsSettings } from 'src/log_viewer/logs_settings';
 import { MusicSourcesSettings } from 'src/music_source/music_sources_settings';
 import { MusicSourcePresenterContext } from 'src/music_source/music_source_contexts';
+import { ServerSettings } from 'src/server_setup/server_setup';
 import { Modal, ModalHeader } from 'src/ui/modal/modal';
 import { Tabs } from 'src/ui/tabs/tabs';
 import { UpdatesSettings } from 'src/updates/updates_settings';
 import { useSettingsModal, type SettingsTab } from './settings_modal_context';
 
+const SERVER_TAB = { value: 'server', label: 'Server', testId: 'settings-tab-server' } as const;
+
 const TAB_OPTIONS: ReadonlyArray<{ value: SettingsTab; label: string; testId: string }> = [
   { value: 'sources', label: 'Music sources', testId: 'settings-tab-sources' },
   { value: 'audio', label: 'Audio', testId: 'settings-tab-audio' },
+  ...(__IS_MOBILE__ ? [SERVER_TAB] : []),
   { value: 'logs', label: 'Logs', testId: 'settings-tab-logs' },
 ];
 
@@ -53,6 +57,7 @@ export const SettingsModal = observer(function SettingsModal() {
       <Tabs options={tabs} value={tab} onChange={setTab} ariaLabel="Settings sections" />
       {tab === 'sources' && <MusicSourcesSettings />}
       {tab === 'audio' && <AudioSettings />}
+      {tab === 'server' && <ServerSettings />}
       {tab === 'logs' && <LogsSettings />}
       {tab === 'updates' && <UpdatesSettings />}
     </Modal>

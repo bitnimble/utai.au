@@ -8,6 +8,7 @@ import { hasLocalBackend } from 'src/net/local_backend';
 import { ProvisioningPresenter } from 'src/provisioning/provisioning_presenter';
 import { HttpProvisioningSource } from 'src/provisioning/provisioning_source';
 import { ProvisioningStore } from 'src/provisioning/provisioning_store';
+import { ServerSetupPage } from 'src/server_setup/server_setup';
 import { parseRoute } from 'src/session/app_route';
 import { HostPage } from 'src/session/host_page';
 import { HostPagePresenter, type HostTarget } from 'src/session/host_page_presenter';
@@ -45,6 +46,7 @@ function renderRoute(): React.ReactElement {
   const route = parseRoute(window.location.pathname);
   // The remote is served from the same origin as the session API (the site, or the desktop app's gateway).
   if (route.kind === 'remote') return <RemotePage sessionId={route.sessionId} apiBase="/api" />;
+  if (__IS_MOBILE__ && appSettingsStore.alignerUrl.trim().length === 0) return <ServerSetupPage />;
   if (isTauri()) return renderHost({ kind: 'device', apiBase: deviceSessionApiBase });
   if (route.kind === 'host') {
     return renderHost({ kind: 'existing', sessionId: route.sessionId, apiBase: appSettingsStore.apiBase });

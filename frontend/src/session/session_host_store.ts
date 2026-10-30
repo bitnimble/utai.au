@@ -1,5 +1,6 @@
 import { makeAutoObservable, observable } from 'mobx';
 import type { AppSettingsStore } from 'src/settings/app_settings_store';
+import { isLoopback, parseHttpUrl } from 'src/utils/http_url';
 import { remotePath } from './app_route';
 import type { HostSession, SocketStatus } from './session_client';
 
@@ -10,7 +11,8 @@ export class SessionHostStore {
   constructor(
     public session: HostSession,
     private readonly settings: AppSettingsStore,
-    private readonly pageOrigin: string,
+    /** Undefined when phones can't open this page (the app's bundled webview). */
+    private readonly pageOrigin: string | undefined,
   ) {
     makeAutoObservable<this, 'settings'>(this, { session: observable.ref, settings: false });
   }
@@ -24,13 +26,15 @@ export class SessionHostStore {
     return this.status === 'missing' || this.status === 'forbidden';
   }
 
-  /** The user's override, else what the server advertises, else this page. */
+  /** The user's override, else what the server advertises, else this page, else the site the session lives on. */
   get joinBaseUrl(): string | undefined {
     const override = this.settings.remoteBaseUrl.trim();
     if (override.length > 0) return override.replace(/\/+$/, '');
     const { publicUrl } = this.session.info;
     if (publicUrl != null) return publicUrl.replace(/\/+$/, '');
-    return /^https?:/.test(this.pageOrigin) ? this.pageOrigin : undefined;
+    if (this.pageOrigin != null) return this.pageOrigin;
+    const api = parseHttpUrl(this.session.apiBase);
+    return api == null || isLoopback(api) ? undefined : api.origin;
   }
 
   get joinUrl(): string | undefined {

@@ -42,7 +42,9 @@ Jobs pass audio the backend already holds by path instead of uploading it
 (imageio-ffmpeg, which startup links to `<data>/bin/ffmpeg`, put first on PATH)
 and deno (yt-dlp's JS runtime for YouTube). The **Android** app reuses
 the same shell + frontend but has **no local backend** (no on-device Python/ML):
-it uses a remote one, same as the web build. Desktop-only Rust
+it uses a hosted one, whose address the launch setup screen asks for
+(`frontend/src/server_setup/`, changeable in Settings > Server); `scripts/android-tv.ts`
+allows cleartext in every Android build so that server can be plain http on the LAN. Desktop-only Rust
 (local backend, capability install, live-mic pitch, portable paths, session
 gateway) is `#[cfg(desktop)]`-gated.
 
