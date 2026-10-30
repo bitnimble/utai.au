@@ -147,6 +147,31 @@ test('karaoke keeps romaji wider than its kanji clear of the next word', async (
   await expectClear();
 });
 
+test("tracks view keeps Japanese words clear of each other's text", async ({ page }) => {
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
+  await page.evaluate(() => {
+    const texts = ['ドラマチック', 'な', 'コーヒー', 'どっ', 'か'];
+    const words = texts.map((text, i) => ({ startSec: 1 + i * 0.3, endSec: 1.25 + i * 0.3, text }));
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add([{ startSec: 1, text: texts.join(''), words }], {
+      source: 'plaintext',
+      sourceLabel: 'probe',
+    });
+  });
+  await showTracksView(page);
+  const gaps = await page.getByTestId('lyrics-line-0').evaluate((el) => {
+    const rects = Array.from(el.querySelectorAll('[data-word-state] [data-text]')).map((s) => s.getBoundingClientRect());
+    return rects.slice(1).map((r, i) => r.left - rects[i].right);
+  });
+  expect(Math.min(...gaps)).toBeGreaterThanOrEqual(0);
+});
+
 test('kanji off: lyrics show as furigana alone, or romaji alone, in both views', async ({ page }) => {
   await loadJapaneseSong(page);
   await showTracksView(page);

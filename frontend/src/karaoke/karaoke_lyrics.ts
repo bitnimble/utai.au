@@ -1,4 +1,4 @@
-import { needsWordSpace } from 'src/editing/lyrics/lyrics_measure';
+import { needsWordSpace, WIDE_CHAR_RE } from 'src/editing/lyrics/lyrics_measure';
 import { activeLineIndexAt, isBlankLyricLine, lineSpanSec, LyricLine } from 'src/lyrics/lrc';
 
 const LINE_LEAD_IN_SEC = 3;
@@ -202,8 +202,6 @@ function cheapestPlan(
   }
   return { bounds, overflowEm };
 }
-
-const WIDE_CHAR_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}　-〿！-｠]/u;
 
 function textEm(text: string): number {
   let em = 0;
