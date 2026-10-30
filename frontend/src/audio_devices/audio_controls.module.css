@@ -1,6 +1,3 @@
-/* Per-channel mute button + volume slider, shared by the Settings Audio tab
-   and the home transport bar (same store, so they stay in sync). */
-
 .channel {
     display: flex;
     align-items: center;
@@ -36,15 +33,8 @@
     min-width: 80px;
 }
 
-/* Home transport cluster: push to the right of the transport row, side by side. */
 .home {
     display: flex;
     align-items: center;
     gap: 16px;
-    margin-left: auto;
-}
-
-.home .slider {
-    width: 90px;
-    flex: 0 0 auto;
 }

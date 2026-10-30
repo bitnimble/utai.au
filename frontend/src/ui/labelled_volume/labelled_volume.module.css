@@ -1,0 +1,37 @@
+.channel {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.label {
+    composes: labelSm from '../../typography.module.css';
+    color: var(--color-text-muted-alt);
+}
+
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.muteButton {
+    composes: reset from '../button/button.module.css';
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    padding: 2px;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted-alt);
+}
+
+.muteButton[aria-pressed='true'] {
+    color: var(--color-accent);
+}
+
+.slider {
+    width: 90px;
+    accent-color: var(--color-accent);
+}

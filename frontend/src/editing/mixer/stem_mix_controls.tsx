@@ -4,7 +4,7 @@ import React from 'react';
 import { KaraokePresenterContext } from 'src/karaoke/karaoke_contexts';
 import { AudioTrack } from 'src/editing/playback/audio_tracks';
 import { playbackEngine } from 'src/editing/playback/player';
-import { Slider } from 'src/ui/slider/slider';
+import { LabelledVolume } from 'src/ui/labelled_volume/labelled_volume';
 import { audioTrackLabel } from './audio_track_view';
 import styles from './stem_mix_controls.module.css';
 
@@ -23,41 +23,24 @@ export const StemMixControls = observer(function StemMixControls() {
 
 const StemControl = observer(function StemControl({ track }: { track: AudioTrack }) {
   const presenter = React.useContext(KaraokePresenterContext)!;
-  const label = stemLabel(track);
   return (
-    <div className={styles.stem}>
-      <span className={styles.stemLabel}>{label}</span>
-      <div className={styles.stemControls}>
-        <button
-          type="button"
-          className={styles.muteButton}
-          aria-pressed={track.muted}
-          aria-label={track.muted ? `Unmute ${label}` : `Mute ${label}`}
-          title={track.muted ? 'Unmute' : 'Mute'}
-          onClick={() => presenter.setTrackMuted(track.id, !track.muted)}
-          data-testid={`stem-mute-${track.id}`}
-        >
-          {track.muted ? <VolumeX size={14} aria-hidden="true" /> : <Volume2 size={14} aria-hidden="true" />}
-        </button>
-        <Slider
-          min={0}
-          max={1}
-          step={0.01}
-          value={track.volume}
-          onChange={(v) => presenter.setTrackVolume(track.id, v)}
-          className={styles.slider}
-          ariaLabel={`${label} volume`}
-          testId={`stem-volume-${track.id}`}
-        />
-      </div>
-    </div>
+    <LabelledVolume
+      label={stemLabel(track)}
+      icon={track.muted ? VolumeX : Volume2}
+      muted={track.muted}
+      volume={track.volume}
+      onMutedChange={(muted) => presenter.setTrackMuted(track.id, muted)}
+      onVolumeChange={(v) => presenter.setTrackVolume(track.id, v)}
+      muteTestId={`stem-mute-${track.id}`}
+      volumeTestId={`stem-volume-${track.id}`}
+    />
   );
 });
 
 function stemLabel(track: AudioTrack): string {
   switch (track.role) {
     case 'backing':
-      return 'Accompaniment';
+      return 'Instrumental';
     case 'vocals':
       return 'Vocals';
     case 'full-mix':

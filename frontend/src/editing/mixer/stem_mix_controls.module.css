@@ -5,29 +5,3 @@
     padding-right: 16px;
     border-right: 1px solid var(--color-border);
 }
-
-.stem {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.stemLabel {
-    composes: labelSm from '../../typography.module.css';
-    color: var(--color-text-muted-alt);
-}
-
-.stemControls {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.muteButton {
-    composes: muteButton from './audio_track_view.module.css';
-}
-
-.slider {
-    width: 90px;
-    accent-color: var(--color-accent);
-}
