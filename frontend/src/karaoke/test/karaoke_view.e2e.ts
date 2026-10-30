@@ -245,9 +245,12 @@ test('karaoke "Show 2 lines" sizes both lines alike, small enough for the longer
       const slot = long.parentElement!.getBoundingClientRect();
       const r = long.getBoundingClientRect();
       const font = (e: HTMLElement): number => parseFloat(getComputedStyle(e).fontSize);
+      const wordsRight = Math.max(
+        ...Array.from(long.querySelectorAll('[data-word-state]'), (w) => w.getBoundingClientRect().right),
+      );
       return {
         oneRow: new Set(tops).size === 1,
-        unclipped: long.scrollWidth <= long.clientWidth + 1,
+        unclipped: wordsRight <= r.right + 1,
         insideSlot: r.left >= slot.left - 1 && r.right <= slot.right + 1,
         fillsSlot: r.width >= slot.width * 0.75 * 0.9,
         sameSize: font(long) === font(short),

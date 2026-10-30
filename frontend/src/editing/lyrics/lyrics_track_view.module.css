@@ -312,16 +312,20 @@
     white-space: pre;
 }
 
+/* Grown by the stroke on every side: WebKit can drop ink outside the svg box
+   despite overflow: visible, cutting the outline flat. */
 .svgText > svg {
     position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
+    top: calc(-1 * var(--lyric-stroke-width));
+    left: calc(-1 * var(--lyric-stroke-width));
+    width: calc(100% + 2 * var(--lyric-stroke-width));
+    height: calc(100% + 2 * var(--lyric-stroke-width));
     overflow: visible;
 }
 
 .svgText text {
     fill: currentColor;
+    transform: translateX(var(--lyric-stroke-width));
     /* y="50%": the line box's middle, where HTML text centres its content area */
     dominant-baseline: central;
 }

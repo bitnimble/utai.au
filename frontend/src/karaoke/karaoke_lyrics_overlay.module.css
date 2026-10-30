@@ -132,7 +132,8 @@
     background: none;
     /* stroke under fill: only its outer half shows, glyph keeps its weight */
     paint-order: stroke fill;
-    stroke-width: 0.16em;
+    --lyric-stroke-width: 0.16em;
+    stroke-width: var(--lyric-stroke-width);
     stroke-linejoin: round;
     transition: stroke 80ms linear;
 }
