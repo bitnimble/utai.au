@@ -45,7 +45,7 @@ runs:
 
     - name: Build
       shell: bash
-      # `bun run build` = lint:design + tsc --noEmit + `vite build`, which
+      # `bun run build` = lint:design + tsrs --noEmit + `vite build`, which
       # writes the static site to frontend/dist/ (Vite root is frontend/). This
       # is a static bundle: it talks to the aligner backend only at runtime via
       # /api, and degrades gracefully (a "Server is down" toast) when that
