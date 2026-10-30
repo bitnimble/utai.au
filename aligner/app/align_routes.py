@@ -1,15 +1,15 @@
 """POST /music/align: word-level lyrics alignment (CTC forced alignment), and
-the two content-addressed caches behind it:
+the two caches behind it, in the song's folder (see `song_cache`):
 
-  - vocals (`cache_dir/vocals/<sha256>__sep-<vocals_model_id>.opus`): the mix
-    flow's separated vocals stem, so a repeat alignment of the same mix skips
-    the separation pass.
-  - alignment (`cache_dir/alignment/<sha256>__align-<version>-<lyrics_hash>.json`):
-    the result, keyed on the audio, the aligner version and the caller's lyrics +
-    language, so same-audio-but-different-lyrics correctly misses.
+  - `vocals/<sha256>__sep-<vocals_model_id>.opus`: the mix flow's separated
+    vocals stem, so a repeat alignment of the same mix skips the separation pass.
+  - `alignment/<sha256>__align-<version>-<lyrics_hash>.json`: the result, keyed on
+    the audio, the aligner version and the caller's lyrics + language, so
+    same-audio-but-different-lyrics correctly misses.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -21,7 +21,6 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from app.cache import BlobCache
 from app.config import settings
 from app.job_stream import (
     Envelope,
@@ -32,10 +31,10 @@ from app.job_stream import (
     require_models,
     require_pipeline_role,
 )
-from app.lazy import Lazy
 from app.pipeline.lyrics_align import InputLine, aligner, lines_to_json
 from app.pipeline.separate import separator
 from app.request_context import new_request_id, run_cancellable, set_request_id
+from app.song_cache import read_json, store_file, touch_song_dir, write_json
 
 log = logging.getLogger(__name__)
 
@@ -47,11 +46,6 @@ _KEY_SAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 # entries miss instead of serving a result the current code wouldn't
 # produce (the analogue of `_vocals_model_id()` for the result cache).
 _ALIGN_CACHE_VERSION = "wav2vec2robust+mms300m+swiftf0-v3"
-
-vocals_cache = Lazy(lambda: BlobCache(settings.cache_dir / "vocals", cap_bytes=settings.cache_vocals_cap_bytes))
-alignment_cache = Lazy(
-    lambda: BlobCache(settings.cache_dir / "alignment", cap_bytes=settings.cache_alignment_cap_bytes)
-)
 
 
 @router.post("/music/align")
@@ -102,10 +96,14 @@ async def lyrics_align(
     else:
         audio = await read_job_audio(mix, mixPath, "mix", "utai_lyrics_")
     align_key = _alignment_cache_key(input_lines, language_hint, audio.hash)
+    align_path = touch_song_dir(audio.song_id) / "alignment" / align_key
 
     def cached() -> Envelope | None:
-        lines = _cached_alignment(align_key)
-        return None if lines is None else _lines_result(lines)
+        lines = read_json(align_path)
+        if lines is None:
+            return None
+        log.info("lyrics_align: alignment cache HIT (%s)", align_path.name)
+        return _lines_result(lines)
 
     async def align() -> Envelope:
         vocals_path = audio.path if has_vocals else await _vocals_for(audio)
@@ -113,7 +111,8 @@ async def lyrics_align(
             return {"type": "error", "status_code": 500, "message": "Separator ran but produced no vocals stem."}
         lines = await run_cancellable(aligner.get().realign_text, vocals_path, input_lines, language_hint)
         lines_json = lines_to_json(lines)
-        _store_alignment(align_key, lines_json)
+        write_json(align_path, lines_json)
+        log.info("lyrics_align: alignment cache MISS, populated (%s)", align_path.name)
         return _lines_result(lines_json)
 
     return ndjson_job(request, request_id, "lyrics_align", audio, align, gpu=True, cached=cached)
@@ -126,11 +125,10 @@ def _lines_result(lines: Any) -> Envelope:
 async def _vocals_for(mix: JobAudio) -> Path | None:
     """The mix's vocals stem: cached, else separated now (and cached), or None
     when the separator emitted none."""
-    key = _vocals_cache_key(mix.hash)
-    cached = vocals_cache.get().get(key)
-    if cached is not None:
-        log.info("lyrics_align: vocals cache HIT (%s)", key)
-        return cached
+    path = touch_song_dir(mix.song_id) / "vocals" / _vocals_cache_key(mix.hash)
+    if path.is_file():
+        log.info("lyrics_align: vocals cache HIT (%s)", path.name)
+        return path
     raw_vocals = await run_cancellable(separator.get().run_vocals, mix.path, mix.scratch_dir)
     if raw_vocals is None:
         return None
@@ -138,36 +136,12 @@ async def _vocals_for(mix: JobAudio) -> Path | None:
     opus_tmp = mix.scratch_dir / "vocals.opus"
     try:
         await run_cancellable(_encode_vocals_to_opus, raw_vocals, opus_tmp)
-        path = vocals_cache.get().put_path(key, opus_tmp)
+        await asyncio.to_thread(store_file, path, opus_tmp)
     except (subprocess.CalledProcessError, OSError, RuntimeError) as exc:
         log.warning("lyrics_align: vocals cache write failed (%s); falling back to raw separator output", exc)
         return raw_vocals
-    log.info("lyrics_align: vocals cache MISS, populated (%s)", key)
+    log.info("lyrics_align: vocals cache MISS, populated (%s)", path.name)
     return path
-
-
-def _cached_alignment(key: str) -> Any | None:
-    path = alignment_cache.get().get(key)
-    if path is None:
-        return None
-    try:
-        lines = json.loads(path.read_bytes())
-    except (OSError, ValueError) as exc:
-        # Pruned, evicted between the index lookup and the read, or corrupt: recompute.
-        log.info("lyrics_align: alignment cache entry unreadable (%s): %s; recomputing", key, exc)
-        return None
-    log.info("lyrics_align: alignment cache HIT (%s)", key)
-    return lines
-
-
-def _store_alignment(key: str, lines_json: Any) -> None:
-    """Best-effort: a write failure only costs the next repeat request a re-align."""
-    try:
-        alignment_cache.get().put_bytes(key, json.dumps(lines_json, ensure_ascii=False).encode("utf-8"))
-    except OSError as exc:
-        log.warning("lyrics_align: alignment cache write failed (%s); serving result uncached", exc)
-        return
-    log.info("lyrics_align: alignment cache MISS, populated (%s)", key)
 
 
 def _parse_lyrics_input(raw: str) -> list[InputLine]:

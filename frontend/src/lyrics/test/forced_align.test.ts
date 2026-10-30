@@ -94,13 +94,13 @@ describe('alignLyricsForced', () => {
   test('names audio the backend already holds instead of uploading it', async () => {
     fetchHandler = (call) => {
       const form = call.body as FormData;
-      expect(form.get('vocalsPath')).toBe('/cache/stems/abc/vocals.flac');
+      expect(form.get('vocalsPath')).toBe('/cache/songs/abc/stems/vocals.flac');
       expect(form.get('vocals')).toBeNull();
       return ndjsonResponse([{ type: 'result', data: { lines: [] } }]);
     };
     await alignLyricsForced({
       kind: 'vocals',
-      audio: { file: makeFile('vocals-content'), serverPath: '/cache/stems/abc/vocals.flac' },
+      audio: { file: makeFile('vocals-content'), serverPath: '/cache/songs/abc/stems/vocals.flac' },
       realign: { lines: [{ startSec: 0, text: 'foo' }] },
     });
     expect(fetchCalls.length).toBe(1);

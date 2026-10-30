@@ -140,6 +140,8 @@ async fn start(
     let ots_dir = root.join("onthespot");
     std::fs::create_dir_all(&ots_dir).map_err(|e| e.to_string())?;
     let downloads = root.join("cache").join("onthespot-downloads");
+    // Holds only in-flight downloads, and OnTheSpot isn't running here: anything left is debris.
+    let _ = std::fs::remove_dir_all(&downloads);
 
     let mut onthespot = Command::new(python);
     onthespot

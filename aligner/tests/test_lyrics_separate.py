@@ -20,6 +20,7 @@ import pytest
 from fastapi import HTTPException
 
 import app.analysis_routes as routes
+from app.config import settings
 from app.pipeline import provision
 from app.pipeline.separation.np_inference import _accompaniment
 
@@ -51,24 +52,24 @@ _VALID_ID = "a" * 64
 
 
 @pytest.mark.parametrize(
-    "stem_id, name",
+    "song_id, name",
     [
         (_VALID_ID, "../../etc/passwd"),  # traversal
         (_VALID_ID, "vocals.wav"),  # unknown extension
         (_VALID_ID, "other.flac"),  # unknown role
-        ("../secrets", "vocals.flac"),  # non-hex id
+        ("../secrets", "vocals.flac"),  # traversal id
         ("a" * 63, "vocals.flac"),  # wrong-length id
     ],
 )
-def test_stem_route_rejects_bad_ids_and_names(stem_id: str, name: str) -> None:
+def test_stem_route_rejects_bad_ids_and_names(song_id: str, name: str) -> None:
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(routes.lyrics_stem(stem_id, name))
+        asyncio.run(routes.lyrics_stem(song_id, name))
     assert exc.value.status_code == 404
 
 
 def test_separation_without_its_models_is_refused_not_downloaded(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(routes.settings, "worker_role", "pipeline")
-    monkeypatch.setattr(routes.settings, "models_dir", tmp_path)
+    monkeypatch.setattr(settings, "worker_role", "pipeline")
+    monkeypatch.setattr(settings, "models_dir", tmp_path)
 
     def download(*_caps, **_kwargs):
         raise AssertionError("a job must not download models")
@@ -80,18 +81,19 @@ def test_separation_without_its_models_is_refused_not_downloaded(monkeypatch, tm
 
 
 def test_stem_route_404_when_file_absent(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(routes.settings, "cache_dir", tmp_path)
+    monkeypatch.setattr(settings, "cache_dir", tmp_path)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(routes.lyrics_stem(_VALID_ID, "vocals.flac"))
     assert exc.value.status_code == 404
 
 
-def test_stem_route_serves_existing_file(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(routes.settings, "cache_dir", tmp_path)
-    stem_path = tmp_path / "stems" / _VALID_ID / "vocals.flac"
+@pytest.mark.parametrize("song_id", [_VALID_ID, "dQw4w9WgXcQ"])
+def test_stem_route_serves_existing_file(monkeypatch, tmp_path, song_id) -> None:
+    monkeypatch.setattr(settings, "cache_dir", tmp_path)
+    stem_path = tmp_path / "songs" / song_id / "stems" / "vocals.flac"
     stem_path.parent.mkdir(parents=True)
     stem_path.write_bytes(b"fake flac")
 
-    resp = asyncio.run(routes.lyrics_stem(_VALID_ID, "vocals.flac"))
+    resp = asyncio.run(routes.lyrics_stem(song_id, "vocals.flac"))
     assert resp.path == str(stem_path)
     assert resp.media_type == "audio/flac"

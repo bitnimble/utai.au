@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from app.pipeline.video.fetch import fetch_video, is_valid_video_id
+from app.pipeline.video.fetch import fetch_video
 from app.request_context import (
     Cancelled,
     cancel_on_disconnect,
@@ -13,6 +13,7 @@ from app.request_context import (
     run_cancellable,
     set_request_id,
 )
+from app.song_cache import is_valid_video_id
 
 log = logging.getLogger(__name__)
 
@@ -27,11 +28,11 @@ async def get_video(request: Request, video_id: str) -> FileResponse:
 
     The YouTube IFrame embed refuses embedding-disabled uploads ("Video
     unavailable"); serving a native `<video>` over a fetched stream sidesteps
-    that. Cross-run cached under `cache_dir/video`, keyed by the 11-char id
-    (validated to foreclose path traversal) + a digest of the format
-    selection. Needs no GPU / model, so it's
-    served regardless of worker role or provisioning state, and `FileResponse`
-    honours Range requests so the `<video>` element can seek."""
+    that. Cross-run cached in the song folder named by the 11-char id (validated
+    to foreclose path traversal), keyed by a digest of the format selection.
+    Needs no GPU / model, so it's served regardless of worker role or
+    provisioning state, and `FileResponse` honours Range requests so the
+    `<video>` element can seek."""
     if not is_valid_video_id(video_id):
         raise HTTPException(status_code=404, detail="No such video.")
     set_request_id(new_request_id())

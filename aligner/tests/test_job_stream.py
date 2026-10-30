@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 
 import app.job_stream as job_stream
 from app.provisioning import Provisioner
@@ -39,10 +41,33 @@ def test_require_models_refuses_only_what_is_not_downloaded(monkeypatch) -> None
     assert exc.value.status_code == 424
 
 
+def test_audio_in_a_songs_folder_belongs_to_that_song(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(job_stream.settings, "cache_dir", tmp_path)
+    mix = tmp_path / "songs" / "dQw4w9WgXcQ" / "download" / "Song.webm"
+    mix.parent.mkdir(parents=True)
+    mix.write_bytes(b"mix")
+
+    audio = asyncio.run(job_stream.read_job_audio(None, str(mix), "mix", "test_"))
+
+    shutil.rmtree(audio.scratch_dir)
+    assert audio.song_id == "dQw4w9WgXcQ"
+    assert audio.hash == job_stream.hash_bytes(b"mix")
+
+
+def test_an_upload_is_its_own_song(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(job_stream.settings, "cache_dir", tmp_path)
+    upload = UploadFile(file=io.BytesIO(b"mix"), filename="mix.flac")
+
+    audio = asyncio.run(job_stream.read_job_audio(upload, "", "mix", "test_"))
+
+    shutil.rmtree(audio.scratch_dir)
+    assert audio.song_id == job_stream.hash_bytes(b"mix")
+
+
 def _run_job(tmp_path: Path, work, *, loaded: bool = True, cached=lambda: None) -> tuple[list[dict], Path]:
     scratch = tmp_path / "scratch"
     scratch.mkdir()
-    audio = job_stream.JobAudio(scratch / "mix.wav", "hash", scratch)
+    audio = job_stream.JobAudio(scratch / "mix.wav", "hash", scratch, "hash")
 
     async def scenario() -> list[dict]:
         provisioner = Provisioner()

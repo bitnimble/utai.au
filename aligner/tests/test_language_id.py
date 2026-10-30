@@ -11,6 +11,7 @@ import pytest
 from fastapi import UploadFile
 
 import app.analysis_routes as routes
+from app.config import settings
 from app.pipeline import language_id
 from tests.test_pitch_endpoints import _Request
 
@@ -68,8 +69,8 @@ def test_detect_language_needs_a_model_and_some_sound(monkeypatch) -> None:
 
 
 def _post(monkeypatch, tmp_path, result) -> tuple[dict, list[bytes]]:
-    monkeypatch.setattr(routes.settings, "cache_dir", tmp_path)
-    monkeypatch.setattr(routes.settings, "worker_role", "pipeline")
+    monkeypatch.setattr(settings, "cache_dir", tmp_path)
+    monkeypatch.setattr(settings, "worker_role", "pipeline")
     seen: list[bytes] = []
 
     def fake(path):

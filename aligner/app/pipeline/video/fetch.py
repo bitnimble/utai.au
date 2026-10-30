@@ -13,27 +13,16 @@ Torch-free (pure network + ffmpeg remux); safe on the runtime import graph.
 from __future__ import annotations
 
 import hashlib
-import re
 import tempfile
 import threading
 from pathlib import Path
 
-from app.cache import BlobCache
 from app.config import settings
-from app.lazy import Lazy
 from app.request_context import check_cancelled
+from app.song_cache import is_valid_video_id, store_file, touch_song_dir
 
-_VIDEO_ID_RE = re.compile(r"^[\w-]{11}$")
-
-cache = Lazy(lambda: BlobCache(settings.cache_dir / "video", cap_bytes=settings.cache_video_cap_bytes))
 _fetch_locks_lock = threading.Lock()
 _fetch_locks: dict[str, threading.Lock] = {}
-
-
-def is_valid_video_id(video_id: str) -> bool:
-    """True for a well-formed 11-char YouTube id. Callers validate before
-    interpolating the id into a filesystem path, foreclosing traversal."""
-    return bool(_VIDEO_ID_RE.match(video_id))
 
 
 def video_cache_key(video_id: str) -> str:
@@ -55,17 +44,18 @@ def fetch_video(video_id: str) -> Path:
     if not is_valid_video_id(video_id):
         raise ValueError(f"invalid YouTube video id: {video_id!r}")
     key = video_cache_key(video_id)
-    videos = cache.get()
+    videos = touch_song_dir(video_id) / "video"
+    path = videos / key
     with _fetch_locks_lock:
         fetch_lock = _fetch_locks.setdefault(key, threading.Lock())
     with fetch_lock:
-        cached = videos.get(key)
-        if cached is not None:
-            return cached
+        if path.is_file():
+            return path
+        videos.mkdir(parents=True, exist_ok=True)
         # Stage on the cache's disk: /tmp may be RAM-backed tmpfs, and 4K runs to GBs.
-        with tempfile.TemporaryDirectory(prefix="utai_video_", dir=videos.dir) as tmp:
-            produced = _download(video_id, Path(tmp))
-            return videos.put_path(key, produced)
+        with tempfile.TemporaryDirectory(prefix="utai_video_", dir=videos) as tmp:
+            store_file(path, _download(video_id, Path(tmp)))
+    return path
 
 
 def _download(video_id: str, dest_dir: Path) -> Path:

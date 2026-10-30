@@ -11,6 +11,7 @@ GPU); /provision/status is the readiness signal.
 from __future__ import annotations
 
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -27,6 +28,7 @@ from app.provisioning import Provisioner
 from app.provisioning import router as provisioning_router
 from app.request_context import RequestIdLogFilter
 from app.sessions import router as sessions_router
+from app.song_cache import tidy_cache
 from app.video_routes import router as video_router
 
 # Build the single root StreamHandler by hand so we can attach the
@@ -65,6 +67,7 @@ logging.getLogger("uvicorn.access").addFilter(_DropHealthAccessLog())
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    threading.Thread(target=tidy_cache, name="tidy-cache", daemon=True).start()
     provisioner = Provisioner() if settings.worker_role == "pipeline" else None
     app.state.provisioner = provisioner
     if provisioner is None:

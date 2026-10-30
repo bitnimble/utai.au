@@ -274,9 +274,9 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   a non-streaming one watches for it (`request_context.cancel_on_disconnect`), and
   the worker thread stops at its next chunk (`check_cancelled`). A job names its
   audio either as an upload or as a `...Path` field naming a file the backend
-  already holds (`app/backend_files.py`: a stem it separated, `serverPath` in the
-  result; a track OnTheSpot downloaded, under `settings.music_download_dir`);
-  other paths are refused.
+  already holds (`app/backend_files.py`: a stem it separated or a track it
+  fetched, `serverPath` in the result); other paths are refused. A job on a file
+  in a song's folder keeps its results there (`app/song_cache.py`).
 
 Dep groups mirror capabilities (`aligner/pyproject.toml`, PEP 735):
 `separation`, `lyrics` (adds `ctc-forced-aligner`), `pitch` (SwiftF0 f0

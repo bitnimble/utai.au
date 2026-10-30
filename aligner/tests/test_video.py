@@ -1,6 +1,5 @@
-"""Unit tests for the backing-video fetch: id validation and the
-content-addressed cache round-trip. yt-dlp itself is stubbed (no network);
-only our glue is exercised."""
+"""Unit tests for the backing-video fetch: id validation and the cache
+round-trip. yt-dlp itself is stubbed (no network); only our glue is exercised."""
 from __future__ import annotations
 
 import threading
@@ -15,18 +14,6 @@ from app.pipeline.video import fetch as video_fetch
 @pytest.fixture
 def isolated_cache(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(video_fetch.settings, "cache_dir", tmp_path)
-    video_fetch.cache.reset()
-    yield
-    video_fetch.cache.reset()
-
-
-def test_is_valid_video_id():
-    assert video_fetch.is_valid_video_id("dQw4w9WgXcQ")
-    assert video_fetch.is_valid_video_id("_-aB3cD4eF5")
-    assert not video_fetch.is_valid_video_id("short")
-    assert not video_fetch.is_valid_video_id("toolongvideoid12")
-    assert not video_fetch.is_valid_video_id("bad/id/slash")
-    assert not video_fetch.is_valid_video_id("")
 
 
 def test_fetch_video_rejects_bad_id():
@@ -34,7 +21,7 @@ def test_fetch_video_rejects_bad_id():
         video_fetch.fetch_video("../etc/passwd")
 
 
-def test_fetch_video_caches(isolated_cache, monkeypatch):
+def test_fetch_video_caches(isolated_cache, tmp_path, monkeypatch):
     calls: list[str] = []
 
     def fake_download(video_id: str, dest_dir: Path) -> Path:
@@ -47,7 +34,7 @@ def test_fetch_video_caches(isolated_cache, monkeypatch):
 
     vid = "dQw4w9WgXcQ"
     first = video_fetch.fetch_video(vid)
-    assert first.is_file()
+    assert first.parent == tmp_path / "songs" / vid / "video"
     assert first.read_bytes() == b"fake-mp4"
     # Second call is a cache hit: same path, no second download.
     second = video_fetch.fetch_video(vid)

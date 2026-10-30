@@ -35,6 +35,7 @@ from app.provisioning import Provisioner
 from app.request_context import bind_cancel_token, set_request_id, wait_out
 from app.round_robin_lock import RoundRobinLock
 from app.sessions import registry as sessions_registry
+from app.song_cache import song_id_of_path
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class JobAudio:
     path: Path
     hash: str
     scratch_dir: Path
+    song_id: str
 
 
 def require_pipeline_role() -> None:
@@ -83,7 +85,8 @@ async def read_job_audio(upload: UploadFile | None, server_path: str, field: str
             path = backend_file(server_path)
             if path is None:
                 raise HTTPException(status_code=400, detail=f"Not a file this backend can read: {server_path}")
-            return JobAudio(path, await asyncio.to_thread(hash_file, path), job_dir)
+            digest = await asyncio.to_thread(hash_file, path)
+            return JobAudio(path, digest, job_dir, song_id_of_path(path) or digest)
         if upload is None:
             raise HTTPException(status_code=400, detail=f"`{field}` or `{field}Path` is required.")
         data = await upload.read()
@@ -91,7 +94,8 @@ async def read_job_audio(upload: UploadFile | None, server_path: str, field: str
             raise HTTPException(status_code=400, detail=f"`{field}` is empty.")
         path = job_dir / f"{field}{Path(upload.filename or '').suffix}"
         await asyncio.to_thread(path.write_bytes, data)
-        return JobAudio(path, hash_bytes(data), job_dir)
+        digest = hash_bytes(data)
+        return JobAudio(path, digest, job_dir, digest)
     except BaseException:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise
@@ -124,7 +128,8 @@ def ndjson_job(
 
     async def job() -> AsyncIterator[Envelope]:
         try:
-            yield await work()
+            # Checked again: the same song's job may have finished while this one queued.
+            yield cached() or await work()
         except FileNotFoundError as exc:
             yield {"type": "error", "status_code": 404, "message": str(exc)}
         except Exception as exc:
