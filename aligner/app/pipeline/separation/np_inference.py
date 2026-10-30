@@ -42,6 +42,9 @@ from ._chunking import (
 
 log = logging.getLogger(__name__)
 
+# Bump when session options change the compiled graph: onnxruntime's cache key wouldn't notice.
+_COREML_COMPILE_REVISION = 2
+
 
 def _prepare_mix(audio: str | Path | np.ndarray) -> np.ndarray:
     if isinstance(audio, np.ndarray):
@@ -120,8 +123,14 @@ def _ort_session(onnx_path, providers):
     so.enable_mem_pattern = False
     if _profiling():
         so.log_severity_level = 0  # VERBOSE
+    coreml = any((p if isinstance(p, str) else p[0]) == "CoreMLExecutionProvider" for p in providers)
+    # The CoreML EP writes a Gemm's weights into model.mil as text, a MatMul's to weight.bin.
+    # Fused, the Roformer's model.mil is 2.7 GB, which CoreML re-parses on every load.
+    disabled_optimizers = ["MatMulAddFusion"] if coreml else None
     try:
-        sess = ort.InferenceSession(str(onnx_path), sess_options=so, providers=providers)
+        sess = ort.InferenceSession(
+            str(onnx_path), sess_options=so, providers=providers, disabled_optimizers=disabled_optimizers
+        )
         log_bound_ep(sess, onnx_path)
         return sess
     except Exception as e:
@@ -148,7 +157,7 @@ def _coreml_cache_dir(onnx_path) -> str | None:
 
         model = Path(onnx_path)
         st = model.stat()
-        version = f"{st.st_size}-{st.st_mtime_ns}"
+        version = f"{_COREML_COMPILE_REVISION}-{st.st_size}-{st.st_mtime_ns}"
         root = Path(settings.cache_dir) / "coreml" / model.name
         if root.is_dir():
             for old in root.iterdir():

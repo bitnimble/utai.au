@@ -224,7 +224,9 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   doesn't divide n_fft=2048, so the GPU STFT fold emits frames and finishes
   the overlap-add in numpy (`_RoformerFoldFrames`).
 - **macOS CoreML/ANE** (`separation/coreml_optimize.py`): rewrites the
-  separation ONNX graph so every op is CoreML-native.
+  separation ONNX graph so every op is CoreML-native. Its sessions disable ORT's
+  `MatMulAddFusion`: the EP writes a `Gemm`'s weights into `model.mil` as text
+  (2.7 GB for the Roformer), and CoreML parses and re-serializes that on every load.
 - **fp16 / int8 conversion**: `onnx_fp16.py::to_fp16` (plain fp16: the CTC
   aligner bodies + the macOS separation body). The CUDA/TensorRT separation body
   uses `export._to_mixed_fp16` (fp16 everywhere except the RMSNorm `Pow`/`ReduceMean`,
@@ -261,6 +263,8 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   `app.lazy.Lazy` (`separate.separator`, `beats.analyze.model`,
   `lyrics_align.aligner`, `language_id.model`, `pitch.analyze.extractor`),
   dropped by `reset_models`.
+  onnxruntime holds the GIL through session creation, freezing the API meanwhile,
+  so keep session creation short.
   A job that arrives before the load is done streams a `{"type": "loading"}`
   envelope and waits (`ProvisionStatus.once_loaded`); the queue shows it as
   "Loading AI models…" before "Separating stems…" / "Aligning lyrics…".

@@ -137,7 +137,7 @@ class Provisioner:
 
     def start(self) -> None:
         """Check + load in the background, so uvicorn serves /provision/status
-        while the models load."""
+        between the models' session creations, which each hold the GIL."""
         # A process started without LD_LIBRARY_PATH (the desktop app's backend) can't
         # find the CUDA libs on its own; must run before any ORT session is created.
         preload_cuda_libs()
