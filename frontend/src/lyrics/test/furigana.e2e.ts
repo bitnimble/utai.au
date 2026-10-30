@@ -49,7 +49,7 @@ const LEXICON: Entry[] = [
   { surface: '向こう', segments: [{ base: '向', reading: 'む' }, { base: 'こう' }], romaji: 'mukou', phrase: true },
   kana('へ', 'e'),
 ];
-const HEARD_ROMAJI: Record<string, string> = { せい: 'sei' };
+const HEARD_ROMAJI: Record<string, string> = { せい: 'sei', わたし: 'watashi', こころ: 'kokoro' };
 
 /** Annotates a line the way `POST /lyrics/japanese` does: the words read
  *  together, each taking back its span and the romaji of the words starting
@@ -187,6 +187,7 @@ test('romaji: View option adds romaji under the lyrics in both views, and stays 
 });
 
 test('karaoke keeps romaji wider than its kanji clear of the next word', async ({ page }) => {
+  await stubJapaneseReadings(page);
   await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -215,7 +216,7 @@ test('karaoke keeps romaji wider than its kanji clear of the next word', async (
   await page.keyboard.press('Escape');
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(1.2));
   const romaji = page.getByTestId('karaoke-line').locator('rt[data-romaji]');
-  await expect(romaji).toHaveText(['watashi', 'kokoro'], DICT_TIMEOUT);
+  await expect(romaji).toHaveText(['watashi', 'kokoro']);
 
   const expectClear = async (): Promise<void> => {
     const { gapPx, outlinePx } = await romaji.evaluateAll((rts) => {
