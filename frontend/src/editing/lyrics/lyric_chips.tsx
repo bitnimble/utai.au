@@ -1,7 +1,7 @@
 import classNames from 'classnames';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
-import { RubySegment, furiganaAnnotator } from 'src/lyrics/furigana';
+import { RubySegment, baseText, furiganaAnnotator, hasReading } from 'src/lyrics/furigana';
 import { LyricWord, wordState, WordState } from 'src/lyrics/lrc';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { ViewportStoreContext } from '../viewport/viewport_contexts';
@@ -234,29 +234,23 @@ const LyricWordChip = observer(
   },
 );
 
-/** Renders a word's glyphs, stacking hiragana furigana over kanji runs
- *  when the annotator has a reading for the text. Takes the whole line's
- *  words plus this word's index (not the bare text) so the reading
- *  is tokenized with sentence context: a chip the aligner split off a
- *  compound (実 out of 実は) reads correctly (じつ) instead of its lone-
- *  token reading (み). `segmentsForWords` is synchronous (bare text until
- *  the kuromoji dictionary resolves) and its `revision` read makes this
- *  `observer` re-render in place once readings arrive. */
+/** Renders a word's glyphs in the shown Japanese scripts (kanji, furigana
+ *  over it, romaji under it). Takes the whole line's words plus this word's
+ *  index (not the bare text) so the reading is tokenized with sentence
+ *  context: a chip the aligner split off a compound (実 out of 実は) reads
+ *  correctly (じつ) instead of its lone-token reading (み). `displayForWords`
+ *  is synchronous (bare text until the kuromoji dictionary resolves) and its
+ *  `revision` read makes this `observer` re-render in place once readings
+ *  arrive. */
 const WordText = observer(
   ({ words, index }: { words: readonly LyricWord[]; index: number }) => (
-    <RubyText
-      segments={furiganaAnnotator.segmentsForWords(words)[index] ?? [{ base: words[index]?.text ?? '' }]}
-      romaji={appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords(words)[index] : undefined}
-    />
+    <RubyText {...furiganaAnnotator.displayForWords(words, appSettingsStore.japaneseScript)[index]} />
   ),
 );
 
-/** A line-level (word-less) chip's text, with furigana over its kanji. */
+/** A line-level (word-less) chip's text, in the shown Japanese scripts. */
 const LineText = observer(({ text }: { text: string }) => (
-  <RubyText
-    segments={furiganaAnnotator.segmentsFor(text)}
-    romaji={appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords([{ text }])[0] : undefined}
-  />
+  <RubyText {...furiganaAnnotator.displayForWords([{ text }], appSettingsStore.japaneseScript)[0]} />
 ));
 
 /** `segments` as `<ruby>` (reading over each kanji run), or plain text when
@@ -268,8 +262,8 @@ export const RubyText = ({
   segments: readonly RubySegment[];
   romaji?: string;
 }): React.ReactNode => {
-  const text = !segments.some((s) => s.reading != null) ? (
-    <SvgText text={segments.map((s) => s.base).join('')} />
+  const text = !hasReading(segments) ? (
+    <SvgText text={baseText(segments)} />
   ) : (
     // One <ruby> per reading: an <rt> annotates all base text since the previous one.
     segments.map((seg, i) =>

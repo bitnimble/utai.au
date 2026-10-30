@@ -26,7 +26,7 @@
  * and placement may be off by a glyph or two during the font-load window.
  */
 import { makeAutoObservable, runInAction } from 'mobx';
-import { furiganaAnnotator, RubySegment } from 'src/lyrics/furigana';
+import { baseText, furiganaAnnotator, hasReading, JapaneseScript, RubySegment } from 'src/lyrics/furigana';
 import { PositionedLine, WAVE_WAVELENGTH_PX, buildPitchLine } from './lyric_layout';
 
 const FONT_FAMILY =
@@ -277,8 +277,7 @@ export function layoutLyricWords(
     const limit = next ? next.lineStartBeat * pxPerBeat - MIN_GAP_PX : Infinity;
     const words = line.words
       .map((w) => {
-        const hasRuby = w.segments?.some((s) => s.reading != null) ?? false;
-        const textPx = hasRuby
+        const textPx = w.segments != null && hasReading(w.segments)
           ? lyricsMeasurer.measureRubyPx(w.segments!, font, true, fontSizePx)
           : lyricsMeasurer.measureWordPx(w.text, font, true, fontSizePx);
         return {
@@ -327,28 +326,28 @@ export function sustainSpan(textPx: number, cellPx: number, roomPx: number): Sus
   return toPx - fromPx >= MIN_SUSTAIN_PX ? { fromPx, toPx, cellPx } : undefined;
 }
 
-/** Measure inputs for every line, with furigana segmentation (and romaji when
- *  shown). A line without word timings has no words but still bounds the line
- *  before it. */
+/** Measure inputs for every line, each word as it shows under `script`. A line
+ *  without word timings has no words but still bounds the line before it. */
 export function lyricMeasureInputs(
   positioned: readonly PositionedLine[],
-  opts: { romaji: boolean },
+  script: JapaneseScript,
 ): LyricLineMeasureInput[] {
   return positioned.map((p) => {
     const wp = p.wordPositions ?? [];
-    const words = wp.map((w) => w.source);
-    const lineSegs = furiganaAnnotator.segmentsForWords(words);
-    const romaji = opts.romaji ? furiganaAnnotator.romajiForWords(words) : [];
+    const display = furiganaAnnotator.displayForWords(
+      wp.map((w) => w.source),
+      script,
+    );
     return {
       lineIdx: p.i,
       lineStartBeat: p.startBeat,
       words: wp.map((w, j) => ({
         sourceIdx: w.sourceIdx,
-        text: w.text,
+        text: baseText(display[j].segments),
         beatOffset: w.beatOffset,
         beatWidth: w.beatWidth,
-        segments: lineSegs[j],
-        romaji: romaji[j],
+        segments: display[j].segments,
+        romaji: display[j].romaji,
       })),
     };
   });

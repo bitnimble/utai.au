@@ -12,11 +12,12 @@ import {
   LyricWordPlacement,
   lyricMeasureInputs,
   lyricsMeasurer,
+  needsWordSpace,
 } from 'src/editing/lyrics/lyrics_measure';
 import trackStyles from 'src/editing/lyrics/lyrics_track_view.module.css';
 import { buildLinearTimeline } from 'src/editing/playback/timeline';
 import { playbackEngine } from 'src/editing/playback/player';
-import { furiganaAnnotator } from 'src/lyrics/furigana';
+import { baseText, furiganaAnnotator, hasReading } from 'src/lyrics/furigana';
 import { activeLineIndexAt, activeWordIndexAt, lineSpanSec, LyricLine, wordState } from 'src/lyrics/lrc';
 import { LyricsTrack, lyricsStore } from 'src/lyrics/store';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
@@ -258,7 +259,7 @@ const TwoLineSlots = observer(function TwoLineSlots({
         return positioned && fitLineToWidth(positioned, slotWidthPx, baseFontSizePx).fontSizePx;
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [lines, topIdx, bottomIdx, slotWidthPx, baseFontSizePx, appSettingsStore.karaokeShowPitch, appSettingsStore.showRomaji, fontReady, furiganaRevision],
+    [lines, topIdx, bottomIdx, slotWidthPx, baseFontSizePx, appSettingsStore.karaokeShowPitch, appSettingsStore.japaneseScript, fontReady, furiganaRevision],
   );
   const fontSizePx = Math.min(
     baseFontSizePx,
@@ -366,21 +367,25 @@ const LineGlyphs = observer(function LineGlyphs({
   countIn?: CountIn;
 }) {
   const segments = React.useMemo(() => lineSegments(line), [line]);
-  const ruby = furiganaAnnotator.segmentsForWords(segments);
-  const romaji = appSettingsStore.showRomaji ? furiganaAnnotator.romajiForWords(segments) : [];
+  const display = furiganaAnnotator.displayForWords(segments, appSettingsStore.japaneseScript);
+  const shownText = display.map((d) => baseText(d.segments));
   return segments.map((s, i) => {
     const countInHere = i === 0 ? countIn : undefined;
+    // romaji shown in place of unspaced Japanese still needs spaces between words
+    const spaced = i > 0 && needsWordSpace(shownText[i - 1], shownText[i]) && !needsWordSpace(segments[i - 1].text, s.text);
     return (
-      <span
-        key={i}
-        className={classNames(countInHere && styles.countInAnchor)}
-        data-word-state={wordState(s.wordIdx, activeWordIdx, activeWordEnded)}
-      >
-        {countInHere && (
-          <CountInDots countIn={countInHere} aboveRuby={ruby[i].some((seg) => seg.reading != null)} />
-        )}
-        <RubyText segments={ruby[i]} romaji={romaji[i]} />
-      </span>
+      <React.Fragment key={i}>
+        {spaced && ' '}
+        <span
+          className={classNames(countInHere && styles.countInAnchor)}
+          data-word-state={wordState(s.wordIdx, activeWordIdx, activeWordEnded)}
+        >
+          {countInHere && (
+            <CountInDots countIn={countInHere} aboveRuby={hasReading(display[i].segments)} />
+          )}
+          <RubyText {...display[i]} />
+        </span>
+      </React.Fragment>
     );
   });
 });
@@ -412,7 +417,7 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
   const fit = React.useMemo(
     () => (positioned ? fitLineToWidth(positioned, widthPx, baseFontSizePx) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [positioned, widthPx, baseFontSizePx, fontReady, furiganaRevision, appSettingsStore.showRomaji],
+    [positioned, widthPx, baseFontSizePx, fontReady, furiganaRevision, appSettingsStore.japaneseScript],
   );
   const pitchPaths = React.useMemo(
     () =>
@@ -421,14 +426,15 @@ const PitchedKaraokeLine = observer(function PitchedKaraokeLine({
         : new Map<string, string>(),
     [positioned, fit],
   );
+  const script = appSettingsStore.japaneseScript;
   const hasFurigana = React.useMemo(
     () =>
       positioned?.wordPositions != null &&
       furiganaAnnotator
-        .segmentsForWords(positioned.wordPositions.map((w) => w.source))
-        .some((segs) => segs.some((s) => s.reading != null)),
+        .displayForWords(positioned.wordPositions.map((w) => w.source), script)
+        .some((d) => hasReading(d.segments)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [positioned, furiganaRevision],
+    [positioned, furiganaRevision, script],
   );
   if (!positioned || !fit) {
     return (
@@ -487,7 +493,7 @@ function fitLineToWidth(
   widthPx: number,
   baseFontSizePx: number,
 ): { pxPerBeat: number; fontSizePx: number; placements: Map<string, LyricWordPlacement>; rightPx: number } {
-  const input = lyricMeasureInputs([line], { romaji: appSettingsStore.showRomaji });
+  const input = lyricMeasureInputs([line], appSettingsStore.japaneseScript);
   let pxPerBeat = widthPx / Math.max(MIN_LINE_SPAN_SEC, line.endBeat - line.startBeat);
   let fontSizePx = baseFontSizePx;
   for (let step = 0; ; step++) {

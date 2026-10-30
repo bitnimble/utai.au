@@ -35,6 +35,8 @@ export class AppSettingsPresenter {
         viewMode: this.settings.viewMode,
         karaokeShowPitch: this.settings.karaokeShowPitch,
         karaokeTwoLines: this.settings.karaokeTwoLines,
+        showKanji: this.settings.showKanji,
+        showFurigana: this.settings.showFurigana,
         showRomaji: this.settings.showRomaji,
         vocalSurroundReverb: this.settings.vocalSurroundReverb,
       });
@@ -84,6 +86,14 @@ export class AppSettingsPresenter {
 
   setKaraokeTwoLines(on: boolean): void {
     this.settings.karaokeTwoLines = on;
+  }
+
+  setShowKanji(on: boolean): void {
+    this.settings.showKanji = on;
+  }
+
+  setShowFurigana(on: boolean): void {
+    this.settings.showFurigana = on;
   }
 
   setShowRomaji(on: boolean): void {
@@ -144,6 +154,12 @@ export class AppSettingsPresenter {
       }
       if (typeof obj.karaokeTwoLines === 'boolean') {
         this.settings.karaokeTwoLines = obj.karaokeTwoLines;
+      }
+      if (typeof obj.showKanji === 'boolean') {
+        this.settings.showKanji = obj.showKanji;
+      }
+      if (typeof obj.showFurigana === 'boolean') {
+        this.settings.showFurigana = obj.showFurigana;
       }
       if (typeof obj.showRomaji === 'boolean') {
         this.settings.showRomaji = obj.showRomaji;

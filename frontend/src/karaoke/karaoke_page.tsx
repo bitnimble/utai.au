@@ -940,6 +940,18 @@ const ViewMenu = observer(function ViewMenu() {
           )}
           <DropdownSection label="Japanese">
             <ToggleMenuItem
+              label="Show kanji"
+              active={appSettingsStore.showKanji}
+              onToggle={() => appSettingsPresenter.setShowKanji(!appSettingsStore.showKanji)}
+              testId="show-kanji"
+            />
+            <ToggleMenuItem
+              label="Show furigana"
+              active={appSettingsStore.showFurigana}
+              onToggle={() => appSettingsPresenter.setShowFurigana(!appSettingsStore.showFurigana)}
+              testId="show-furigana"
+            />
+            <ToggleMenuItem
               label="Show romaji"
               active={appSettingsStore.showRomaji}
               onToggle={() => appSettingsPresenter.setShowRomaji(!appSettingsStore.showRomaji)}

@@ -280,12 +280,41 @@ function sliceSpan(
 
 export type FuriganaWord = Pick<LyricWord, 'text' | 'reading'>;
 
+/** Which forms of Japanese lyrics show. `kanji` is the lyric as written; with
+ *  all three off it still shows. */
+export type JapaneseScript = { kanji: boolean; furigana: boolean; romaji: boolean };
+
+/** A word as shown: `segments` its main text (readings over its kanji), with
+ *  `romaji` under it. */
+export type WordDisplay = { segments: RubySegment[]; romaji?: string };
+
+/** How a word with furigana `segments` and `romaji` ('' when it has none)
+ *  shows under `script`. Without kanji, the furigana or else the romaji
+ *  replaces the written text wherever the word has one. */
+export function displayWord(segments: readonly RubySegment[], romaji: string, script: JapaneseScript): WordDisplay {
+  const under = script.romaji && romaji !== '' ? romaji : undefined;
+  const written = baseText(segments);
+  if (script.kanji || (!script.furigana && !script.romaji)) {
+    return { segments: script.furigana ? [...segments] : [{ base: written }], romaji: under };
+  }
+  if (script.furigana) {
+    return { segments: [{ base: readingText(segments) }], romaji: under };
+  }
+  return { segments: [{ base: romaji || written }] };
+}
+
+export const baseText = (segments: readonly RubySegment[]): string => segments.map((s) => s.base).join('');
+
+const readingText = (segments: readonly RubySegment[]): string => segments.map((s) => s.reading ?? s.base).join('');
+
+export const hasReading = (segments: readonly RubySegment[]): boolean => segments.some((s) => s.reading != null);
+
 /** A word's heard reading fitted onto its kanji, or null when it has none or
  *  the reading doesn't fit the surface. */
 function heardSegments(word: FuriganaWord): RubySegment[] | null {
   if (word.reading == null) return null;
   const segs = fitFurigana(word.text, word.reading);
-  return segs.some((s) => s.reading != null) ? segs : null;
+  return hasReading(segs) ? segs : null;
 }
 
 /** The kuromoji token fields {@link annotateTokens} reads. */
@@ -336,7 +365,7 @@ export function annotateTokens(tokens: readonly FuriganaToken[], dict: ReadingSo
     const resolved = unread ? readUnknownKanji(surface, tokens[i + 1]?.surface_form ?? '', dict) : undefined;
     const runSegs = whole ?? resolved?.segments ?? run.flatMap(tokenSegments);
     segs.push(...runSegs);
-    const kana = whole || resolved ? runSegs.map((s) => s.reading ?? s.base).join('') : run.map(tokenKana).join('');
+    const kana = whole || resolved ? readingText(runSegs) : run.map(tokenKana).join('');
     const prev = words[words.length - 1];
     offset += surface.length;
     // kuromoji misparses the ending after a stem it couldn't read (嗤 + って as a particle).
@@ -548,6 +577,11 @@ class FuriganaAnnotator {
     return [{ base: text }];
   }
 
+  displayForWords(words: readonly FuriganaWord[], script: JapaneseScript): WordDisplay[] {
+    const romaji = script.romaji ? this.romajiForWords(words) : [];
+    return this.segmentsForWords(words).map((segs, i) => displayWord(segs, romaji[i] ?? '', script));
+  }
+
   /** Romaji for each of a line's display words, read in the context of the
    *  whole line: a display word holding several tokenized words reads as
    *  several (`kimi to`). One whose span cuts through a tokenized word (the
@@ -580,7 +614,7 @@ class FuriganaAnnotator {
         return inSpan.map((w) => w.romaji).join(' ');
       }
       wordSegs ??= this.segmentsForWords(words);
-      const kana = wordSegs[i].map((s) => s.reading ?? s.base).join('');
+      const kana = readingText(wordSegs[i]);
       return hasKana(kana) ? kanaToRomaji(kana) : '';
     });
   }

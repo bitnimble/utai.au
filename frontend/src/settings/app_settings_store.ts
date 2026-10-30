@@ -1,4 +1,5 @@
 import { makeAutoObservable } from 'mobx';
+import type { JapaneseScript } from 'src/lyrics/furigana';
 
 /** Compiled-in fallback for {@link AppSettingsStore.alignerUrl}. Only the
  *  default is baked; the live value is user-editable + persisted. Dev / docker
@@ -75,7 +76,10 @@ export class AppSettingsStore {
   /** Karaoke overlay: show the next line too, alternating top-left / bottom-right. */
   karaokeTwoLines: boolean = true;
 
-  /** Romaji under Japanese lyrics, below the text (furigana sits above). */
+  showKanji: boolean = true;
+
+  showFurigana: boolean = true;
+
   showRomaji: boolean = false;
 
   /** Play the vocal stem as a wide, reverberant backing vocal. */
@@ -92,4 +96,9 @@ export class AppSettingsStore {
     const origin = this.alignerUrl.trim().replace(/\/+$/, '');
     if (origin.length === 0 && this.localApiBase != null) return this.localApiBase;
     return `${origin}/api`;
-  }}
+  }
+
+  get japaneseScript(): JapaneseScript {
+    return { kanji: this.showKanji, furigana: this.showFurigana, romaji: this.showRomaji };
+  }
+}

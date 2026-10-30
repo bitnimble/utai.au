@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   annotateTokens,
+  displayWord,
   expandCompounds,
   fitFurigana,
   hasKanji,
@@ -383,5 +384,28 @@ describe('expandCompounds', () => {
       { base: '的', reading: 'てき' },
       { base: 'に' },
     ]);
+  });
+});
+
+describe('displayWord', () => {
+  const segs: RubySegment[] = [{ base: '笑', reading: 'わら' }, { base: 'って' }];
+  const show = (kanji: boolean, furigana: boolean, romaji: boolean) =>
+    displayWord(segs, 'waratte', { kanji, furigana, romaji });
+
+  test('every combination of kanji, furigana and romaji', () => {
+    expect(show(true, true, true)).toEqual({ segments: segs, romaji: 'waratte' });
+    expect(show(true, true, false)).toEqual({ segments: segs, romaji: undefined });
+    expect(show(true, false, true)).toEqual({ segments: [{ base: '笑って' }], romaji: 'waratte' });
+    expect(show(true, false, false)).toEqual({ segments: [{ base: '笑って' }], romaji: undefined });
+    expect(show(false, true, true)).toEqual({ segments: [{ base: 'わらって' }], romaji: 'waratte' });
+    expect(show(false, true, false)).toEqual({ segments: [{ base: 'わらって' }], romaji: undefined });
+    expect(show(false, false, true)).toEqual({ segments: [{ base: 'waratte' }] });
+    expect(show(false, false, false)).toEqual({ segments: [{ base: '笑って' }], romaji: undefined });
+  });
+
+  test('a word without romaji keeps its written text', () => {
+    expect(displayWord([{ base: 'love' }], '', { kanji: false, furigana: false, romaji: true })).toEqual({
+      segments: [{ base: 'love' }],
+    });
   });
 });

@@ -2,7 +2,7 @@ import classNames from 'classnames';
 import { observer, useLocalObservable } from 'mobx-react-lite';
 import React from 'react';
 import { StructuralContext } from '../editor_contexts';
-import { furiganaAnnotator } from 'src/lyrics/furigana';
+import { furiganaAnnotator, hasReading } from 'src/lyrics/furigana';
 import { activeLineIndexAt, activeWordIndexAt } from 'src/lyrics/lrc';
 import { LyricsTrackId, lyricsStore } from 'src/lyrics/store';
 import { appSettingsPresenter, appSettingsStore } from 'src/settings/app_settings_presenter';
@@ -108,17 +108,17 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   // resolution.
   const fontReady = lyricsMeasurer.fontReady;
   const furiganaRevision = furiganaAnnotator.revision;
-  const showRomaji = appSettingsStore.showRomaji;
+  const script = appSettingsStore.japaneseScript;
   const placements = React.useMemo(
     () =>
       layoutLyricWords(
-        lyricMeasureInputs(positioned, { romaji: showRomaji }),
+        lyricMeasureInputs(positioned, script),
         pxPerBeat,
         lyricsFontSizePx,
         zoomLyricFont(pxPerBeat),
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [positioned, pxPerBeat, fontReady, furiganaRevision, lyricsFontSizePx, showRomaji],
+    [positioned, pxPerBeat, fontReady, furiganaRevision, lyricsFontSizePx, script],
   );
 
   // Per-word pitch-line SVG paths. Re-derived on zoom: the vibrato wavelength
@@ -134,13 +134,13 @@ export const LyricsTrackView = observer(({ id, onSeek }: { id: LyricsTrackId; on
   const trackHasRuby = React.useMemo(() => {
     for (const p of positioned) {
       const words = p.wordPositions ? p.wordPositions.map((w) => w.source) : [{ text: p.text }];
-      const lineSegs = furiganaAnnotator.segmentsForWords(words);
-      if (lineSegs.some((wordSegs) => wordSegs.some((s) => s.reading != null))) return true;
-      if (showRomaji && furiganaAnnotator.romajiForWords(words).some((r) => r !== '')) return true;
+      if (furiganaAnnotator.displayForWords(words, script).some((d) => d.romaji != null || hasReading(d.segments))) {
+        return true;
+      }
     }
     return false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positioned, furiganaRevision, showRomaji]);
+  }, [positioned, furiganaRevision, script]);
 
   // Reactive active-line/word state. Reading `activeLineIdx` here re-renders
   // only when the active line flips (the computed dedupes by value); child

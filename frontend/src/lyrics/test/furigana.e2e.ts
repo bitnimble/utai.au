@@ -100,6 +100,30 @@ test('romaji: View option adds romaji under the lyrics in both views, and stays 
   await expect(romaji('karaoke-line')).toHaveText(['kimi to futari de itta'], DICT_TIMEOUT);
 });
 
+test('kanji off: lyrics show as furigana alone, or romaji alone, in both views', async ({ page }) => {
+  await loadJapaneseSong(page);
+  await showTracksView(page);
+  const line0 = page.getByTestId('lyrics-line-0');
+  await expect(line0.locator('rt')).toHaveText(['ほんとう'], DICT_TIMEOUT);
+
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('show-kanji').click();
+  await expect(line0).toHaveText('ほんとうに');
+  await expect(line0.locator('rt')).toHaveCount(0);
+
+  await page.getByTestId('show-furigana').click();
+  await page.getByTestId('show-romaji').click();
+  await expect(page.getByTestId('lyrics-word-0-0')).toHaveText('hontou', DICT_TIMEOUT);
+  await expect(page.getByTestId('lyrics-word-0-1')).toHaveText('ni');
+  await expect(line0.locator('rt')).toHaveCount(0);
+
+  await page.getByTestId('view-mode-karaoke').click();
+  await page.getByTestId('karaoke-two-lines').click();
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(17.2));
+  await expect(page.getByTestId('karaoke-line')).toHaveText('kimi to futari', DICT_TIMEOUT);
+});
+
 test('furigana: reads numeral + counter compounds, 行った, repeated okurigana, and kanji kuromoji lacks (嗤)', async ({ page }) => {
   await loadJapaneseSong(page);
   await showTracksView(page);
