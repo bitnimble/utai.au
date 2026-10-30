@@ -301,6 +301,11 @@
     ruby-align: center;
 }
 
+/* Keep in lockstep with lyrics_measure.ts::ROMAJI_PAD_EM. */
+.romajiRuby > rt {
+    padding-inline: 0.2em;
+}
+
 .svgText {
     position: relative;
     display: inline-block;

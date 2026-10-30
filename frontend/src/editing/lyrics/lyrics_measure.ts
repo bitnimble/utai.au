@@ -37,6 +37,10 @@ export const ELLIPSIS = '…';
 const FULL_SIZE_PX_PER_BEAT = 120;
 const MIN_FONT_SCALE = 0.4;
 const RT_WDTH = 100;
+const ROMAJI_PAD_EM = 0.2;
+/** CJK and fullwidth characters: a full em wide, and outside the lyric font. */
+export const WIDE_CHAR_RE = /[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}　-〿！-｠]/u;
+const WIDE_RUN_SPLIT_RE = new RegExp(`(${WIDE_CHAR_RE.source}+)`, 'u');
 
 /** The variable-font state lyric text renders at, for measuring it off the
  *  DOM. Furigana (`rt`) runs at `rtRatio` of the font size, default width, no
@@ -155,7 +159,10 @@ class LyricsMeasurer {
       letterSpacing?: string;
     } & (CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D);
     (ctx as WithSpacing).letterSpacing = `${letterSpacingPx.toFixed(3)}px`;
-    return ctx.measureText(text).width * (wdthPct / 100);
+    // odd parts are wide runs, drawn by a fallback font with no wdth axis
+    return text
+      .split(WIDE_RUN_SPLIT_RE)
+      .reduce((px, part, i) => px + ctx.measureText(part).width * (i % 2 === 1 ? 1 : wdthPct / 100), 0);
   }
 
   /** Measure `text` as it would render in `font` at `fontSizePx`; `isActive`
@@ -190,8 +197,13 @@ class LyricsMeasurer {
   }
 
   /** Width of a ruby annotation (`rt`) over or under text at `fontSizePx`. */
-  measureAnnotationPx(text: string, font: LyricFont, fontSizePx: number): number {
+  private measureAnnotationPx(text: string, font: LyricFont, fontSizePx: number): number {
     return this.measure(text, fontSizePx * font.rtRatio, font.rtWght, RT_WDTH, 0);
+  }
+
+  /** Width of romaji under a word, with the padding that keeps neighbouring romaji apart. */
+  measureRomajiPx(text: string, font: LyricFont, fontSizePx: number): number {
+    return this.measureAnnotationPx(text, font, fontSizePx) + 2 * ROMAJI_PAD_EM * fontSizePx * font.rtRatio;
   }
 }
 
@@ -283,7 +295,7 @@ export function layoutLyricWords(
         return {
           key: lyricWordKey(line.lineIdx, w.sourceIdx),
           natural: (line.lineStartBeat + w.beatOffset) * pxPerBeat,
-          width: w.romaji ? Math.max(textPx, lyricsMeasurer.measureAnnotationPx(w.romaji, font, fontSizePx)) : textPx,
+          width: w.romaji ? Math.max(textPx, lyricsMeasurer.measureRomajiPx(w.romaji, font, fontSizePx)) : textPx,
           cellPx: w.beatWidth * pxPerBeat,
           text: w.text,
         };

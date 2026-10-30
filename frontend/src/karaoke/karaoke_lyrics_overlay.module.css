@@ -38,6 +38,11 @@
     line-height: 1;
 }
 
+.romajiBase {
+    /* not inline: WebKit forces a line break before a furigana ruby nested inline in a romaji ruby's base */
+    display: inline-block;
+}
+
 .line rt[data-romaji],
 .rowWidthProbe rt[data-romaji],
 .overlay .pitchRow rt[data-romaji] {

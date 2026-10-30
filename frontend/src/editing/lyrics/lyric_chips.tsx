@@ -258,9 +258,11 @@ const LineText = observer(({ text }: { text: string }) => (
 export const RubyText = ({
   segments,
   romaji,
+  romajiBaseClassName,
 }: {
   segments: readonly RubySegment[];
   romaji?: string;
+  romajiBaseClassName?: string;
 }): React.ReactNode => {
   const text = !hasReading(segments) ? (
     <SvgText text={baseText(segments)} />
@@ -282,7 +284,7 @@ export const RubyText = ({
   if (!romaji) return text;
   return (
     <ruby className={styles.romajiRuby}>
-      {text}
+      {romajiBaseClassName != null ? <span className={romajiBaseClassName}>{text}</span> : text}
       <rt data-romaji>
         <SvgText text={romaji} />
       </rt>
