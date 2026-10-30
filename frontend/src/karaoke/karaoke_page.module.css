@@ -9,6 +9,56 @@
     color: var(--color-text);
 }
 
+.fullscreen {
+    position: relative;
+}
+
+.chrome {
+    display: contents;
+}
+
+.fullscreen .chrome {
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    pointer-events: none;
+}
+
+.fullscreen .chrome::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: -1;
+    height: 24px;
+    pointer-events: auto;
+}
+
+.fullscreen .chrome > * {
+    pointer-events: auto;
+    transition: opacity 150ms linear;
+}
+
+/* Menus are portaled out of the chrome; aria-expanded keeps an open one's trigger shown.
+   Not visibility:hidden: the TV remote's D-pad must still be able to focus into it. */
+.fullscreen .chrome:not(:hover, :has(:focus-visible, [aria-expanded='true'])) > * {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.fullscreen .topChrome,
+.fullscreen .topChrome::before {
+    top: 0;
+}
+
+.fullscreen .bottomChrome,
+.fullscreen .bottomChrome::before {
+    bottom: 0;
+}
+
 .toolbar {
     position: relative;
     display: flex;

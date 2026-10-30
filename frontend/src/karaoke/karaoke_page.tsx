@@ -1,6 +1,7 @@
+import classNames from 'classnames';
 import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
-import { ChevronDown, Pause, Play, Settings, Square } from 'lucide-react';
+import { ChevronDown, Maximize, Minimize, Pause, Play, Settings, Square } from 'lucide-react';
 import React from 'react';
 import { nativeAudioOutput, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
@@ -95,6 +96,10 @@ import { SessionHostPresenterContext, SessionHostStoreContext } from 'src/sessio
 import { SessionHostPresenter } from 'src/session/session_host_presenter';
 import { SessionHostStore } from 'src/session/session_host_store';
 import { SessionHostButton, SessionJoinModal } from 'src/session/session_host_view';
+import { FullscreenStore } from 'src/fullscreen/fullscreen_store';
+import { FullscreenPresenter } from 'src/fullscreen/fullscreen_presenter';
+import { fullscreenDriver } from 'src/fullscreen/fullscreen_driver';
+import { FullscreenPresenterContext, FullscreenStoreContext } from 'src/fullscreen/fullscreen_contexts';
 import { KaraokePresenter } from './karaoke_presenter';
 import {
   KaraokePresenterContext,
@@ -130,6 +135,8 @@ type Session = {
   videoPresenter: VideoPresenter;
   skipSegments: SkipSegmentsStore;
   skipSegmentsPresenter: SkipSegmentsPresenter;
+  fullscreen: FullscreenStore;
+  fullscreenPresenter: FullscreenPresenter;
 };
 
 type SessionHost = { sessionHost: SessionHostStore; sessionHostPresenter: SessionHostPresenter };
@@ -171,6 +178,8 @@ function buildSession(): Session {
   const videoPresenter = new VideoPresenter(videoStore);
   const skipSegments = new SkipSegmentsStore(song, playbackEngine);
   const skipSegmentsPresenter = new SkipSegmentsPresenter(skipSegments, videoStore, playbackEngine);
+  const fullscreen = new FullscreenStore(appSettingsStore);
+  const fullscreenPresenter = new FullscreenPresenter(fullscreen, fullscreenDriver(), queuePresenter);
   return {
     song,
     viewport,
@@ -192,6 +201,8 @@ function buildSession(): Session {
     videoPresenter,
     skipSegments,
     skipSegmentsPresenter,
+    fullscreen,
+    fullscreenPresenter,
   };
 }
 
@@ -236,6 +247,8 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
     videoPresenter,
     skipSegments,
     skipSegmentsPresenter,
+    fullscreen,
+    fullscreenPresenter,
   } = session;
 
   // Open the native engine's telemetry stream on desktop (no-op on web).
@@ -260,6 +273,11 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
     skipSegmentsPresenter.start();
     return () => skipSegmentsPresenter.dispose();
   }, [skipSegmentsPresenter]);
+
+  React.useEffect(() => {
+    fullscreenPresenter.start();
+    return () => fullscreenPresenter.dispose();
+  }, [fullscreenPresenter]);
 
   React.useEffect(() => {
     queuePresenter.init();
@@ -310,6 +328,8 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
       videoPresenter,
       skipSegments,
       skipSegmentsPresenter,
+      fullscreen,
+      fullscreenPresenter,
       sessionHost,
       sessionHostPresenter,
       lyricsStore,
@@ -338,9 +358,11 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
     videoPresenter,
     skipSegments,
     skipSegmentsPresenter,
+    fullscreen,
+    fullscreenPresenter,
   ]);
 
-  const karaokeView = appSettingsStore.viewMode === 'karaoke';
+  const karaokeView = fullscreen.viewMode === 'karaoke';
   return (
     <SessionHostStoreContext.Provider value={sessionHost ?? null}>
     <SessionHostPresenterContext.Provider value={sessionHostPresenter ?? null}>
@@ -364,8 +386,12 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
                 <VideoPresenterContext.Provider value={videoPresenter}>
                 <SkipSegmentsStoreContext.Provider value={skipSegments}>
                 <SkipSegmentsPresenterContext.Provider value={skipSegmentsPresenter}>
-                <div className={styles.page}>
-                  <Toolbar />
+                <FullscreenStoreContext.Provider value={fullscreen}>
+                <FullscreenPresenterContext.Provider value={fullscreenPresenter}>
+                <div className={classNames(styles.page, fullscreen.active && styles.fullscreen)}>
+                  <div className={classNames(styles.chrome, styles.topChrome)}>
+                    <Toolbar />
+                  </div>
                   <div className={styles.body}>
                     <div className={styles.main}>
                       <VideoArea>
@@ -378,11 +404,15 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
                     </div>
                     <QueueSidebar />
                   </div>
-                  {karaokeView && <SeekBar />}
-                  <TransportBar />
+                  <div className={classNames(styles.chrome, styles.bottomChrome)}>
+                    {karaokeView && <SeekBar />}
+                    <TransportBar />
+                  </div>
                   <Modals />
                   <ToastContainer />
                 </div>
+                </FullscreenPresenterContext.Provider>
+                </FullscreenStoreContext.Provider>
                 </SkipSegmentsPresenterContext.Provider>
                 </SkipSegmentsStoreContext.Provider>
                 </VideoPresenterContext.Provider>
@@ -762,6 +792,7 @@ const TransportBar = observer(function TransportBar() {
   const presenter = React.useContext(KaraokePresenterContext)!;
   const song = React.useContext(SongStoreContext)!;
   const skipSegments = React.useContext(SkipSegmentsStoreContext)!;
+  const fullscreen = React.useContext(FullscreenStoreContext)!;
   const playing = playbackEngine.state === 'playing';
   const canPlay = song.durationSec > 0;
   const musicSec = skipSegments.musicDurationSec;
@@ -794,10 +825,29 @@ const TransportBar = observer(function TransportBar() {
       </span>
       <ScoringControls />
       <div className={styles.mixControls}>
-        {appSettingsStore.viewMode === 'karaoke' && <StemMixControls />}
+        {fullscreen.viewMode === 'karaoke' && <StemMixControls />}
         <HomeAudioControls />
       </div>
+      <FullscreenButton />
     </footer>
+  );
+});
+
+const FullscreenButton = observer(function FullscreenButton() {
+  const fullscreen = React.useContext(FullscreenStoreContext)!;
+  const presenter = React.useContext(FullscreenPresenterContext)!;
+  const label = fullscreen.active ? 'Exit fullscreen' : 'Fullscreen';
+  return (
+    <button
+      type="button"
+      className={styles.transportButton}
+      onClick={() => presenter.toggle()}
+      aria-label={label}
+      title={label}
+      data-testid="fullscreen-toggle"
+    >
+      {fullscreen.active ? <Minimize size={16} aria-hidden="true" /> : <Maximize size={16} aria-hidden="true" />}
+    </button>
   );
 });
 
@@ -816,6 +866,7 @@ const AUTOSCROLL_LABELS: Record<AutoscrollMode, string> = {
 /** Header "View" menu: view mode, plus (in the tracks view) follow-playhead mode,
  *  audio-track visibility, horizontal zoom, and lyrics font size. */
 const ViewMenu = observer(function ViewMenu() {
+  const fullscreen = React.useContext(FullscreenStoreContext)!;
   return (
     <DropdownButton
       label={<MenuLabel text="View" />}
@@ -830,14 +881,15 @@ const ViewMenu = observer(function ViewMenu() {
               <ToggleMenuItem
                 key={mode}
                 label={VIEW_MODE_LABELS[mode]}
-                active={appSettingsStore.viewMode === mode}
+                active={fullscreen.viewMode === mode}
                 onToggle={() => appSettingsPresenter.setViewMode(mode)}
+                disabled={fullscreen.active}
                 role="menuitemradio"
                 testId={`view-mode-${mode}`}
               />
             ))}
           </DropdownSection>
-          {appSettingsStore.viewMode === 'tracks' ? (
+          {fullscreen.viewMode === 'tracks' ? (
             <TracksViewSections />
           ) : (
             <DropdownSection label="Lyrics">
