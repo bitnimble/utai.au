@@ -1126,8 +1126,9 @@ _ISO639_1_TO_3 = {
 
 
 def _iso1_to_iso3(code: str) -> str:
-    """Map an ISO-639-1 code (our text detector's output) to ISO-639-3 (what ctc-forced-aligner's `preprocess_text`
-    wants). Unknown codes degrade to `eng` rather than raising, so a
+    """Map an ISO-639-1 code (our text detector's output) to ISO-639-3
+    (what ctc-forced-aligner's `preprocess_text` wants). Unknown codes
+    degrade to `eng` rather than raising, so a
     misdetected language still produces output (just with English
     romanization, which is wrong but recoverable)."""
     return _ISO639_1_TO_3.get(code.lower(), "eng")
