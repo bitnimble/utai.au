@@ -239,9 +239,8 @@ const LyricWordChip = observer(
  *  index (not the bare text) so the reading is tokenized with sentence
  *  context: a chip the aligner split off a compound (実 out of 実は) reads
  *  correctly (じつ) instead of its lone-token reading (み). `displayForWords`
- *  is synchronous (bare text until the kuromoji dictionary resolves) and its
- *  `revision` read makes this `observer` re-render in place once readings
- *  arrive. */
+ *  is synchronous (bare text until the backend's readings arrive) and its
+ *  `revision` read makes this `observer` re-render in place once they do. */
 const WordText = observer(
   ({ words, index }: { words: readonly LyricWord[]; index: number }) => (
     <RubyText {...furiganaAnnotator.displayForWords(words, appSettingsStore.japaneseScript)[index]} />

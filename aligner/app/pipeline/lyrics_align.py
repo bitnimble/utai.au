@@ -45,13 +45,11 @@ import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from app.config import settings
 from app.lazy import Lazy
-
-if TYPE_CHECKING:
-    from app.pipeline.jp_romaji import JpToken
+from app.pipeline.jp_romaji import JpToken, is_han, tokenize
 
 log = logging.getLogger(__name__)
 
@@ -103,8 +101,9 @@ class LyricWord:
     # UI debug tooltip show "displayed 君 / aligned kimi". None for
     # English / Chinese words, where `text` already is the aligned form.
     romaji: str | None = None
-    # Hiragana reading heard in the vocal, for a Japanese word the dictionary
-    # reads several ways (生: せい / なま). None when it has only one.
+    # Hiragana a Japanese kanji word was aligned as: heard in the vocal where
+    # the dictionary reads it several ways (生: せい / なま), else in context.
+    # None for every other word.
     reading: str | None = None
 
 
@@ -319,12 +318,11 @@ class LyricsAligner:
             # preprocess_text); `jp_romaji` rewrites Japanese spans to
             # romaji before they reach the aligner and carries the
             # original kana/kanji for display. Skipped for Chinese tracks
-            # (the char-level path stays) and when the optional stack
-            # isn't installed. `treat_kanji_as_japanese` resolves
+            # (the char-level path stays). `treat_kanji_as_japanese` resolves
             # glyph-ambiguous kanji per the kana/marker heuristic, so a
             # Chinese sprinkle inside an English-dominant track isn't
             # romanized as Japanese.
-            use_jp_romaji = iso3 != "chi" and _jp_romaji_available()
+            use_jp_romaji = iso3 != "chi"
             full_text = "".join(line.text for line in input_lines)
             treat_kanji_as_japanese = _resolve_cjk_lang(full_text) == "ja"
 
@@ -452,15 +450,12 @@ class LyricsAligner:
                     for line in input_lines
                 ]
 
-            # Partition the per-word surfaces + heard readings with the same
+            # Partition the per-word surfaces + aligned readings with the same
             # per-line counts. Guaranteed length-locked to `word_timestamps`
             # once the partition above succeeded (all equal
             # sum(line_word_counts)), so words map to them 1:1.
             surfaces = [tok.surface if tok else None for tok in jp_words]
-            readings = [
-                tok.readings[heard[i]].kana if tok and i in heard else None
-                for i, tok in enumerate(jp_words)
-            ]
+            readings = [_aligned_reading(tok, heard.get(i)) for i, tok in enumerate(jp_words)]
             partitioned_surfaces: list[list[str | None]] = []
             partitioned_readings: list[list[str | None]] = []
             cursor = 0
@@ -793,6 +788,14 @@ def _with_readings(
         if word:
             tokens[word_token_idx[i]], text[word_token_idx[i]] = word
     return tokens, text
+
+
+def _aligned_reading(tok: JpToken | None, heard: int | None) -> str | None:
+    """The hiragana a kanji word was aligned as (its heard reading, else the
+    in-context one), so its furigana and romaji show what was aligned."""
+    if tok is None or tok.kana is None or not any(is_han(ord(c)) for c in tok.surface):
+        return None
+    return tok.readings[heard].kana if heard is not None else tok.kana
 
 
 def _repair_low_score_words(
@@ -1132,31 +1135,6 @@ def _iso1_to_iso3(code: str) -> str:
     return _ISO639_1_TO_3.get(code.lower(), "eng")
 
 
-_jp_romaji_ok: bool | None = None
-
-
-def _jp_romaji_available() -> bool:
-    """True when the cutlet/fugashi stack can be imported. Probed once
-    and cached. When false, callers leave Japanese kanji on the existing
-    uroman path (romanized as Chinese) rather than crashing - a graceful
-    degrade for environments where the optional Japanese deps aren't
-    installed."""
-    global _jp_romaji_ok
-    if _jp_romaji_ok is None:
-        try:
-            import cutlet  # type: ignore[import-not-found]  # noqa: F401
-
-            _jp_romaji_ok = True
-        except Exception as exc:
-            log.warning(
-                "lyrics: cutlet/fugashi unavailable; Japanese kanji will be "
-                "romanized as Chinese (uroman fallback): %s",
-                exc,
-            )
-            _jp_romaji_ok = False
-    return _jp_romaji_ok
-
-
 def _preprocess_lines(
     input_lines: list[InputLine],
     *,
@@ -1174,7 +1152,7 @@ def _preprocess_lines(
         over every non-empty line (`all_text` keeps `<star>` markers).
       - `jp_words`: flat list parallel to the NON-star words (one entry per
         emitted alignment word, in order). A Japanese token contributes its
-        `JpToken` (original surface, e.g. "君", plus candidate readings);
+        `JpToken` (original surface, e.g. "君", plus its readings);
         every other token contributes `None`, meaning "display the aligned
         text as-is".
       - `line_word_counts` / `non_empty_indices`: per-line non-star word
@@ -1184,8 +1162,8 @@ def _preprocess_lines(
     and every token's romaji is preprocessed individually at
     `language='eng'` (word-level: one `<star>` slot between every pair of
     tokens, the same absorber budget the English path already relies on).
-    Otherwise (Chinese, or the stack unavailable) the line takes the
-    original whole-line path at `language=iso3` - char-level for `chi`.
+    Otherwise (Chinese) the line takes the original whole-line path at
+    `language=iso3` - char-level for `chi`.
 
     The load-bearing invariant is that `jp_words` stays length-locked to
     the emitted word list: each token extends it by exactly the number of
@@ -1208,8 +1186,6 @@ def _preprocess_lines(
         units: list[tuple[str, JpToken | None, str]]
         if use_jp_romaji:
             try:
-                from app.pipeline.jp_romaji import tokenize
-
                 units = [
                     (tok.romaji, tok if tok.is_japanese else None, "eng")
                     for tok in tokenize(
@@ -1246,8 +1222,8 @@ def _preprocess_lines(
                 break
             unit_real = sum(1 for s in unit_text if s != "<star>")
             if jp_token is not None and unit_real > 1:
-                # A reading swaps exactly one aligner word.
-                jp_token = dataclasses.replace(jp_token, readings=[])
+                # A reading belongs to exactly one aligner word.
+                jp_token = dataclasses.replace(jp_token, kana=None, readings=[])
             line_tokens.extend(unit_tokens)
             line_text.extend(unit_text)
             line_jp_words.extend([jp_token] * unit_real)

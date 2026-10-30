@@ -76,7 +76,7 @@ WORKDIR /opt/deps
 COPY aligner/pyproject.toml ./
 COPY docker/overrides-torch-free.txt ./overrides-torch-free.txt
 RUN uv pip install --overrides ./overrides-torch-free.txt \
-        --group lyrics --group lyrics-ja --group pitch --group music -e .
+        --group lyrics --group pitch --group music -e .
 
 # Models / weights caches, mirroring the aligner's cache layout so a bind-mounted
 # host cache is reused (the compose file mounts the exported onnx at /models).

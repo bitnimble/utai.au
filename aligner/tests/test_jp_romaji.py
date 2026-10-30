@@ -1,16 +1,8 @@
-"""Tests for `app.pipeline.jp_romaji`.
-
-Split in two: the pure Unicode logic (`_normalize`, `_split_runs`) has
-no third-party dependency and is tested directly; the cutlet/fugashi-
-backed `tokenize` morpheme path is tested behind an importorskip so the
-suite still collects on a box without the Japanese stack installed.
-"""
+"""Tests for `app.pipeline.jp_romaji`."""
 
 from __future__ import annotations
 
-import pytest
-
-from app.pipeline.jp_romaji import _normalize, _split_runs
+from app.pipeline.jp_romaji import _normalize, _split_runs, kana_romaji, tokenize
 
 
 def test_normalize_folds_fullwidth_latin_and_digits():
@@ -63,15 +55,6 @@ def test_split_runs_normalizes_fullwidth_before_classifying():
     assert _split_runs("Ｌｏｖｅ", treat_kanji_as_japanese=True) == [
         ("Love", False),
     ]
-
-
-# --- cutlet/fugashi-backed morpheme romanization -------------------
-# Skips cleanly on a box without the Japanese stack so the pure-logic
-# tests above still run.
-
-pytest.importorskip("cutlet")
-
-from app.pipeline.jp_romaji import tokenize  # noqa: E402
 
 
 def test_tokenize_english_only_is_passthrough():
@@ -130,7 +113,7 @@ def test_tokenize_kanji_only_passthrough_when_flag_off():
 def test_tokenize_doubles_the_consonant_after_a_sokuon_stem():
     toks = tokenize("分かってる", treat_kanji_as_japanese=True)
     assert [t.romaji for t in toks] == ["wakat", "teru"]
-    assert all("っ" not in r.romaji for t in toks for r in t.readings)
+    assert [r.romaji for r in toks[0].readings] == ["wakat", "bunkat"]
 
 
 def _readings(text: str) -> dict[str, list[tuple[str, str]]]:
@@ -161,3 +144,40 @@ def test_tokenize_offers_no_readings_for_kana_or_a_single_reading_word():
 def test_tokenize_reading_lookup_keeps_the_line_parse_intact():
     toks = tokenize("君と", treat_kanji_as_japanese=True)
     assert [(t.surface, t.romaji) for t in toks] == [("君", "kimi"), ("と", "to")]
+
+
+def _kana(text: str) -> list[tuple[str, str | None]]:
+    return [(t.surface, t.kana) for t in tokenize(text, treat_kanji_as_japanese=True)]
+
+
+def test_tokenize_reads_words_unidic_lite_misreads_as_lyrics_do():
+    assert _kana("私は明日")[0::2] == [("私", "わたし"), ("明日", "あした")]
+    assert ("わたくし", "watakushi") in _readings("私は")["私"]
+
+
+def test_tokenize_reads_nani_or_nan_by_the_sound_after_it():
+    assert _kana("何を")[0] == ("何", "なに")
+    assert _kana("何か")[0] == ("何", "なに")
+    assert _kana("何で")[0] == ("何", "なん")
+    assert _kana("何の")[0] == ("何", "なん")
+    assert _kana("何回")[0] == ("何", "なん")
+    assert _kana("何人で")[0] == ("何", "なん")
+
+
+def test_tokenize_reads_the_itta_stem_as_iku():
+    toks = tokenize("行った", treat_kanji_as_japanese=True)
+    assert [(t.surface, t.kana, t.romaji) for t in toks] == [("行っ", "いっ", "it"), ("た", "た", "ta")]
+
+
+def test_tokenize_pronounces_the_wo_particle():
+    assert [t.romaji for t in tokenize("君を", treat_kanji_as_japanese=True)] == ["kimi", "o"]
+
+
+def test_tokenize_offers_no_name_readings():
+    assert ("かずと", "kazuto") not in _readings("一人で")["一人"]
+
+
+def test_kana_romaji_drops_kanji_and_doubles_a_sokuon():
+    assert kana_romaji("やって") == "yatte"
+    assert kana_romaji("キミ") == "kimi"
+    assert kana_romaji("鬱だ") == "da"

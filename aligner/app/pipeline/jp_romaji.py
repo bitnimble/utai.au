@@ -1,19 +1,17 @@
-"""Japanese-aware romanization for lyrics forced-alignment.
+"""The one Japanese reading stack: how each morpheme of a lyric reads, for
+the aligner (romaji it can match against the vocal) and for display
+(furigana and romaji, see `jp_annotate`).
 
 uroman (invoked inside `ctc_forced_aligner.preprocess_text`) reads
-kanji as Chinese. This module pre-romanizes Japanese spans with cutlet
-(on fugashi/MeCab + unidic-lite) so the aligner sees romaji that
-matches the sung audio, while the original kana/kanji are preserved for
-display.
+kanji as Chinese, so Japanese spans are pre-romanized here with
+fugashi/MeCab + unidic-lite, the original kana/kanji preserved for display.
 
 The module is two layers:
 
   - Pure Unicode logic (`_normalize`, `_split_runs`): NFKC-normalize and
-    partition a line into maximal Japanese vs non-Japanese runs. No
-    third-party dependency; deterministic and unit-tested directly.
-  - cutlet/fugashi morpheme romanization (`tokenize`): lazy-imported, so
-    importing this module is cheap and a box without the Japanese stack
-    can still import (and the caller degrades gracefully).
+    partition a line into maximal Japanese vs non-Japanese runs.
+  - Morphemes (`morphemes`, `tokenize`): each morpheme's in-context reading
+    and romaji, plus the alternative readings the aligner can pick between.
 """
 
 from __future__ import annotations
@@ -34,6 +32,13 @@ _DROP_POS1 = frozenset({"補助記号", "空白", "記号"})
 _READING_PARSES = 10
 _KANJI_READINGS = Path(__file__).resolve().parent.parent / "data" / "kanji_readings.tsv"
 
+# unidic-lite's in-context reading of these is wrong for lyrics nearly every
+# time (私 as わたくし, 愛 before a verb as the prefix まな).
+_LYRIC_READINGS = {"私": "わたし", "明日": "あした", "正気": "しょうき", "愛": "あい"}
+# The pronoun 何 reads なん before a t / d / n sound (何で, 何の, 何だ), なに
+# elsewhere (何を, 何か, 何に); unidic-lite reads it なん everywhere.
+_NAN_BEFORE = frozenset("たちつてとだぢづでどなぬねの")
+
 
 def _normalize(text: str) -> str:
     """NFKC-normalize `text`.
@@ -45,15 +50,15 @@ def _normalize(text: str) -> str:
     return unicodedata.normalize("NFKC", text)
 
 
-def _is_kana(cp: int) -> bool:
+def is_kana(cp: int) -> bool:
     """Hiragana + katakana (incl. the prolonged sound mark ー at 0x30FC,
     which lives in the katakana block) and the katakana phonetic
     extensions. Kana is a definitive Japanese signal."""
     return (0x3040 <= cp <= 0x30FF) or (0x31F0 <= cp <= 0x31FF)
 
 
-def _is_han(cp: int) -> bool:
-    """CJK ideographs (kanji): the main block, Extension A, the
+def is_han(cp: int) -> bool:
+    """CJK ideographs (kanji): the main block, Extensions A and B, the
     compatibility block, and the iteration mark 々 (0x3005, e.g. 人々).
     Glyph-ambiguous between Japanese and Chinese on its own - the
     caller's `treat_kanji_as_japanese` flag decides a kanji-only run."""
@@ -61,6 +66,7 @@ def _is_han(cp: int) -> bool:
         (0x4E00 <= cp <= 0x9FFF)
         or (0x3400 <= cp <= 0x4DBF)
         or (0xF900 <= cp <= 0xFAFF)
+        or (0x20000 <= cp <= 0x2A6DF)
         or cp == 0x3005
     )
 
@@ -81,25 +87,49 @@ class JpToken:
     `surface` is the original text for display (e.g. "君と" -> two tokens
     "君", "と"); `romaji` is the Latin form fed to the aligner (lowercase,
     ASCII, space-free). For non-Japanese tokens the two are identical.
-    `readings` lists every reading the dictionary has for a kanji surface
-    with more than one (生: せい, なま, ...), the in-context one (`romaji`)
+    `kana` is the in-context hiragana reading of a Japanese token, None when
+    it has none. `readings` lists every reading the dictionary has for a
+    kanji surface with more than one (生: せい, なま, ...), the in-context one
     first, so the aligner can pick the one actually sung; empty otherwise.
     """
 
     surface: str
     romaji: str
     is_japanese: bool
+    kana: str | None = None
     readings: list[Reading] = field(default_factory=list)
 
 
-# Lazy cutlet singleton. Constructed on first `tokenize` call (loading
-# the unidic-lite dictionary is not free); held for the process
-# lifetime. `use_foreign_spelling=False` keeps loanword readings
-# phonetic (カツカレー -> "katsu karee", not "Cutlet curry") so the
-# romaji matches what is actually sung rather than the source-language
-# spelling.
+@dataclass
+class Morpheme:
+    """One morpheme of a line, `start` its index in the line. `kana` is its
+    in-context hiragana reading (None for symbols, Latin and kanji nothing
+    could read) and `romaji` that reading romanized ('' when it has none).
+    `joins_next`: its romaji runs straight into the next morpheme's as one
+    word (行っ + た -> itta)."""
+
+    surface: str
+    start: int
+    kana: str | None
+    romaji: str
+    pos1: str
+    pos2: str
+    lemma: str
+    joins_next: bool
+
+    @property
+    def end(self) -> int:
+        return self.start + len(self.surface)
+
+
+# Lazy cutlet singleton. Constructed on first use (loading the unidic-lite
+# dictionary is not free); held for the process lifetime. cutlet supplies the
+# tagger, its kana -> romaji table and its romaji word spacing.
 _cutlet_instance: Any | None = None
 _cutlet_lock = threading.Lock()
+# MeCab's tagger isn't thread-safe, and its nodes point into a lattice the next
+# parse overwrites; /lyrics/japanese parses beside a running alignment.
+_tagger_lock = threading.Lock()
 
 
 def _cutlet() -> Any:
@@ -107,51 +137,86 @@ def _cutlet() -> Any:
     if _cutlet_instance is None:
         with _cutlet_lock:
             if _cutlet_instance is None:
-                import cutlet  # type: ignore[import-not-found]  # lazy + optional
+                import cutlet  # type: ignore[import-not-found]
 
                 _cutlet_instance = cutlet.Cutlet(use_foreign_spelling=False)
     return _cutlet_instance
 
 
+def morphemes(text: str) -> list[Morpheme]:
+    """Every morpheme of `text` (symbols and Latin included), in order."""
+    out: list[Morpheme] = []
+    with _tagger_lock:
+        nodes = _cutlet().tagger(text)
+        # Only for the spacing: each token's romaji comes from `_kana` instead.
+        spacing = _cutlet().romaji_tokens(nodes, capitalize=False)
+        cursor = 0
+        for i, node in enumerate(nodes):
+            start = cursor + len(node.white_space)
+            cursor = start + len(node.surface)
+            kana = _kana(nodes, i)
+            f = node.feature
+            out.append(
+                Morpheme(
+                    surface=node.surface,
+                    start=start,
+                    kana=kana,
+                    romaji=morpheme_romaji(kana, f.pos1, f.pron),
+                    pos1=f.pos1 or "",
+                    pos2=f.pos2 or "",
+                    lemma=f.lemma or "",
+                    joins_next=not spacing[i].space,
+                )
+            )
+    geminate_all(out)
+    return out
+
+
+def geminate_all(ms: list[Morpheme]) -> None:
+    """Resolve each romaji ending in っ against the morpheme after it."""
+    for i, m in enumerate(ms):
+        m.romaji = _geminate(m.romaji, ms[i + 1].romaji if i + 1 < len(ms) else "")
+
+
+def kana_romaji(kana: str) -> str:
+    """Hepburn romaji for kana; kanji are dropped, anything else that isn't
+    kana passes through."""
+    out = ""
+    for run, kana_run in _kana_runs(_hiragana(kana)):
+        if kana_run:
+            try:
+                out += _cutlet().map_kana(run)
+            except KeyError:  # a kana cutlet has no romaji for
+                continue
+        else:
+            out += "".join(c for c in run if not is_han(ord(c)))
+    return _squash(out).replace("っ", "")
+
+
 def tokenize(text: str, *, treat_kanji_as_japanese: bool) -> list[JpToken]:
     """Tokenize a line into ordered {@link JpToken}s, romanizing Japanese.
 
-    Japanese runs (per {@link _split_runs}) are segmented into morphemes
-    by fugashi; each morpheme keeps its original surface for display and
-    carries a contextual Japanese reading as `romaji`. Punctuation-only
-    morphemes are dropped. Non-Japanese runs are whitespace-split and
-    passed through verbatim (`romaji == surface`), so English is left
-    for the existing aligner path untouched.
-
-    Requires the cutlet/fugashi stack; callers that may run without it
-    must guard the import (see `lyrics_align`'s graceful fallback).
+    Japanese runs (per {@link _split_runs}) are segmented into morphemes;
+    each keeps its original surface for display and carries its in-context
+    reading as `romaji`. Punctuation-only morphemes are dropped. Non-Japanese
+    runs are whitespace-split and passed through verbatim (`romaji ==
+    surface`), so English is left for the existing aligner path untouched.
     """
     tokens: list[JpToken] = []
     for run_text, is_japanese in _split_runs(
         text, treat_kanji_as_japanese=treat_kanji_as_japanese
     ):
         if is_japanese:
-            # Copied out before `_readings` re-parses: fugashi nodes point into
-            # the tagger's lattice, which the next parse overwrites.
-            morphemes = [
-                (node.surface, node.feature.kana, _squash(_cutlet().romaji_word(node)))
-                for node in _cutlet().tagger(run_text)
-                if node.feature.pos1 not in _DROP_POS1
-            ]
-            for i, (surface, kana, romaji) in enumerate(morphemes):
-                if not romaji:
-                    continue
-                following = morphemes[i + 1][2] if i + 1 < len(morphemes) else ""
-                readings = [
-                    Reading(kana=r.kana, romaji=_geminate(r.romaji, following))
-                    for r in _readings(surface, kana, romaji)
-                ]
+            spoken = [m for m in morphemes(run_text) if m.pos1 not in _DROP_POS1 and m.romaji]
+            for i, m in enumerate(spoken):
+                following = spoken[i + 1].romaji if i + 1 < len(spoken) else ""
                 tokens.append(
                     JpToken(
-                        surface=surface,
-                        romaji=_geminate(romaji, following),
+                        surface=m.surface,
+                        romaji=m.romaji,
                         is_japanese=True,
-                        readings=readings,
+                        kana=m.kana,
+                        readings=_readings(m.surface, m.kana, m.romaji, following),
                     )
                 )
         else:
@@ -163,6 +228,62 @@ def tokenize(text: str, *, treat_kanji_as_japanese: bool) -> list[JpToken]:
                     continue
                 tokens.append(JpToken(surface=word, romaji=word, is_japanese=False))
     return tokens
+
+
+def _kana(nodes: list[Any], i: int) -> str | None:
+    """Hiragana reading of `nodes[i]` in its line."""
+    node = nodes[i]
+    surface = node.surface
+    if surface in _LYRIC_READINGS:
+        return _LYRIC_READINGS[surface]
+    kana = node.feature.kana
+    if not kana:
+        if node.is_unk and any(is_kana(ord(c)) for c in surface):
+            return _hiragana(surface)
+        return _unread_kanji_reading(surface, nodes[i + 1].surface if i + 1 < len(nodes) else "")
+    kana = _hiragana(kana)
+    if surface == "何" and node.feature.pos1 == "代名詞":
+        following = _hiragana(nodes[i + 1].feature.kana or "") if i + 1 < len(nodes) else ""
+        return "なん" if following[:1] in _NAN_BEFORE and following else "なに"
+    # 行っ is the shared stem of 行く and 行う (行った); unidic picks 行う, lyrics mean 行く.
+    if node.feature.lemma == "行う" and surface.startswith("行っ"):
+        return "いっ" + kana.removeprefix("おこなっ")
+    return kana
+
+
+def _unread_kanji_reading(surface: str, following: str) -> str | None:
+    """A single kanji the dictionary doesn't know (嗤 before って), read the way
+    JMdict reads it before the same kana."""
+    if len(surface) != 1 or not is_han(ord(surface)) or not following:
+        return None
+    readings = _kanji_readings().get(surface + following[0])
+    return readings[0] if readings else None
+
+
+def morpheme_romaji(kana: str | None, pos1: str | None, pron: str | None) -> str:
+    """Romaji of a morpheme read `kana`, with the は / へ / を particles as
+    pronounced (wa / e / o). A trailing っ stays for {@link geminate_all}."""
+    if not kana:
+        return ""
+    if pos1 == "助詞":
+        particle = {"ワ": "wa", "エ": "e", "オ": "o"}.get(pron or "")
+        if particle:
+            return particle
+    try:
+        return _squash(_cutlet().map_kana(kana))
+    except KeyError:  # a kana cutlet has no romaji for
+        return ""
+
+
+def _kana_runs(text: str) -> list[tuple[str, bool]]:
+    runs: list[tuple[str, bool]] = []
+    for ch in text:
+        kana_char = is_kana(ord(ch))
+        if runs and runs[-1][1] == kana_char:
+            runs[-1] = (runs[-1][0] + ch, kana_char)
+        else:
+            runs.append((ch, kana_char))
+    return runs
 
 
 def _squash(romaji: str) -> str:
@@ -179,16 +300,17 @@ def _geminate(romaji: str, following: str) -> str:
     return romaji[:-1] + (doubled if doubled and doubled not in "aeiou" else "")
 
 
-def _readings(surface: str, kana: str | None, romaji: str) -> list[Reading]:
+def _readings(surface: str, kana: str | None, romaji: str, following: str) -> list[Reading]:
     """The in-context reading, then the other dictionary readings of a kanji
     surface, deduplicated by romaji (ずくめ and づくめ sound alike). Empty when
-    the surface has no kanji or only one reading."""
-    if not kana or not any(_is_han(ord(c)) for c in surface):
+    the surface has no kanji or only one reading. `romaji` is already
+    resolved against `following`, the romaji after it."""
+    if not kana or not any(is_han(ord(c)) for c in surface):
         return []
-    readings = [Reading(kana=_hiragana(kana), romaji=romaji)]
+    readings = [Reading(kana=kana, romaji=romaji)]
     for alt in [*_homographs(surface), *_okurigana_readings(surface)]:
         try:
-            alt_romaji = _squash(_cutlet().map_kana(alt))
+            alt_romaji = _geminate(_squash(_cutlet().map_kana(alt)), following)
         except KeyError:  # kana cutlet has no romaji for
             continue
         if alt_romaji and all(alt_romaji != r.romaji for r in readings):
@@ -198,18 +320,19 @@ def _readings(surface: str, kana: str | None, romaji: str) -> list[Reading]:
 
 def _homographs(surface: str) -> list[str]:
     """Readings of the dictionary entries spelled exactly `surface` (生: なま,
-    せい, しょう, ...)."""
-    return [
-        _hiragana(parse[0].feature.kana)
-        for parse in _cutlet().tagger.nbestToNodeList(surface, _READING_PARSES)
-        if len(parse) == 1 and parse[0].feature.kana
-    ]
+    せい, しょう, ...), names (一人 as かずと) aside."""
+    with _tagger_lock:
+        return [
+            _hiragana(parse[0].feature.kana)
+            for parse in _cutlet().tagger.nbestToNodeList(surface, _READING_PARSES)
+            if len(parse) == 1 and parse[0].feature.kana and parse[0].feature.pos2 != "固有名詞"
+        ]
 
 
 def _okurigana_readings(surface: str) -> list[str]:
     """`surface` read with each reading its one kanji takes before the
     okurigana after it (尽くめ: つくめ, ずくめ, ことごとくめ)."""
-    kanji = [i for i, c in enumerate(surface) if _is_han(ord(c))]
+    kanji = [i for i, c in enumerate(surface) if is_han(ord(c))]
     if len(kanji) != 1 or kanji[0] + 1 >= len(surface):
         return []
     i = kanji[0]
@@ -257,16 +380,16 @@ def _split_runs(text: str, *, treat_kanji_as_japanese: bool) -> list[tuple[str, 
 
     for ch in normalized:
         cp = ord(ch)
-        is_kana = _is_kana(cp)
-        is_cjk = is_kana or _is_han(cp)
+        kana_char = is_kana(cp)
+        is_cjk = kana_char or is_han(cp)
         if buf_is_cjk is None or is_cjk == buf_is_cjk:
             buf.append(ch)
             buf_is_cjk = is_cjk
-            buf_has_kana = buf_has_kana or is_kana
+            buf_has_kana = buf_has_kana or kana_char
         else:
             flush()
             buf = [ch]
             buf_is_cjk = is_cjk
-            buf_has_kana = is_kana
+            buf_has_kana = kana_char
     flush()
     return runs

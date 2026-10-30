@@ -10,6 +10,7 @@ import {
   spacesBefore,
   splitLongLines,
   vocalOrdinalSinceGap,
+  type LineSegment,
 } from '../karaoke_lyrics';
 
 const word = (text: string) => ({ startSec: 0, endSec: 0, text });
@@ -71,7 +72,7 @@ describe('splitLongLines', () => {
 
   const spaced = (text: string) => ({ startSec: 9, text, words: timedWords(text.split(' ')) });
   const texts = (lines: { text: string }[]) => lines.map((l) => l.text);
-  const split = (lines: LyricLine[], phraseStarts: (text: string) => number[] | undefined = noPhrases) =>
+  const split = (lines: LyricLine[], phraseStarts: (segments: readonly LineSegment[]) => number[] | undefined = noPhrases) =>
     splitLongLines(lines, { splitAboveEm: 20, maxPartEm: 16 }, phraseStarts);
 
   test('leaves a line that fits alone, with leeway past the part width', () => {

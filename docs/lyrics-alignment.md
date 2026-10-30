@@ -64,13 +64,26 @@ Two wrinkles:
   caller `language` hint.
 - **Japanese (`jp_romaji.py`).** Uroman (the default romanizer inside
   `ctc-forced-aligner`) reads kanji as *Chinese*, which mis-aligns
-  Japanese completely. So we pre-romanize Japanese spans with **cutlet**
-  (fugashi/MeCab + unidic-lite) before the text reaches the aligner,
-  while preserving the original kana/kanji for display. This is the
-  `lyrics-ja` capability / dep group; it's a first-class feature for
-  utai.au (the name is Japanese; 歌う/唄 "to sing"). The frontend then
-  renders **furigana** ruby over aligned Japanese (kuromoji +
-  JmdictFurigana; see the frontend furigana stack).
+  Japanese completely. So we pre-romanize Japanese spans with
+  fugashi/MeCab + unidic-lite (cutlet's kana table and word spacing)
+  before the text reaches the aligner, while preserving the original
+  kana/kanji for display. It's a first-class feature for utai.au (the
+  name is Japanese; 歌う/唄 "to sing"). `jp_romaji` is the **one** Japanese
+  reading stack: `morphemes` reads a line once, and both the aligner
+  (`tokenize`) and the display (`jp_annotate.py`, `POST /lyrics/japanese`)
+  take their readings from it. `_kana` corrects unidic-lite where its
+  in-context reading is wrong for lyrics (私 → わたし, 何 → なに / なん by
+  the sound after it, 行った → いった).
+- **Furigana + romaji display (`jp_annotate.py`).** The frontend sends each
+  line as its display words to `POST /lyrics/japanese` and renders what
+  comes back: per word, ruby segments (the reading fitted over its kanji,
+  okurigana bare) and romaji, plus the line's phrase (bunsetsu) starts for
+  karaoke line splitting. Words are read together, in context, then each
+  takes its span back; a word shows the romaji of every romanized word
+  starting in it, so one the aligner split (やっ · て) reads whole on its
+  first part. Dictionary-only: no model is involved, so it works without
+  alignment or provisioned models (the frontend shows bare text until the
+  backend answers).
 - **Heard readings.** Text alone can't settle a kanji word with several
   readings (生: なま / せい, 尽くめ: ずくめ / つくめ), so each one carries
   candidates: unidic's other entries for the same surface, plus the
@@ -80,9 +93,10 @@ Two wrinkles:
   `_hear_readings` force-aligns each candidate between the word's
   neighbours and keeps the in-context reading unless another beats it by
   `_READING_MARGIN` (with a per-letter bonus offsetting CTC's cheap
-  deletions); any switch re-runs the alignment. The chosen reading goes
-  out as the word's `reading`, which the frontend's furigana and romaji
-  prefer over kuromoji's, and saved `.lrc` files keep it as Aozora ruby
+  deletions); any switch re-runs the alignment. Every kanji word goes out
+  with the reading it was aligned as (`reading`, heard or in-context), which
+  the display then shows over the dictionary's, so furigana and romaji
+  always match what was aligned; saved `.lrc` files keep it as Aozora ruby
   (`｜生《せい》`).
 
 ## [3] CTC forced alignment (the core)
@@ -258,11 +272,12 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   other paths are refused.
 
 Dep groups mirror capabilities (`aligner/pyproject.toml`, PEP 735):
-`separation`, `lyrics` (adds `ctc-forced-aligner`), `lyrics-ja` (adds
-`cutlet`/`fugashi`/`unidic-lite`), `pitch` (SwiftF0 f0 overlay; needs no
-packages beyond the separation stack). Non-ML: `music` (librespot, Spotify
-sign-in) and `onthespot` (OnTheSpot itself, for the desktop app's local
-music stack).
+`separation`, `lyrics` (adds `ctc-forced-aligner`), `pitch` (SwiftF0 f0
+overlay; needs no packages beyond the separation stack). Non-ML: `music`
+(librespot, Spotify sign-in) and `onthespot` (OnTheSpot itself, for the
+desktop app's local music stack). The Japanese reading stack
+(`cutlet`/`fugashi`/`unidic-lite`) is a base dependency, so furigana works on
+every install.
 
 ## LRCLIB (getting the lyrics + rough timings)
 
@@ -289,13 +304,6 @@ music stack).
 - `forced_align.ts` is the client for the backend `/music/align`
   endpoint (NDJSON stream: `queued` → `running` → `result`/`error`),
   plus filename heuristics for auto-picking a vocals stem.
-
-## Browser-side alignment (future)
-
-`research/lyrics-alignment-browser.md` (ported from Drumjot) studies
-running the whole pipeline in-browser via WebGPU/WebNN + onnxruntime-web; every `realign_text` stage has a browser path, the main cost is the
-acoustic-model download. This is a stated direction for utai.au (local
-ML via the website, no server), not yet built.
 
 ## Licensing watch-outs
 

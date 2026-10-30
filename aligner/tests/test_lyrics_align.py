@@ -11,13 +11,12 @@ transitively pull in ctc-forced-aligner / torch.
 
 from __future__ import annotations
 
-import pytest
-
 from app.pipeline.jp_romaji import JpToken, Reading
 from app.pipeline.lyrics_align import (
     InputLine,
     LyricLine,
     LyricWord,
+    _aligned_reading,
     _detect_language_from_text,
     _hear_readings,
     _iso1_to_iso3,
@@ -530,8 +529,18 @@ def _nama() -> JpToken:
         surface="生",
         romaji="nama",
         is_japanese=True,
+        kana="なま",
         readings=[Reading(kana="なま", romaji="nama"), Reading(kana="せい", romaji="sei")],
     )
+
+
+def test_aligned_reading_goes_out_for_every_kanji_word():
+    shinnai = JpToken(surface="心内", romaji="shinnai", is_japanese=True, kana="しんない")
+    assert _aligned_reading(shinnai, None) == "しんない"
+    assert _aligned_reading(_nama(), None) == "なま"
+    assert _aligned_reading(_nama(), 1) == "せい"
+    assert _aligned_reading(JpToken(surface="と", romaji="to", is_japanese=True, kana="と"), None) is None
+    assert _aligned_reading(None, None) is None
 
 
 def _hear(sung: str, **kwargs) -> dict[int, int]:
@@ -603,9 +612,6 @@ class _RecordingPreprocess:
         return (["<star>", unit, "<star>"], ["<star>", unit, "<star>"])
 
 
-pytest.importorskip("cutlet")
-
-
 def test_preprocess_lines_mixed_threads_surfaces_and_counts():
     """The load-bearing invariant: one morpheme -> one alignment word ->
     one display surface, in order. Japanese tokens carry their original
@@ -641,12 +647,12 @@ def test_preprocess_lines_falls_back_when_tokenize_raises(monkeypatch):
     """If the Japanese romanizer blows up on a line, that line degrades
     to the char-level path (whole line, language=iso3) instead of
     failing the whole request."""
-    import app.pipeline.jp_romaji as jp
+    import app.pipeline.lyrics_align as lyrics_align
 
     def _boom(*args, **kwargs):
         raise RuntimeError("mecab exploded")
 
-    monkeypatch.setattr(jp, "tokenize", _boom)
+    monkeypatch.setattr(lyrics_align, "tokenize", _boom)
     pp = _RecordingPreprocess()
     _, _, jp_words, counts, _ = _preprocess_lines(
         _lines("君と"),

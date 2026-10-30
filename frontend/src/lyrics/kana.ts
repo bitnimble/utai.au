@@ -1,11 +1,6 @@
-/** Kanji (Han) code-point ranges we treat as needing furigana: CJK
- *  Unified Ideographs, Extension A, the compatibility block, and
- *  Extension B (lyrics occasionally reach for rarer glyphs), plus the
- *  iteration mark 々 (日々), which reads as part of its kanji run. Callers
- *  iterate code-point-wise (`for…of`) so Extension B's astral chars are
- *  handled without surrogate bookkeeping. Keep in lockstep with
- *  `scripts/build-furigana-dict.ts::isKanjiCp`. */
-export function isKanjiCp(cp: number): boolean {
+/** Kanji (Han) code points: CJK Unified Ideographs, Extensions A and B, the
+ *  compatibility block, and the iteration mark 々 (日々). */
+function isKanjiCp(cp: number): boolean {
   return (
     cp === 0x3005 ||
     (cp >= 0x4e00 && cp <= 0x9fff) ||
@@ -15,18 +10,13 @@ export function isKanjiCp(cp: number): boolean {
   );
 }
 
-export function hasKana(text: string): boolean {
-  return /[ぁ-ヿ]/.test(text);
+export function hasKanji(text: string): boolean {
+  for (const ch of text) {
+    if (isKanjiCp(ch.codePointAt(0)!)) return true;
+  }
+  return false;
 }
 
-/** Convert a katakana reading to hiragana (furigana convention). Shifts
- *  the katakana block (U+30A1–U+30F6) down by 0x60; leaves the prolonged
- *  sound mark `ー`, punctuation, and any already-hiragana chars intact. */
-export function toHiragana(text: string): string {
-  let out = '';
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    out += cp >= 0x30a1 && cp <= 0x30f6 ? String.fromCodePoint(cp - 0x60) : ch;
-  }
-  return out;
+export function hasKana(text: string): boolean {
+  return /[ぁ-ヿ]/.test(text);
 }

@@ -462,8 +462,8 @@ async fn run_streaming(
 
 // uv groups the startup gate syncs when the venv needs building (dev builds ship
 // no vendored wheels). `pitch` needs nothing beyond `separation` (transitive via
-// `lyrics-ja`), so no pitch group. See scripts/mac-build.ts.
-const STARTUP_SYNC_GROUPS: &[&str] = &["lyrics-ja", "onthespot"];
+// `lyrics`), so no pitch group. See scripts/mac-build.ts.
+const STARTUP_SYNC_GROUPS: &[&str] = &["lyrics", "onthespot"];
 
 /// Before the local backend starts: sync the app venv when it needs building (a
 /// dev cross-build ships no vendored wheels; installed builds only on a missing or
@@ -539,7 +539,7 @@ mod tests {
     fn sync_stamp_changes_with_the_lock_and_the_groups() {
         let dir = std::env::temp_dir().join("utai-sync-stamp-test");
         std::fs::create_dir_all(&dir).unwrap();
-        let groups = vec!["lyrics-ja".to_string(), "onthespot".to_string()];
+        let groups = vec!["lyrics".to_string(), "onthespot".to_string()];
         std::fs::write(dir.join("uv.lock"), "a").unwrap();
         let first = sync_stamp(&dir, &groups);
         assert_eq!(sync_stamp(&dir, &groups), first);
