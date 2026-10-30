@@ -391,7 +391,7 @@ const LineGlyphs = observer(function LineGlyphs({
           {countInHere && (
             <CountInDots countIn={countInHere} aboveRuby={hasReading(display[i].segments)} />
           )}
-          <RubyText {...display[i]} />
+          <RubyText {...display[i]} romajiBaseClassName={styles.romajiBase} />
         </span>
       </React.Fragment>
     );
