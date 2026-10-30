@@ -78,7 +78,7 @@ services:
       # are adopted (size match) or update-checked rather than re-downloaded.
       STARTUP_CAPABILITIES: lyrics,pitch,beat,language
       # OnTheSpot's downloads volume, mounted at the same path as in its own
-      # container, so jobs read a fetched track in place.
+      # container, so a finished track can move into its song's cache folder.
       MUSIC_DOWNLOAD_DIR: /root/Music
       # Runtime is torch-free onnxruntime (the only shipped path). On this box
       # separation rides the TensorRT EP automatically (the backend image carries

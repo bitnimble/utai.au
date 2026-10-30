@@ -78,27 +78,8 @@ class Settings(BaseSettings):
     # --- Paths (Docker volumes mount these) ---
     models_dir: Path = Path("/models")
 
-    # Content-addressed cache for the /music/align pipeline, two subdirs:
-    #   - `vocals/`: opus-encoded separated vocals keyed by SHA-256 of the
-    #     input mix + the vocals-separator model id, so a repeat alignment
-    #     of the same mix skips the separator.
-    #   - `alignment/`: the forced-alignment result JSON keyed by SHA-256
-    #     of the input audio + the aligner version + a hash of the caller's
-    #     lyrics text + language, so an identical repeat request skips the
-    #     GPU entirely.
-    # Both are bounded by their `*_cap_bytes` with LRU-by-last-access
-    # eviction; safe to nuke at any time, entries refill on demand. See
-    # `app/cache.py`.
     cache_dir: Path = Path("/cache")
-    cache_vocals_cap_bytes: int = 5 * 1024 * 1024 * 1024  # 5 GB
-    # Alignment JSON is small (KB per song); a modest cap holds many
-    # thousands of results.
-    cache_alignment_cap_bytes: int = 256 * 1024 * 1024  # 256 MB
-    # Backing-video cache (`video/`): the muted, playback-synced video the
-    # karaoke page shows above the score, fetched video-only via yt-dlp because
-    # the YouTube IFrame embed refuses embedding-disabled uploads. Keyed by the
-    # 11-char id + a digest of the format selection, bounded LRU like the others.
-    cache_video_cap_bytes: int = 10 * 1024 * 1024 * 1024  # 10 GB
+    cache_songs_cap_bytes: int = 20 * 1024 * 1024 * 1024  # 20 GB
 
     # --- Backing video ---
     # yt-dlp format selector + sort for the karaoke backing video: the highest
@@ -180,9 +161,10 @@ class Settings(BaseSettings):
     # the interactive-login `authUrl` from the request host + this port.
     onthespot_public_port: int = 5176
     # Where OnTheSpot writes its downloads, as this process sees that directory
-    # (the same volume, mounted at the same path). Set, a fetched track's result
-    # carries its `serverPath`, and jobs read the track there instead of taking
-    # it re-uploaded.
+    # (the same volume, mounted at the same path). Set, a finished track moves
+    # into its song's folder and jobs read it there instead of taking it
+    # re-uploaded. OnTheSpot's own files in here get moved, so this must be a
+    # directory only OnTheSpot writes to.
     music_download_dir: Path | None = None
 
 

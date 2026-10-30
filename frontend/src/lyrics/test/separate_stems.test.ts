@@ -16,7 +16,7 @@ test('downloads both stems, keeping where the backend holds them', async () => {
       const stem = (role: string): object => ({
         role,
         path: `music/stems/abc/${role}.flac`,
-        serverPath: `/cache/stems/abc/${role}.flac`,
+        serverPath: `/cache/songs/abc/stems/${role}.flac`,
         filename: `${role}.flac`,
       });
       const body = [{ type: 'loading' }, { type: 'result', data: { stems: [stem('vocals'), stem('accompaniment')] } }];
@@ -32,8 +32,8 @@ test('downloads both stems, keeping where the backend holds them', async () => {
   );
 
   expect(progress).toEqual(['loading']);
-  expect(stems.vocals.serverPath).toBe('/cache/stems/abc/vocals.flac');
-  expect(stems.backing.serverPath).toBe('/cache/stems/abc/accompaniment.flac');
+  expect(stems.vocals.serverPath).toBe('/cache/songs/abc/stems/vocals.flac');
+  expect(stems.backing.serverPath).toBe('/cache/songs/abc/stems/accompaniment.flac');
   expect(stems.vocals.file.name).toBe('vocals.flac');
   expect(stems.vocals.file.type).toBe('audio/flac');
   expect(urls).toEqual([

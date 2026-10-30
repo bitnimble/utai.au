@@ -5,10 +5,6 @@ ctc-forced-aligner inside its methods, not at import time.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 import app.align_routes as align
 from app.config import settings
 from app.job_stream import hash_bytes
@@ -124,38 +120,3 @@ def test_alignment_cache_key_rounds_start_to_ms() -> None:
     a = align._alignment_cache_key([InputLine(start_sec=1.0, text="x")], "en", h)
     b = align._alignment_cache_key([InputLine(start_sec=1.00004, text="x")], "en", h)
     assert a == b
-
-
-@pytest.fixture
-def isolated_cache(tmp_path: Path, monkeypatch):
-    """Re-point the vocals + alignment cache singletons at a per-test tmp
-    dir so writes don't leak across tests or into the dev box's real
-    /cache."""
-    monkeypatch.setattr(settings, "cache_dir", tmp_path)
-    align.vocals_cache.reset()
-    align.alignment_cache.reset()
-    yield tmp_path
-    align.vocals_cache.reset()
-    align.alignment_cache.reset()
-
-
-def test_isolated_cache_singleton_uses_fresh_dir(isolated_cache) -> None:
-    """Smoke check that the fixture's reset actually re-points the cache at
-    the new tmp dir; otherwise the rest of the cache assertions are
-    meaningless (and could write into the dev box's real /cache)."""
-    vc = align.vocals_cache.get()
-    assert isolated_cache in vc.dir.parents
-
-
-def test_alignment_cache_round_trip(isolated_cache) -> None:
-    """A miss returns None; after `put_bytes`, the same key returns the
-    stored payload byte-for-byte."""
-    cache = align.alignment_cache.get()
-    assert isolated_cache in cache.dir.parents
-    key = align._alignment_cache_key(_lines(), "en", "f" * 64)
-    payload = b'[{"startSec":0.0,"text":"hello","words":[]}]'
-    assert cache.get(key) is None
-    cache.put_bytes(key, payload)
-    got = cache.get(key)
-    assert got is not None
-    assert got.read_bytes() == payload

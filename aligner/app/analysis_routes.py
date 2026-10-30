@@ -1,13 +1,11 @@
 """The per-song analysis jobs beside alignment: full-quality stems
 (/music/separate), beats (/music/beats), the vocal pitch contour
-(/music/pitch) and the sung language (/music/language). Each is
-content-addressed by the SHA-256 of its input audio, so a repeat song reuses
-the cached result."""
+(/music/pitch) and the sung language (/music/language). Each result lives in its
+song's folder (see `song_cache`), so a repeat song reuses it."""
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
-import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -16,7 +14,6 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
-from app.config import settings
 from app.job_stream import (
     Envelope,
     ndjson_job,
@@ -36,6 +33,7 @@ from app.request_context import (
     run_cancellable,
     set_request_id,
 )
+from app.song_cache import is_valid_song_id, read_json, store_file, touch_song_dir, write_json
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +41,6 @@ router = APIRouter(prefix="/music")
 
 _STEM_ROLES = ("vocals", "accompaniment")
 _STEM_FILES = {f"{role}.flac": role for role in _STEM_ROLES}
-_STEM_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 @router.post("/separate")
@@ -62,51 +59,50 @@ async def lyrics_separate(
             {"role": "accompaniment", ...}]}}
 
     The mix is an upload, or `mixPath` for a file this backend shares. The stems
-    are served back over GET /music/stems/{id}/{name}; `<id>` is the mix's SHA-256."""
+    are served back over GET /music/stems/{id}/{name}; `<id>` is the song's id."""
     require_pipeline_role()
     require_models("separation")
     request_id = new_request_id()
     set_request_id(request_id)
     audio = await read_job_audio(mix, mixPath, "mix", "utai_stems_")
-    stems_dir = _stems_dir(audio.hash)
+    stems_dir = _stems_dir(audio.song_id)
 
     def cached() -> Envelope | None:
         if not all((stems_dir / name).is_file() for name in _STEM_FILES):
             return None
-        log.info("lyrics_separate: stems cache HIT (%s)", audio.hash)
-        return _stems_result_envelope(audio.hash)
+        log.info("lyrics_separate: stems cache HIT (%s)", audio.song_id)
+        return _stems_result_envelope(audio.song_id)
 
     async def separate() -> Envelope:
         paths = await run_cancellable(separator.get().run_stems, audio.path, audio.scratch_dir)
-        stems_dir.mkdir(parents=True, exist_ok=True)
         for name, role in _STEM_FILES.items():
-            shutil.move(str(paths[role]), str(stems_dir / name))
-        log.info("lyrics_separate: stems cache MISS, populated (%s)", audio.hash)
-        return _stems_result_envelope(audio.hash)
+            await asyncio.to_thread(store_file, stems_dir / name, paths[role])
+        log.info("lyrics_separate: stems cache MISS, populated (%s)", audio.song_id)
+        return _stems_result_envelope(audio.song_id)
 
     return ndjson_job(request, request_id, "lyrics_separate", audio, separate, gpu=True, cached=cached)
 
 
-@router.get("/stems/{stem_id}/{name}")
-async def lyrics_stem(stem_id: str, name: str) -> FileResponse:
+@router.get("/stems/{song_id}/{name}")
+async def lyrics_stem(song_id: str, name: str) -> FileResponse:
     """Stream a separated stem FLAC produced by /music/separate.
 
-    `stem_id` must be a 64-hex SHA-256 and `name` one of the fixed stem
-    filenames; both are validated to foreclose path traversal (no `../`, no
-    absolute paths, no arbitrary reads under the cache dir)."""
-    if not _STEM_ID_RE.match(stem_id) or name not in _STEM_FILES:
+    `song_id` and `name`, one of the fixed stem filenames, are validated to
+    foreclose path traversal (no `../`, no absolute paths, no arbitrary reads
+    under the cache dir)."""
+    if not is_valid_song_id(song_id) or name not in _STEM_FILES:
         raise HTTPException(status_code=404, detail="No such stem.")
-    stem_path = _stems_dir(stem_id) / name
+    stem_path = _stems_dir(song_id) / name
     if not stem_path.is_file():
         raise HTTPException(status_code=404, detail="No such stem.")
     return FileResponse(str(stem_path), media_type="audio/flac", filename=name)
 
 
-def _stems_dir(stem_id: str) -> Path:
-    return settings.cache_dir / "stems" / stem_id
+def _stems_dir(song_id: str) -> Path:
+    return touch_song_dir(song_id) / "stems"
 
 
-def _stems_result_envelope(stem_id: str) -> Envelope:
+def _stems_result_envelope(song_id: str) -> Envelope:
     """`path` is relative to the api base, lining up with GET
     /music/stems/{id}/{name}; `serverPath` is where the stem is on this machine,
     for a later job to name instead of uploading it back."""
@@ -116,8 +112,8 @@ def _stems_result_envelope(stem_id: str) -> Envelope:
             "stems": [
                 {
                     "role": role,
-                    "path": f"music/stems/{stem_id}/{name}",
-                    "serverPath": str(_stems_dir(stem_id) / name),
+                    "path": f"music/stems/{song_id}/{name}",
+                    "serverPath": str(_stems_dir(song_id) / name),
                     "filename": name,
                     "contentType": "audio/flac",
                 }
@@ -145,10 +141,10 @@ async def music_beats(
     request_id = new_request_id()
     set_request_id(request_id)
     audio = await read_job_audio(mix, mixPath, "mix", "utai_beats_")
-    cache_path = settings.cache_dir / "beats" / f"{audio.hash}.json"
+    cache_path = touch_song_dir(audio.song_id) / "beats.json"
 
     def cached() -> Envelope | None:
-        hit = _read_json_cache(cache_path)
+        hit = read_json(cache_path)
         if hit is None or hit.get("beatFallbackUsed"):
             return None
         log.info("music_beats: cache HIT (%s)", audio.hash)
@@ -158,7 +154,7 @@ async def music_beats(
         analysis = await run_cancellable(beats.analyze_beats, audio.path)
         # Not a fallback grid: Beat This!, once downloaded, should replace it.
         if analysis is not None and not analysis["beatFallbackUsed"]:
-            _write_json_cache(cache_path, analysis)
+            write_json(cache_path, analysis)
         log.info("music_beats: analysed (%s)", audio.hash)
         return _beats_result_envelope(analysis)
 
@@ -212,8 +208,8 @@ async def _cached_stem_analysis(
     require_pipeline_role()
     audio = await read_job_audio(vocals, vocals_path, "vocals", f"utai_{kind}_")
     try:
-        cache_path = settings.cache_dir / kind / f"{audio.hash}.json"
-        result = _read_json_cache(cache_path)
+        cache_path = touch_song_dir(audio.song_id) / f"{kind}.json"
+        result = read_json(cache_path)
         if result is not None:
             return result
         provisioner: Provisioner = request.app.state.provisioner
@@ -225,24 +221,7 @@ async def _cached_stem_analysis(
                 log.info("music_%s: cancelled", kind)
                 return None
         if result is not None:
-            _write_json_cache(cache_path, result)
+            write_json(cache_path, result)
         return result
     finally:
         shutil.rmtree(audio.scratch_dir, ignore_errors=True)
-
-
-def _read_json_cache(path: Path) -> Any | None:
-    if not path.is_file():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def _write_json_cache(path: Path, value: Any) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-    except OSError:
-        log.warning("could not write cache %s", path, exc_info=True)

@@ -30,6 +30,11 @@ the repo root**, and the **`src/…` import alias maps to `frontend/src/…`**
 (a path written `src/foo` is imported as `src/foo` and lives on disk at
 `frontend/src/foo`).
 
+**Per-song cache.** Everything the backend keeps for a song (fetched track,
+stems, backing video, vocals, alignment, beats, pitch, language) lives in
+`cache_dir/songs/<song_id>/` and is evicted LRU as a whole song once over
+`cache_songs_cap_bytes` (`aligner/app/song_cache.py`).
+
 **One HTTP API on every platform.** The frontend talks to the backend
 (`aligner/app/main.py`) only over HTTP, through `backendFetch`; nothing branches
 on web vs desktop. The desktop app is standalone: `src-tauri/src/local_backend.rs`

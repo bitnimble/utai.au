@@ -98,8 +98,8 @@ class SpotifyOAuthStart(BaseModel):
 
 class AudioRef(BaseModel):
     # Path relative to the frontend's apiBase (`<origin>/api`), e.g.
-    # "music/audio/<local_id>"; the frontend GETs `${apiBase}/${path}` to
-    # download the finished audio into a File.
+    # "music/songs/<song_id>/download"; the frontend GETs `${apiBase}/${path}`
+    # to download the finished audio into a File.
     path: str
     filename: str
     contentType: str

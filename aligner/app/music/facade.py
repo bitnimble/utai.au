@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -27,6 +28,7 @@ from typing import Any, Protocol
 
 from app.backend_files import backend_file
 from app.config import settings
+from app.song_cache import held_download, song_id_for_source, store_file, touch_song_dir
 
 from .models import (
     AddAccountRequest,
@@ -66,6 +68,8 @@ DONE_STATUSES = frozenset({"Downloaded", "Already Exists"})
 FAIL_STATUSES = frozenset({"Failed", "Cancelled", "Unavailable"})
 
 _UPLOADER_TITLED_SERVICES = frozenset({"soundcloud", YOUTUBE_MUSIC})
+
+_MAX_HELD_NAME_BYTES = 150
 
 # Only whole tracks are fetchable song sources; albums / artists / playlists in
 # the raw results are dropped from what we hand the UI.
@@ -109,6 +113,7 @@ class MusicFacade:
         # it (per-service search, fetch enqueue) is serialized to avoid two
         # requests racing the shared `active_account_number`.
         self._active_lock = asyncio.Lock()
+        self._adopt_lock = threading.Lock()
 
     # --- services / config ------------------------------------------------
 
@@ -265,6 +270,12 @@ class MusicFacade:
         The active-account switch + enqueue are the only part that needs the
         lock; the poll loop runs unlocked so a search can proceed during a
         download."""
+        song_id = song_id_for_source(source_url)
+        held = held_download(song_id)
+        if held is not None:
+            yield _held_result(song_id, held)
+            return
+
         try:
             async with self._active_lock:
                 if service is not None:
@@ -289,10 +300,16 @@ class MusicFacade:
                 yield _error(f"Lost contact with OnTheSpot: {exc}")
                 return
             local_id, item = _find_queue_item(queue, source_url, item_id)
-            if item is not None:
+            if item is None:
+                # A concurrent fetch of this track may have adopted its file already.
+                held = held_download(song_id)
+                if held is not None:
+                    yield _held_result(song_id, held)
+                    return
+            else:
                 status = str(item.get("item_status") or "")
                 if status in DONE_STATUSES:
-                    yield _result(local_id, item)
+                    yield await self._finished_download(song_id, local_id, item)
                     return
                 if status in FAIL_STATUSES:
                     yield _error(f"Download {status.lower()}.")
@@ -312,6 +329,30 @@ class MusicFacade:
         await self._client.aclose()
 
     # --- internals --------------------------------------------------------
+
+    async def _finished_download(self, song_id: str, local_id: str, item: dict[str, Any]) -> dict[str, Any]:
+        held = await asyncio.to_thread(self._adopt_download, song_id, item)
+        return _result(local_id, item) if held is None else _held_result(song_id, held)
+
+    def _adopt_download(self, song_id: str, item: dict[str, Any]) -> Path | None:
+        """The track in its song's folder, moved there if this backend shares
+        OnTheSpot's downloads; None if it stays with OnTheSpot."""
+        # A thread's lock, not asyncio's: a cancelled fetch's move carries on, and the next must wait for it.
+        with self._adopt_lock:
+            held = held_download(song_id)
+            if held is not None:
+                return held
+            src = _shared_download(item)
+            if src is None:
+                return None
+            name = _download_filename(item).encode()[:_MAX_HELD_NAME_BYTES].decode(errors="ignore")
+            dest = touch_song_dir(song_id) / "download" / f"{name}{src.suffix}"
+            try:
+                store_file(dest, src)
+            except OSError:
+                log.warning("could not move %s into its song's folder", src, exc_info=True)
+                return None
+            return dest
 
     def _effective_config(self) -> MusicConfig:
         """The stored config with every catalog service present exactly once in
@@ -470,12 +511,46 @@ def _find_queue_item(
     matches = [
         (local_id, item)
         for local_id, item in queue.items()
-        if isinstance(item, dict) and is_match(item)
+        if isinstance(item, dict) and is_match(item) and not _moved_away(item)
     ]
     if not matches:
         return "", None
-    local_id, item = max(matches, key=lambda kv: _as_int(kv[0]))
+    # OnTheSpot's ids are `<item_id>-<n>`, counting up per enqueue of that item.
+    local_id, item = max(matches, key=lambda kv: _as_int(kv[0].rsplit("-", 1)[-1]))
     return local_id, item
+
+
+def _moved_away(item: dict[str, Any]) -> bool:
+    """A finished entry whose file has since been adopted (and maybe evicted): it
+    stays in OnTheSpot's queue, and a re-download is a new entry."""
+    path = item.get("file_path")
+    downloads = settings.music_download_dir
+    if not isinstance(path, str) or downloads is None or item.get("item_status") not in DONE_STATUSES:
+        return False
+    file = Path(path).resolve()
+    return file.is_relative_to(downloads.resolve()) and not file.is_file()
+
+
+def _shared_download(item: dict[str, Any]) -> Path | None:
+    """The finished item's file, if it's in OnTheSpot's downloads as this process sees them."""
+    path = item.get("file_path")
+    downloads = settings.music_download_dir
+    if not isinstance(path, str) or downloads is None:
+        return None
+    file = backend_file(path)
+    return file if file is not None and file.is_relative_to(downloads.resolve()) else None
+
+
+def _held_result(song_id: str, path: Path) -> dict[str, Any]:
+    return {
+        "type": "result",
+        "audio": {
+            "path": f"music/songs/{song_id}/download",
+            "serverPath": str(path),
+            "filename": path.stem,
+            "contentType": content_type_for_path(str(path)),
+        },
+    }
 
 
 def _result(local_id: str, item: dict[str, Any]) -> dict[str, Any]:
@@ -507,7 +582,11 @@ def _download_filename(item: dict[str, Any]) -> str:
 
 def _content_type_for(item: dict[str, Any]) -> str:
     path = item.get("file_path")
-    if isinstance(path, str) and "." in path:
+    return content_type_for_path(path) if isinstance(path, str) else "application/octet-stream"
+
+
+def content_type_for_path(path: str) -> str:
+    if "." in path:
         ext = path.rsplit(".", 1)[-1].lower()
         if ext in _CONTENT_TYPE_BY_FORMAT:
             return _CONTENT_TYPE_BY_FORMAT[ext]

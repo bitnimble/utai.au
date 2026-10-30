@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ import pytest
 from fastapi import HTTPException, UploadFile
 
 import app.analysis_routes as routes
+from app.config import settings
 from app.pipeline.pitch import analyze
 from app.provisioning import ProvisionStatus
 
@@ -47,8 +49,8 @@ def _post(vocals: bytes = b"", vocals_path: str = "") -> dict:
 
 
 def test_http_extracts_once_then_serves_the_cache(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(routes.settings, "cache_dir", tmp_path)
-    monkeypatch.setattr(routes.settings, "worker_role", "pipeline")
+    monkeypatch.setattr(settings, "cache_dir", tmp_path)
+    monkeypatch.setattr(settings, "worker_role", "pipeline")
     seen = _fake_extractor(monkeypatch, _CONTOUR)
 
     assert _post(b"vocals-a") == {"pitch": _CONTOUR}
@@ -57,20 +59,22 @@ def test_http_extracts_once_then_serves_the_cache(monkeypatch, tmp_path) -> None
 
 
 def test_http_reads_a_stem_this_backend_wrote_in_place(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(routes.settings, "cache_dir", tmp_path)
-    monkeypatch.setattr(routes.settings, "worker_role", "pipeline")
+    monkeypatch.setattr(settings, "cache_dir", tmp_path)
+    monkeypatch.setattr(settings, "worker_role", "pipeline")
     seen = _fake_extractor(monkeypatch, _CONTOUR)
-    stem = tmp_path / "stems" / "abc" / "vocals.flac"
+    song = tmp_path / "songs" / "dQw4w9WgXcQ"
+    stem = song / "stems" / "vocals.flac"
     stem.parent.mkdir(parents=True)
     stem.write_bytes(b"vocals-stem")
 
     assert _post(vocals_path=str(stem)) == {"pitch": _CONTOUR}
     assert seen == [b"vocals-stem"]
+    assert json.loads((song / "pitch.json").read_text()) == _CONTOUR
 
 
 def test_http_refuses_a_path_outside_its_own_files(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(routes.settings, "cache_dir", tmp_path / "cache")
-    monkeypatch.setattr(routes.settings, "worker_role", "pipeline")
+    monkeypatch.setattr(settings, "cache_dir", tmp_path / "cache")
+    monkeypatch.setattr(settings, "worker_role", "pipeline")
     _fake_extractor(monkeypatch, _CONTOUR)
     elsewhere = tmp_path / "secret.txt"
     elsewhere.write_bytes(b"nope")
@@ -83,8 +87,8 @@ def test_http_refuses_a_path_outside_its_own_files(monkeypatch, tmp_path) -> Non
 
 
 def test_http_without_a_pitch_model_returns_nothing_and_caches_nothing(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(routes.settings, "cache_dir", tmp_path)
-    monkeypatch.setattr(routes.settings, "worker_role", "pipeline")
+    monkeypatch.setattr(settings, "cache_dir", tmp_path)
+    monkeypatch.setattr(settings, "worker_role", "pipeline")
     seen = _fake_extractor(monkeypatch, None)
 
     assert _post(b"vocals-b") == {}
@@ -93,7 +97,7 @@ def test_http_without_a_pitch_model_returns_nothing_and_caches_nothing(monkeypat
 
 
 def test_http_rejects_an_empty_upload(monkeypatch) -> None:
-    monkeypatch.setattr(routes.settings, "worker_role", "pipeline")
+    monkeypatch.setattr(settings, "worker_role", "pipeline")
     with pytest.raises(HTTPException) as exc:
         _post(b"")
     assert exc.value.status_code == 400

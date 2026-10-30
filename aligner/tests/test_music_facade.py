@@ -8,10 +8,13 @@ Async methods are driven through `asyncio.run` so no pytest-asyncio dep is neede
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.music import facade as facade_module
 from app.music.facade import (
     MusicFacade,
     _find_queue_item,
@@ -392,6 +395,151 @@ def test_fetch_success(tmp_path, monkeypatch):
     assert result["audio"]["path"] == "music/audio/7"
     assert result["audio"]["contentType"] == "audio/webm"
     assert result["audio"]["filename"] == "Song y"
+
+
+_YT_URL = "https://music.youtube.com/watch?v=dQw4w9WgXcQ"
+
+
+def _shared_downloads(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "music_poll_interval_sec", 0.0)
+    monkeypatch.setattr(settings, "cache_dir", tmp_path / "cache")
+    downloads = tmp_path / "downloads"
+    monkeypatch.setattr(settings, "music_download_dir", downloads)
+    file = downloads / "Tracks" / "Song.webm"
+    file.parent.mkdir(parents=True)
+    file.write_bytes(b"audio")
+    return file
+
+
+def _downloaded(file, local_id: str = "dQw4w9WgXcQ-0") -> dict[str, dict[str, Any]]:
+    return {
+        local_id: {
+            "item_url": _YT_URL,
+            "item_id": "dQw4w9WgXcQ",
+            "item_status": "Downloaded",
+            "item_name": "Song: A",
+            "file_path": str(file),
+        }
+    }
+
+
+def test_fetch_moves_a_shared_download_into_its_songs_folder(tmp_path, monkeypatch):
+    file = _shared_downloads(tmp_path, monkeypatch)
+    client = FakeClient()
+    client.queue_sequence = [_downloaded(file)]
+
+    result = _collect(_facade(tmp_path, client, FakePool()).fetch(_YT_URL))[-1]
+
+    held = tmp_path / "cache" / "songs" / "dQw4w9WgXcQ" / "download" / "Song_ A.webm"
+    assert held.read_bytes() == b"audio"
+    assert not file.exists()
+    assert result["type"] == "result"
+    assert result["audio"] == {
+        "path": "music/songs/dQw4w9WgXcQ/download",
+        "serverPath": str(held),
+        "filename": "Song_ A",
+        "contentType": "audio/webm",
+    }
+
+
+def test_refetching_a_held_track_skips_onthespot(tmp_path, monkeypatch):
+    file = _shared_downloads(tmp_path, monkeypatch)
+    client = FakeClient()
+    client.queue_sequence = [_downloaded(file)]
+    facade = _facade(tmp_path, client, FakePool())
+    first = _collect(facade.fetch(_YT_URL))[-1]
+    client.parsed_urls.clear()
+
+    assert _collect(facade.fetch(_YT_URL)) == [first]
+    assert client.parsed_urls == []
+
+
+def test_refetching_an_evicted_track_waits_for_its_new_download(tmp_path, monkeypatch):
+    moved_away = _shared_downloads(tmp_path, monkeypatch)
+    moved_away.unlink()
+    fresh = moved_away.with_name("Song again.webm")
+    fresh.write_bytes(b"again")
+    client = FakeClient()
+    client.queue_sequence = [
+        _downloaded(moved_away),
+        {**_downloaded(moved_away), **_downloaded(fresh, "dQw4w9WgXcQ-1")},
+    ]
+
+    result = _collect(_facade(tmp_path, client, FakePool()).fetch(_YT_URL))[-1]
+
+    assert result["type"] == "result"
+    assert Path(result["audio"]["serverPath"]).read_bytes() == b"again"
+    assert not fresh.exists()
+
+
+def test_fetch_keeps_a_shared_download_in_place_if_it_cannot_be_moved(tmp_path, monkeypatch):
+    file = _shared_downloads(tmp_path, monkeypatch)
+    client = FakeClient()
+    client.queue_sequence = [_downloaded(file)]
+
+    def fail(*_args: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("app.music.facade.store_file", fail)
+    result = _collect(_facade(tmp_path, client, FakePool()).fetch(_YT_URL))[-1]
+
+    assert result["audio"]["path"] == "music/audio/dQw4w9WgXcQ-0"
+    assert result["audio"]["serverPath"] == str(file.resolve())
+    assert file.read_bytes() == b"audio"
+
+
+def test_a_long_title_still_moves_into_the_songs_folder(tmp_path, monkeypatch):
+    file = _shared_downloads(tmp_path, monkeypatch)
+    item = _downloaded(file)
+    item["dQw4w9WgXcQ-0"]["item_name"] = "歌" * 200
+    client = FakeClient()
+    client.queue_sequence = [item]
+
+    result = _collect(_facade(tmp_path, client, FakePool()).fetch(_YT_URL))[-1]
+
+    held = Path(result["audio"]["serverPath"])
+    assert held.read_bytes() == b"audio"
+    assert held.parent == tmp_path / "cache" / "songs" / "dQw4w9WgXcQ" / "download"
+    assert result["audio"]["filename"] == "歌" * 50
+    assert not file.exists()
+
+
+def test_a_second_fetch_waits_for_a_move_whose_fetch_was_cancelled(tmp_path, monkeypatch):
+    file = _shared_downloads(tmp_path, monkeypatch)
+    moving, release = threading.Event(), threading.Event()
+    real_store = facade_module.store_file
+
+    def slow_store(dest: Path, src: Path) -> None:
+        moving.set()
+        assert release.wait(5)
+        real_store(dest, src)
+
+    monkeypatch.setattr(facade_module, "store_file", slow_store)
+    facade = _facade(tmp_path, FakeClient(), FakePool())
+    item = _downloaded(file)["dQw4w9WgXcQ-0"]
+
+    async def scenario() -> dict[str, Any]:
+        first = asyncio.create_task(facade._finished_download("dQw4w9WgXcQ", "dQw4w9WgXcQ-0", item))
+        await asyncio.to_thread(moving.wait, 5)
+        first.cancel()
+        second = asyncio.create_task(facade._finished_download("dQw4w9WgXcQ", "dQw4w9WgXcQ-0", item))
+        await asyncio.sleep(0.05)
+        release.set()
+        return await second
+
+    result = asyncio.run(scenario())
+
+    assert result["audio"]["path"] == "music/songs/dQw4w9WgXcQ/download"
+    assert Path(result["audio"]["serverPath"]).read_bytes() == b"audio"
+
+
+def test_find_queue_item_prefers_the_latest_enqueue_of_a_track():
+    queue = {
+        "dQw4w9WgXcQ-2": {"item_url": _YT_URL, "item_status": "Downloading"},
+        "dQw4w9WgXcQ-10": {"item_url": _YT_URL, "item_status": "Waiting"},
+        "dQw4w9WgXcQ-1": {"item_url": _YT_URL, "item_status": "Failed"},
+    }
+    assert _find_queue_item(queue, _YT_URL)[0] == "dQw4w9WgXcQ-10"
 
 
 def test_fetch_failure(tmp_path, monkeypatch):

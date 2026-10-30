@@ -13,12 +13,13 @@ from collections.abc import AsyncIterator
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.config import settings
+from app.song_cache import held_download, is_valid_song_id
 
-from .facade import MusicFacade
+from .facade import MusicFacade, content_type_for_path
 from .models import (
     AddAccountRequest,
     AddAccountResult,
@@ -147,6 +148,15 @@ async def fetch(req: FetchRequest) -> StreamingResponse:
             yield (json.dumps(event) + "\n").encode("utf-8")
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+
+@router.get("/songs/{song_id}/download")
+async def song_download(song_id: str) -> FileResponse:
+    """The fetched track held in a song's folder."""
+    path = held_download(song_id) if is_valid_song_id(song_id) else None
+    if path is None:
+        raise HTTPException(status_code=404, detail="No such download.")
+    return FileResponse(str(path), media_type=content_type_for_path(path.name), filename=path.name)
 
 
 @router.get("/audio/{local_id}")
