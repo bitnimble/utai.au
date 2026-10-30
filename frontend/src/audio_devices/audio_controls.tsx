@@ -1,15 +1,15 @@
 import { Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
+import { LabelledVolume } from 'src/ui/labelled_volume/labelled_volume';
 import { Slider } from 'src/ui/slider/slider';
 import { AudioDevicePresenterContext, AudioDeviceStoreContext } from './audio_device_contexts';
 import styles from './audio_controls.module.css';
 
 /**
  * A mute toggle (the channel icon doubles as the button) + a volume slider for
- * one channel. Reads the shared audio-device store, so every instance
- * (Settings dialog, home transport) stays in sync. `scope` disambiguates the
- * test ids when the same channel renders in two places.
+ * one channel. `scope` disambiguates the test ids when the same channel renders
+ * in two places.
  */
 export const ChannelControls = observer(function ChannelControls({
   channel,
@@ -63,10 +63,31 @@ export const ChannelControls = observer(function ChannelControls({
 /** The mic + output mute/volume cluster shown on the home transport bar, bound
  *  to the same store as the Settings dialog's controls. */
 export const HomeAudioControls = observer(function HomeAudioControls() {
+  const store = React.useContext(AudioDeviceStoreContext);
+  const presenter = React.useContext(AudioDevicePresenterContext);
+  if (store == null || presenter == null) return null;
   return (
     <div className={styles.home} data-testid="home-audio-controls">
-      <ChannelControls channel="mic" scope="home" />
-      <ChannelControls channel="output" scope="home" />
+      <LabelledVolume
+        label="Mic"
+        icon={store.micMuted ? MicOff : Mic}
+        muted={store.micMuted}
+        volume={store.micVolume}
+        onMutedChange={(muted) => presenter.setMicMuted(muted)}
+        onVolumeChange={(v) => presenter.setMicVolume(v)}
+        muteTestId="audio-mic-mute-home"
+        volumeTestId="audio-mic-volume-home"
+      />
+      <LabelledVolume
+        label="Master"
+        icon={store.outputMuted ? VolumeX : Volume2}
+        muted={store.outputMuted}
+        volume={store.outputVolume}
+        onMutedChange={(muted) => presenter.setOutputMuted(muted)}
+        onVolumeChange={(v) => presenter.setOutputVolume(v)}
+        muteTestId="audio-output-mute-home"
+        volumeTestId="audio-output-volume-home"
+      />
     </div>
   );
 });

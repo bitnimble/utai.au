@@ -39,7 +39,8 @@ into `bun run build`) catches.
     `dropdownPanel` / `submenuPanel` / etc. compose; `dropdownItem`
     composes `ghost` so dropdown rows are real buttons.
   - Other widgets: `dropdown.tsx`, `tabs.tsx`, `number_stepper.tsx`,
-    `checkbox.tsx`. New shared chrome goes here, not inlined into
+    `checkbox.tsx`, `labelled_volume.tsx` (labelled mute + fader, the
+    transport bar's mix channels). New shared chrome goes here, not inlined into
     page-level modules.
 
 ## How consumers use it
