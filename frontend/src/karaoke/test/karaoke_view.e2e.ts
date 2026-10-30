@@ -157,7 +157,7 @@ test('karaoke "Show lyric pitch" renders the line through the pitched lyric chip
   expect(await wordWidths()).toEqual(pitchedWidths);
 });
 
-test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating slots', async ({ page }) => {
+test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating slots from top-left after each gap', async ({ page }) => {
   await page.goto(HOST_PATH);
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -204,9 +204,12 @@ test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating sl
   await expect(top).toHaveText('line three');
   await expect(bottom).toHaveText('');
 
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(10));
+  await expect(page.getByTestId('karaoke-line')).toHaveCount(0);
+
   await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(12.5));
-  await expect(top).toHaveText('');
-  await expect(bottom).toHaveText('after the gap');
+  await expect(top).toHaveText('after the gap');
+  await expect(bottom).toHaveText('');
 });
 
 test('karaoke "Show 2 lines" sizes both lines alike, small enough for the longer to fit unwrapped', async ({ page }) => {

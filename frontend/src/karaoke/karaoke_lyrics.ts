@@ -1,11 +1,13 @@
 import { activeLineIndexAt, isBlankLyricLine, lineSpanSec, LyricLine } from 'src/lyrics/lrc';
 
-export const LINE_LEAD_IN_SEC = 3;
-export const LINE_HOLD_SEC = 0.5;
+const LINE_LEAD_IN_SEC = 3;
+const LINE_HOLD_SEC = 0.5;
+const LYRIC_GAP_SEC = 6;
 
-/** The line to display at `audioTimeSec`: the active line until shortly after
- *  its last word, then the next line once it's within the lead-in; nothing
- *  through intros and instrumental gaps. */
+/** The line to display at `audioTimeSec`: the active line until the next is
+ *  within the lead-in, then the next; across a gap (see `followingLineIdx`),
+ *  the active line only until shortly after its last word. Nothing through
+ *  intros and gaps. */
 export function shownLineIdx(
   lines: readonly LyricLine[],
   audioTimeSec: number,
@@ -13,10 +15,12 @@ export function shownLineIdx(
 ): number | undefined {
   const t = audioTimeSec - offsetSec;
   const active = activeLineIndexAt(lines, audioTimeSec, offsetSec);
-  if (active != null && t < lineSpanSec(lines, active).endSec + LINE_HOLD_SEC) return active;
   const next = nextVocalLineIdx(lines, active);
-  if (next != null && lineSpanSec(lines, next).startSec - t <= LINE_LEAD_IN_SEC) return next;
-  return undefined;
+  const nextDue = next != null && lineSpanSec(lines, next).startSec - t <= LINE_LEAD_IN_SEC;
+  if (active == null) return nextDue ? next : undefined;
+  if (t < lineSpanSec(lines, active).endSec + LINE_HOLD_SEC) return active;
+  if (nextDue) return next;
+  return followingLineIdx(lines, active) != null ? active : undefined;
 }
 
 /** A run of a line's display text, owned by one word. Text between words
@@ -187,20 +191,27 @@ function textEm(text: string): number {
   return em;
 }
 
-/** How many non-blank lines come before `lines[idx]`. */
-export function vocalOrdinal(lines: readonly LyricLine[], idx: number): number {
+/** How many vocal lines come before `lines[idx]` since the lyrics last blanked
+ *  (see `followsGap`). */
+export function vocalOrdinalSinceGap(lines: readonly LyricLine[], idx: number): number {
   let n = 0;
-  for (let i = 0; i < idx; i++) if (!isBlankLyricLine(lines[i])) n++;
+  let later = idx;
+  for (let i = idx - 1; i >= 0; i--) {
+    if (isBlankLyricLine(lines[i])) continue;
+    if (followingLineIdx(lines, i) !== later) break;
+    n++;
+    later = i;
+  }
   return n;
 }
 
-/** The vocal line after `idx`, unless a gap long enough to blank the lyrics
- *  (see `shownLineIdx`) separates the two. */
+/** The vocal line after `idx`, unless a gap, long enough to blank the lyrics,
+ *  separates the two. */
 export function followingLineIdx(lines: readonly LyricLine[], idx: number): number | undefined {
   const next = nextVocalLineIdx(lines, idx);
   if (next == null) return undefined;
   const gapSec = lineSpanSec(lines, next).startSec - lineSpanSec(lines, idx).endSec;
-  return gapSec <= LINE_HOLD_SEC + LINE_LEAD_IN_SEC ? next : undefined;
+  return gapSec <= LYRIC_GAP_SEC ? next : undefined;
 }
 
 /** Whether the lyrics blank before `lines[idx]`: it opens the song or follows

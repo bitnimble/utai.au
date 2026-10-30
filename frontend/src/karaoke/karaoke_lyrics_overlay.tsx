@@ -29,7 +29,7 @@ import {
   lineSplitLimits,
   shownLineIdx,
   splitLongLines,
-  vocalOrdinal,
+  vocalOrdinalSinceGap,
 } from './karaoke_lyrics';
 import styles from './karaoke_lyrics_overlay.module.css';
 
@@ -42,7 +42,8 @@ const FIT_STEPS = 8;
 const HIGHLIGHT_LEAD_SEC = 0.08;
 
 /** The first lyrics track's current line (plus the next, top-left / bottom-right
- *  by alternating line, in two-line mode), karaoke style, over the video area. */
+ *  by alternating line, restarting top-left after each gap, in two-line mode),
+ *  karaoke style, over the video area. */
 export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
   const beats = React.useContext(BeatStoreContext);
   const playhead = useLocalObservable(() => ({
@@ -90,7 +91,7 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     },
     get shownOnTop(): boolean {
       const shown = this.shownIdx;
-      return shown != null && vocalOrdinal(this.lines, shown) % 2 === 0;
+      return shown != null && vocalOrdinalSinceGap(this.lines, shown) % 2 === 0;
     },
     get activeWordIdx(): number | undefined {
       const t = this.track;

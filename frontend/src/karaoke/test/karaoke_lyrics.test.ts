@@ -8,7 +8,7 @@ import {
   nextVocalLineIdx,
   shownLineIdx,
   splitLongLines,
-  vocalOrdinal,
+  vocalOrdinalSinceGap,
 } from '../karaoke_lyrics';
 
 const word = (text: string) => ({ startSec: 0, endSec: 0, text });
@@ -191,6 +191,22 @@ describe('shownLineIdx', () => {
     expect(shownLineIdx(lines, 37, 0)).toBe(2);
   });
 
+  test('hides after the last line', () => {
+    expect(shownLineIdx(lines, 42.4, 0)).toBe(2);
+    expect(shownLineIdx(lines, 42.6, 0)).toBe(undefined);
+  });
+
+  test('holds the line through a phrase break shorter than a gap', () => {
+    const phrases = [timed(20, 22, 'a'), timed(27, 29, 'b')];
+    expect(shownLineIdx(phrases, 23.5, 0)).toBe(0);
+    expect(shownLineIdx(phrases, 24, 0)).toBe(1);
+  });
+
+  test('blanks exactly when the break is a gap', () => {
+    expect(shownLineIdx([timed(20, 22, 'a'), timed(28, 29, 'b')], 24, 0)).toBe(0);
+    expect(shownLineIdx([timed(20, 22, 'a'), timed(28.1, 29, 'b')], 24, 0)).toBe(undefined);
+  });
+
   test('applies the track offset', () => {
     expect(shownLineIdx(lines, 19, 5)).toBe(undefined);
     expect(shownLineIdx(lines, 22, 5)).toBe(0);
@@ -200,8 +216,8 @@ describe('shownLineIdx', () => {
     expect(followingLineIdx(lines, 0)).toBe(1);
     expect(followingLineIdx(lines, 1)).toBe(undefined);
     expect(followingLineIdx(lines, 2)).toBe(undefined);
-    expect(followingLineIdx([timed(20, 22, 'a'), timed(25.5, 26, 'b')], 0)).toBe(1);
-    expect(followingLineIdx([timed(20, 22, 'a'), timed(25.6, 26, 'b')], 0)).toBe(undefined);
+    expect(followingLineIdx([timed(20, 22, 'a'), timed(28, 29, 'b')], 0)).toBe(1);
+    expect(followingLineIdx([timed(20, 22, 'a'), timed(28.1, 29, 'b')], 0)).toBe(undefined);
   });
 
   test('followsGap: the opening line and a line after a gap, past blank lines', () => {
@@ -209,6 +225,18 @@ describe('shownLineIdx', () => {
     expect(followsGap(lines, 1)).toBe(false);
     expect(followsGap(lines, 2)).toBe(true);
     expect(followsGap([timed(20, 22, 'a'), { startSec: 22.5, text: '' }, timed(23, 25, 'b')], 2)).toBe(false);
+  });
+
+  test('vocalOrdinalSinceGap counts sung lines, restarting after each gap', () => {
+    const song = [
+      timed(20, 22, 'a'),
+      { startSec: 22.5, text: '' },
+      timed(23, 25, 'b'),
+      timed(26, 28, 'c'),
+      timed(40, 42, 'after gap'),
+      timed(43, 45, 'd'),
+    ];
+    expect([0, 2, 3, 4, 5].map((i) => vocalOrdinalSinceGap(song, i))).toEqual([0, 1, 2, 0, 1]);
   });
 });
 
@@ -265,9 +293,5 @@ describe('nextVocalLineIdx', () => {
     expect(nextVocalLineIdx(lines, undefined)).toBe(1);
     expect(nextVocalLineIdx(lines, 1)).toBe(3);
     expect(nextVocalLineIdx(lines, 3)).toBe(undefined);
-  });
-
-  test('vocalOrdinal counts only the sung lines before', () => {
-    expect([1, 3].map((i) => vocalOrdinal(lines, i))).toEqual([0, 1]);
   });
 });
