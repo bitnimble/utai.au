@@ -100,6 +100,53 @@ test('romaji: View option adds romaji under the lyrics in both views, and stays 
   await expect(romaji('karaoke-line')).toHaveText(['kimi to futari de itta'], DICT_TIMEOUT);
 });
 
+test('karaoke keeps romaji wider than its kanji clear of the next word', async ({ page }) => {
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
+  await page.evaluate(() =>
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add(
+      [
+        {
+          startSec: 1,
+          text: '私心',
+          words: [
+            { startSec: 1, endSec: 1.5, text: '私', reading: 'わたし' },
+            { startSec: 1.5, endSec: 2, text: '心', reading: 'こころ' },
+          ],
+        },
+      ],
+      { source: 'plaintext', sourceLabel: 'probe' },
+    ),
+  );
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('show-romaji').click();
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(1.2));
+  const romaji = page.getByTestId('karaoke-line').locator('rt[data-romaji]');
+  await expect(romaji).toHaveText(['watashi', 'kokoro'], DICT_TIMEOUT);
+
+  const expectClear = async (): Promise<void> => {
+    const { gapPx, outlinePx } = await romaji.evaluateAll((rts) => {
+      const [a, b] = rts.map((rt) => rt.firstElementChild!.getBoundingClientRect());
+      return { gapPx: b.left - a.right, outlinePx: parseFloat(getComputedStyle(rts[0]).strokeWidth) };
+    });
+    expect(gapPx).toBeGreaterThan(outlinePx);
+  };
+  await expectClear();
+
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('karaoke-show-pitch').click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('karaoke-line').locator('[data-testid^="lyrics-word-"]')).toHaveCount(2);
+  await expectClear();
+});
+
 test('kanji off: lyrics show as furigana alone, or romaji alone, in both views', async ({ page }) => {
   await loadJapaneseSong(page);
   await showTracksView(page);
