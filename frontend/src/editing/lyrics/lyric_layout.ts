@@ -296,7 +296,7 @@ export function buildPitchLine(
   // Time-accurate x: the viewBox's 100 units span the word's whole beat cell
   // (x=0 = the word's start, x=100 = its end) and each note sits at its own
   // beat offset, so the point under the playhead is the pitch actually sung at
-  // that instant. The stretch behind the glyphs is occluded by the text.
+  // that instant.
   const wordBeats = Math.max(word.beatWidth, 1e-4);
   const xOf = (beat: number) => _clamp((beat / wordBeats) * 100, 0, 100);
   const transitionX = 6; // viewBox units reserved on each side of a note for the curve
@@ -326,6 +326,59 @@ export function buildPitchLine(
     prevY = y;
   }
   return `${d} L100 ${_fmt(prevY)}`;
+}
+
+type Point = readonly [x: number, y: number];
+type Cubic = readonly [Point, Point, Point, Point];
+
+/** A {@link buildPitchLine} path cut to the `fromX`..`toX` stretch of its time
+ *  axis, as a path of its own so its stroke caps round off at the cut. */
+export function cropPitchLine(d: string, fromX: number, toX: number): string {
+  let out = '';
+  let pen: Point = [0, 0];
+  for (const [, command, args] of d.matchAll(/([MLC])([^MLC]*)/g)) {
+    const n = args.trim().split(/\s+/).map(Number);
+    const end: Point = [n[n.length - 2], n[n.length - 1]];
+    const curve: Cubic =
+      command === 'C' ? [pen, [n[0], n[1]], [n[2], n[3]], end] : [pen, _lerp(pen, end, 1 / 3), _lerp(pen, end, 2 / 3), end];
+    const start = pen;
+    pen = end;
+    if (command === 'M' || end[0] <= fromX || start[0] >= toX) continue;
+    let kept = curve;
+    if (end[0] > toX) kept = _splitCubic(kept, _tAtX(kept, toX))[0];
+    if (start[0] < fromX) kept = _splitCubic(kept, _tAtX(kept, fromX))[1];
+    if (out === '') out = `M${_fmtPoint(kept[0])}`;
+    out += ` C${_fmtPoint(kept[1])} ${_fmtPoint(kept[2])} ${_fmtPoint(kept[3])}`;
+  }
+  return out;
+}
+
+const _fmtPoint = ([x, y]: Point) => `${_fmt(x)} ${_fmt(y)}`;
+const _lerp = (a: Point, b: Point, t: number): Point => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+
+function _splitCubic([p0, p1, p2, p3]: Cubic, t: number): [Cubic, Cubic] {
+  const p01 = _lerp(p0, p1, t);
+  const p12 = _lerp(p1, p2, t);
+  const p23 = _lerp(p2, p3, t);
+  const p012 = _lerp(p01, p12, t);
+  const p123 = _lerp(p12, p23, t);
+  const mid = _lerp(p012, p123, t);
+  return [
+    [p0, p01, p012, mid],
+    [mid, p123, p23, p3],
+  ];
+}
+
+/** Where `curve`, whose x only increases, reaches `x`. */
+function _tAtX(curve: Cubic, x: number): number {
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 16; i++) {
+    const t = (lo + hi) / 2;
+    if (_splitCubic(curve, t)[1][0][0] < x) lo = t;
+    else hi = t;
+  }
+  return (lo + hi) / 2;
 }
 
 const _smoothstep = (t: number) => {

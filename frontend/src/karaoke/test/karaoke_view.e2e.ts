@@ -131,15 +131,30 @@ test('karaoke "Show lyric pitch" renders the line through the pitched lyric chip
   const tops = await words.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top));
   expect(tops[0]).toBeGreaterThan(tops[1]);
   expect(tops[1]).toBeGreaterThan(tops[2]);
-  const lineStrokes = (): Promise<(string | null)[]> =>
+  const pitchLines = (): Promise<
+    { outlineDisplay: string; outline: string; text: string; coreWidth: number; outlineWidth: number; strokeWidth: number }[]
+  > =>
     words.evaluateAll((els) =>
       els.map((e) => {
-        const path = e.querySelector('path');
-        return path ? getComputedStyle(path).stroke : null;
+        const outline = getComputedStyle(e.querySelector('path[data-pitch-outline]')!);
+        const core = getComputedStyle(e.querySelector('path:not([data-pitch-outline])')!);
+        const text = getComputedStyle(e.querySelector('text')!);
+        return {
+          outlineDisplay: outline.display,
+          outline: outline.stroke,
+          text: text.stroke,
+          coreWidth: parseFloat(core.strokeWidth),
+          outlineWidth: parseFloat(outline.strokeWidth),
+          strokeWidth: parseFloat(text.strokeWidth),
+        };
       }),
     );
-  await expect.poll(async () => (await lineStrokes()).every((s) => s != null)).toBe(true);
-  await expect.poll(async () => new Set(await lineStrokes()).size).toBe(3);
+  await expect.poll(async () => new Set((await pitchLines()).map((l) => l.outline)).size).toBe(3);
+  for (const line of await pitchLines()) {
+    expect(line.outlineDisplay).not.toBe('none');
+    expect(line.outline).toBe(line.text);
+    expect(line.outlineWidth - line.coreWidth).toBeCloseTo(line.strokeWidth);
+  }
 
   const wordWidths = (): Promise<number[]> =>
     page
@@ -155,6 +170,13 @@ test('karaoke "Show lyric pitch" renders the line through the pitched lyric chip
   await expect(page.getByTestId('karaoke-line')).toHaveText('low mid high');
   expect(pitchedWidths).toHaveLength(3);
   expect(await wordWidths()).toEqual(pitchedWidths);
+
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-tracks').click();
+  await page.keyboard.press('Escape');
+  const trackOutlines = page.getByTestId('lyrics-track').locator('path[data-pitch-outline]');
+  await expect.poll(() => trackOutlines.count()).toBeGreaterThan(0);
+  expect(await trackOutlines.evaluateAll((els) => els.every((e) => getComputedStyle(e).display === 'none'))).toBe(true);
 });
 
 test('karaoke "Show 2 lines" shows the next line on the diagonal, alternating slots from top-left after each gap', async ({ page }) => {

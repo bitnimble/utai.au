@@ -6,7 +6,7 @@ import { LyricWord, wordState, WordState } from 'src/lyrics/lrc';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { ViewportStoreContext } from '../viewport/viewport_contexts';
 import { intersectsBeatRange } from '../utils/windowing';
-import { PositionedLine, PositionedWord } from './lyric_layout';
+import { cropPitchLine, PositionedLine, PositionedWord } from './lyric_layout';
 import { ELLIPSIS, LyricWordPlacement, lyricWordKey, SustainSpan } from './lyrics_measure';
 import styles from './lyrics_track_view.module.css';
 import { wrapChunks } from './wrap_chunks';
@@ -214,17 +214,7 @@ const LyricWordChip = observer(
         data-word-state={state}
       >
         {decoration}
-        {pitchPath != null && sustain && (
-          <svg
-            className={styles.lyricPitchLine}
-            style={{ '--lyric-sustain-from': `${sustain.fromPx}px`, width: sustain.toPx - sustain.fromPx } as React.CSSProperties}
-            viewBox={`${(sustain.fromPx / sustain.cellPx) * 100} 0 ${((sustain.toPx - sustain.fromPx) / sustain.cellPx) * 100} 100`}
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            <path d={pitchPath} />
-          </svg>
-        )}
+        {pitchPath != null && sustain && <LyricPitchLine path={pitchPath} sustain={sustain} />}
         <span className={styles.lyricWordText}>
           <WordText words={lineWords} index={wordPosIndex} />
           {ellipsis && <SvgText text={ELLIPSIS} />}
@@ -233,6 +223,24 @@ const LyricWordChip = observer(
     );
   },
 );
+
+const LyricPitchLine = ({ path, sustain }: { path: string; sustain: SustainSpan }): React.ReactNode => {
+  const fromX = (sustain.fromPx / sustain.cellPx) * 100;
+  const toX = (sustain.toPx / sustain.cellPx) * 100;
+  const d = React.useMemo(() => cropPitchLine(path, fromX, toX), [path, fromX, toX]);
+  return (
+    <svg
+      className={styles.lyricPitchLine}
+      style={{ '--lyric-sustain-from': `${sustain.fromPx}px`, width: sustain.toPx - sustain.fromPx } as React.CSSProperties}
+      viewBox={`${fromX} 0 ${toX - fromX} 100`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <path data-pitch-outline d={d} />
+      <path d={d} />
+    </svg>
+  );
+};
 
 /** Renders a word's glyphs in the shown Japanese scripts (kanji, furigana
  *  over it, romaji under it). Takes the whole line's words plus this word's

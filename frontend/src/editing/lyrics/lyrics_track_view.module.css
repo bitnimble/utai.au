@@ -433,8 +433,11 @@
         calc(-50% + (var(--lyric-word-pitch-frac, 0.5) - 0.5) * var(--lyric-pitch-band) * 1px)
     );
     overflow: visible;
-    /* clip x only: unclipped, the path cropped out of the viewBox paints back across the text */
-    clip-path: inset(-100% 0);
+    /* Padding grows the box, not the viewBox: WebKit can drop ink outside the svg box
+       despite overflow: visible, cutting the outline flat. */
+    box-sizing: content-box;
+    padding: var(--lyric-stroke-width);
+    margin-left: calc(-1 * var(--lyric-stroke-width));
     pointer-events: none;
 }
 
@@ -446,6 +449,10 @@
     stroke-linejoin: round;
     /* Keep the stroke an even 2px despite the non-uniform viewBox stretch. */
     vector-effect: non-scaling-stroke;
+}
+
+.lyricPitchLine path[data-pitch-outline] {
+    display: none;
 }
 
 /* Group/drag/drop affordances; same visual language as mixer.module.css

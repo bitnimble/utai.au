@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildPitchLine, PositionedWord } from '../lyric_layout';
+import { buildPitchLine, cropPitchLine, PositionedWord } from '../lyric_layout';
 
 function word(over: Partial<PositionedWord>): PositionedWord {
   return {
@@ -88,5 +88,23 @@ describe('buildPitchLine', () => {
     );
     expect(path!.startsWith('M0 50')).toBe(true);
     expect(path!.trimEnd().endsWith('L100 50')).toBe(true);
+  });
+});
+
+describe('cropPitchLine', () => {
+  test('cuts a straight run at both ends', () => {
+    expect(cropPitchLine('M0 50 L100 50', 25, 75)).toBe('M25 50 C41.7 50 58.3 50 75 50');
+  });
+
+  test('drops the commands wholly outside the stretch', () => {
+    expect(cropPitchLine('M0 10 L20 10 L40 30 L60 30 L100 30', 40, 60)).toBe('M40 30 C46.7 30 53.3 30 60 30');
+  });
+
+  test('cuts a curve where it crosses the stretch, keeping its height there', () => {
+    expect(cropPitchLine('M0 0 C50 0 50 100 100 100', 50, 100)).toBe('M50 50 C62.5 75 75 100 100 100');
+  });
+
+  test('keeps a path already inside the stretch intact', () => {
+    expect(cropPitchLine('M0 0 C10 0 10 20 20 20', 0, 100)).toBe('M0 0 C10 0 10 20 20 20');
   });
 });

@@ -156,20 +156,17 @@
     transition: none;
 }
 
-/* A word's pitch line (pitch mode) follows its word's state. */
+/* A word's pitch line (pitch mode), filled and outlined like its text: the
+   outline shows the same width past the core as past a glyph. */
 .overlay [data-word-state] path {
     stroke: var(--color-karaoke-text);
-    transition: stroke 80ms linear;
+    stroke-width: calc(var(--lyric-stroke-width) / 2);
 }
 
-.overlay [data-word-state='sung'] path {
-    stroke: var(--color-karaoke-outline-sung);
-}
-
-.overlay [data-word-state='current'] path {
-    stroke: var(--color-karaoke-outline-current);
-    stroke-width: 4;
-    transition: none;
+.overlay [data-word-state] path[data-pitch-outline] {
+    display: inline;
+    stroke: inherit;
+    stroke-width: calc(var(--lyric-stroke-width) * 1.5);
 }
 
 /* The track view's chips opt back into pointer events; over the video they'd eat its clicks. */
