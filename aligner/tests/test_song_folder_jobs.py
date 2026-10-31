@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 
 import app.align_routes as align
 import app.analysis_routes as analysis
@@ -47,7 +48,7 @@ def _run(endpoint, **form: Any) -> dict:
 def _fake_aligner(monkeypatch) -> list[bytes]:
     aligned: list[bytes] = []
 
-    def realign_text(path: Path, _lines: Any, _language: Any) -> list[Any]:
+    def realign_text(path: Path, _lines: Any, _language: Any, _audio_start_sec: float) -> list[Any]:
         aligned.append(Path(path).read_bytes())
         return []
 
@@ -104,7 +105,15 @@ def test_alignment_of_a_stem_is_kept_in_its_songs_folder_and_reused(song: Path, 
     stem = song / "stems" / "vocals.flac"
     stem.parent.mkdir()
     stem.write_bytes(b"vocals")
-    form = {"vocals": None, "mix": None, "vocalsPath": str(stem), "mixPath": "", "lyrics": _LYRICS, "language": "en"}
+    form = {
+        "vocals": None,
+        "mix": None,
+        "vocalsPath": str(stem),
+        "mixPath": "",
+        "lyrics": _LYRICS,
+        "language": "en",
+        "audioStartSec": 0.0,
+    }
 
     first = _run(align.lyrics_align, **form)
     second = _run(align.lyrics_align, **form)
@@ -119,12 +128,36 @@ def test_changed_lyrics_align_again(song: Path, monkeypatch) -> None:
     stem = song / "stems" / "vocals.flac"
     stem.parent.mkdir()
     stem.write_bytes(b"vocals")
-    form = {"vocals": None, "mix": None, "vocalsPath": str(stem), "mixPath": "", "language": "en"}
+    form = {"vocals": None, "mix": None, "vocalsPath": str(stem), "mixPath": "", "language": "en", "audioStartSec": 0.0}
 
     _run(align.lyrics_align, lyrics=_LYRICS, **form)
     _run(align.lyrics_align, lyrics=json.dumps([{"startSec": 0.0, "text": "bye"}]), **form)
 
     assert len(aligned) == 2
+
+
+def test_changed_audio_start_aligns_again(song: Path, monkeypatch) -> None:
+    aligned = _fake_aligner(monkeypatch)
+    stem = song / "stems" / "vocals.flac"
+    stem.parent.mkdir()
+    stem.write_bytes(b"vocals")
+    form = {"vocals": None, "mix": None, "vocalsPath": str(stem), "mixPath": "", "lyrics": _LYRICS, "language": "en"}
+
+    _run(align.lyrics_align, audioStartSec=0.0, **form)
+    _run(align.lyrics_align, audioStartSec=18.0, **form)
+
+    assert len(aligned) == 2
+
+
+@pytest.mark.parametrize("start", [-1.0, float("nan"), float("inf")])
+def test_a_bad_audio_start_is_refused(song: Path, monkeypatch, start: float) -> None:
+    _fake_aligner(monkeypatch)
+    form = {"vocals": None, "mix": None, "vocalsPath": "x", "mixPath": "", "lyrics": _LYRICS, "language": "en"}
+
+    with pytest.raises(HTTPException) as refused:
+        _run(align.lyrics_align, audioStartSec=start, **form)
+
+    assert refused.value.status_code == 400
 
 
 def _fake_vocal_separator(monkeypatch) -> list[Path]:
@@ -145,7 +178,7 @@ def test_a_mix_aligned_without_stems_keeps_its_vocals_in_the_songs_folder(song: 
     runs = _fake_vocal_separator(monkeypatch)
     monkeypatch.setattr(align, "_encode_vocals_to_opus", lambda _src, dest: Path(dest).write_bytes(b"opus"))
     mix_path = str(song / "download" / "Song.webm")
-    form = {"vocals": None, "mix": None, "vocalsPath": "", "mixPath": mix_path, "language": "en"}
+    form = {"vocals": None, "mix": None, "vocalsPath": "", "mixPath": mix_path, "language": "en", "audioStartSec": 0.0}
 
     _run(align.lyrics_align, lyrics=_LYRICS, **form)
     _run(align.lyrics_align, lyrics=json.dumps([{"startSec": 0.0, "text": "bye"}]), **form)
@@ -170,6 +203,7 @@ def test_a_failed_vocals_encode_aligns_the_raw_stem(song: Path, monkeypatch) -> 
         "mixPath": str(song / "download" / "Song.webm"),
         "lyrics": _LYRICS,
         "language": "en",
+        "audioStartSec": 0.0,
     }
 
     _run(align.lyrics_align, **form)

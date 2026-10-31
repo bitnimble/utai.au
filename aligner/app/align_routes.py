@@ -4,14 +4,15 @@ the two caches behind it, in the song's folder (see `song_cache`):
   - `vocals/<sha256>__sep-<vocals_model_id>.opus`: the mix flow's separated
     vocals stem, so a repeat alignment of the same mix skips the separation pass.
   - `alignment/<sha256>__align-<version>-<lyrics_hash>.json`: the result, keyed on
-    the audio, the aligner version and the caller's lyrics + language, so
-    same-audio-but-different-lyrics correctly misses.
+    the audio, the aligner version and the caller's lyrics, language + audio
+    start, so same-audio-but-different-lyrics correctly misses.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import math
 import re
 import shutil
 import subprocess
@@ -57,6 +58,7 @@ async def lyrics_align(
     mixPath: str = Form(default=""),
     lyrics: str = Form(default=""),
     language: str = Form(default=""),
+    audioStartSec: float = Form(default=0.0),
 ) -> StreamingResponse:
     """Word-level lyrics alignment via CTC forced alignment (MMS-300m), as a job
     stream (see `job_stream`) ending `{"type": "result", "data": {"lines": [...]}}`.
@@ -78,6 +80,9 @@ async def lyrics_align(
     `language` is an optional ISO-639-1 hint that forces a specific
     wav2vec2 aligner. Empty string falls back to text-based heuristic
     detection.
+
+    `audioStartSec` is where in the audio the lyrics may start; words can't
+    land before it. Timings in the result are still whole-file.
     """
     require_pipeline_role()
     require_models("lyrics")
@@ -89,13 +94,15 @@ async def lyrics_align(
         raise HTTPException(status_code=400, detail="Exactly one of vocals / mix must be supplied.")
     if not lyrics:
         raise HTTPException(status_code=400, detail="`lyrics` is required (JSON array of {startSec, text}).")
+    if not (math.isfinite(audioStartSec) and audioStartSec >= 0):
+        raise HTTPException(status_code=400, detail="`audioStartSec` must be a non-negative number of seconds.")
     input_lines = _parse_lyrics_input(lyrics)
     language_hint = language or None
     if has_vocals:
         audio = await read_job_audio(vocals, vocalsPath, "vocals", "utai_lyrics_")
     else:
         audio = await read_job_audio(mix, mixPath, "mix", "utai_lyrics_")
-    align_key = _alignment_cache_key(input_lines, language_hint, audio.hash)
+    align_key = _alignment_cache_key(input_lines, language_hint, audio.hash, audioStartSec)
     align_path = touch_song_dir(audio.song_id) / "alignment" / align_key
 
     def cached() -> Envelope | None:
@@ -109,7 +116,7 @@ async def lyrics_align(
         vocals_path = audio.path if has_vocals else await _vocals_for(audio)
         if vocals_path is None:
             return {"type": "error", "status_code": 500, "message": "Separator ran but produced no vocals stem."}
-        lines = await run_cancellable(aligner.get().realign_text, vocals_path, input_lines, language_hint)
+        lines = await run_cancellable(aligner.get().realign_text, vocals_path, input_lines, language_hint, audioStartSec)
         lines_json = lines_to_json(lines)
         write_json(align_path, lines_json)
         log.info("lyrics_align: alignment cache MISS, populated (%s)", align_path.name)
@@ -201,17 +208,19 @@ def _vocals_cache_key(audio_hash: str) -> str:
     return f"{audio_hash}__sep-{_vocals_model_id()}.opus"
 
 
-def _lyrics_input_hash(input_lines: list[InputLine], language: str | None) -> str:
+def _lyrics_input_hash(input_lines: list[InputLine], language: str | None, audio_start_sec: float) -> str:
     """SHA-256 of the caller's alignment input: the line text + start
-    times (in order) plus the language hint. Two requests collide in the
-    cache only when this hash matches, so editing any line, reordering,
-    nudging a timestamp, or changing the language forces a re-align.
+    times (in order) plus the language hint and audio start. Two requests
+    collide in the cache only when this hash matches, so editing any line,
+    reordering, nudging a timestamp, or changing the language or audio start
+    forces a re-align.
 
     Start times round to the millisecond so float-repr noise from the
     JSON round-trip doesn't fragment the key; that's finer than any real
     LRC timestamp."""
     canonical = json.dumps(
         {
+            "audioStart": round(audio_start_sec, 3),
             "language": language or "",
             "lines": [
                 {"s": round(line.start_sec, 3), "t": line.text}
@@ -225,14 +234,14 @@ def _lyrics_input_hash(input_lines: list[InputLine], language: str | None) -> st
 
 
 def _alignment_cache_key(
-    input_lines: list[InputLine], language: str | None, audio_hash: str
+    input_lines: list[InputLine], language: str | None, audio_hash: str, audio_start_sec: float = 0.0
 ) -> str:
     """Cache filename for an alignment result. Encodes the input audio
-    hash, the aligner version, and the lyrics+language hash so a hit is
-    only possible when all three match (see `_ALIGN_CACHE_VERSION` and
-    `_lyrics_input_hash`)."""
+    hash, the aligner version, and the lyrics+language+audio-start hash so
+    a hit is only possible when all three match (see `_ALIGN_CACHE_VERSION`
+    and `_lyrics_input_hash`)."""
     version = _sanitize_id(_ALIGN_CACHE_VERSION)
-    lyrics_hash = _lyrics_input_hash(input_lines, language)
+    lyrics_hash = _lyrics_input_hash(input_lines, language, audio_start_sec)
     return f"{audio_hash}__align-{version}-{lyrics_hash}.json"
 
 

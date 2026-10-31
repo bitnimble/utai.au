@@ -16,9 +16,11 @@ import { AudioTrack } from 'src/editing/playback/audio_tracks';
 import { playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
+import type { SkipSegmentsPresenter } from 'src/skip_segments/skip_segments_presenter';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { downloadBlob } from 'src/utils/download';
 import type { VideoPresenter } from 'src/video/video_presenter';
+import { songVideoId } from 'src/video/youtube';
 import { KaraokePresenter } from './karaoke_presenter';
 import { BundleLyricsInput, BundleStemInput, packSongBundle, PreparedSong } from './song_bundle';
 import { SongStore } from './song_store';
@@ -37,13 +39,15 @@ export class SongIoPresenter {
     private readonly lyrics: LyricsPresenter,
     private readonly beats: BeatStore,
     private readonly video: Pick<VideoPresenter, 'waitForFirstFrame'>,
+    private readonly skipSegments: Pick<SkipSegmentsPresenter, 'provide'>,
   ) {
-    makeAutoObservable<this, 'song' | 'karaoke' | 'lyrics' | 'beats' | 'video'>(this, {
+    makeAutoObservable<this, 'song' | 'karaoke' | 'lyrics' | 'beats' | 'video' | 'skipSegments'>(this, {
       song: false,
       karaoke: false,
       lyrics: false,
       beats: false,
       video: false,
+      skipSegments: false,
     });
   }
 
@@ -77,6 +81,9 @@ export class SongIoPresenter {
         if (id == null) continue;
         if (stem.pitchContour) this.karaoke.setTrackPitchContour(id, stem.pitchContour);
       }
+      const videoId = songVideoId(prepared.meta);
+      // before the meta: its video id starts a lookup of any segments not known by then
+      if (videoId != null && prepared.skipSegments != null) this.skipSegments.provide(videoId, prepared.skipSegments);
       this.karaoke.updateSongMeta(prepared.meta);
       runInAction(() => {
         this.beats.analysis = prepared.beats;

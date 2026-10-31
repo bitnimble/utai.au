@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { observable, runInAction } from 'mobx';
-import type { SongStore } from 'src/karaoke/song_store';
-import type { VideoStore } from 'src/video/video_store';
 import { SkipSegmentsPresenter } from '../skip_segments_presenter';
 import { SkipSegmentsStore } from '../skip_segments_store';
 import {
+  alignmentStartSec,
   fetchSkipSegments,
   musicDurationSec,
   musicDurationSlackSec,
@@ -133,6 +132,12 @@ describe('musicStartSec', () => {
     expect(musicStartSec([offtopic(5, 20)], 280)).toBe(0);
     expect(musicStartSec([], 280)).toBe(0);
   });
+
+  test('alignment starts 4 s before the music, never before the audio', () => {
+    expect(alignmentStartSec([offtopic(0, 22)], 280)).toBe(18);
+    expect(alignmentStartSec([offtopic(0, 3)], 280)).toBe(0);
+    expect(alignmentStartSec([offtopic(250, 280)], 280)).toBe(0);
+  });
 });
 
 describe('fetchSkipSegments', () => {
@@ -162,10 +167,15 @@ describe('SkipSegmentsStore', () => {
 
   function makeStore(durationSec: number): { store: SkipSegmentsStore; clock: { currentTime: number } } {
     const clock = observable({ currentTime: 0 });
-    const store = new SkipSegmentsStore({ durationSec } as SongStore, clock);
+    const store = new SkipSegmentsStore({ durationSec }, clock);
     store.segments = [intro, outro];
     return { store, clock };
   }
+
+  test('alignmentStartSec comes from the segments matching this audio', () => {
+    expect(makeStore(281).store.alignmentStartSec).toBe(16);
+    expect(makeStore(240).store.alignmentStartSec).toBe(0);
+  });
 
   test('activeSegment is the segment under the playhead, end-exclusive', () => {
     const { store, clock } = makeStore(281);
@@ -219,10 +229,10 @@ describe('SkipSegmentsPresenter', () => {
     presenter: SkipSegmentsPresenter;
   } {
     const clock = observable({ currentTime: 0 });
-    const store = new SkipSegmentsStore({ durationSec: 100 } as SongStore, clock);
+    const store = new SkipSegmentsStore({ durationSec: 100 }, clock);
     const video = observable({ videoId });
     const seeks: number[] = [];
-    const presenter = new SkipSegmentsPresenter(store, video as unknown as VideoStore, {
+    const presenter = new SkipSegmentsPresenter(store, video, {
       seek: (s) => seeks.push(s),
     });
     return { store, video, clock, seeks, presenter };
@@ -240,6 +250,44 @@ describe('SkipSegmentsPresenter', () => {
     clock.currentTime = 50;
     presenter.skipActive();
     expect(seeks).toEqual([12.5]);
+    presenter.dispose();
+  });
+
+  test('segments provided for a video are used without looking them up, even empty ones', () => {
+    const net = stubFetch();
+    const { store, video, presenter } = setup(undefined);
+    const known: SkipSegment = { category: 'music_offtopic', startSec: 0, endSec: 12, videoDurationSec: 0 };
+    presenter.start();
+
+    presenter.provide('aaaaaaaaaaa', [known]);
+    runInAction(() => {
+      video.videoId = 'aaaaaaaaaaa';
+    });
+    expect(store.segments).toEqual([known]);
+
+    runInAction(() => {
+      video.videoId = undefined;
+    });
+    presenter.provide('bbbbbbbbbbb', []);
+    runInAction(() => {
+      video.videoId = 'bbbbbbbbbbb';
+    });
+    expect(store.segments).toEqual([]);
+    expect(net.urls).toEqual([]);
+    presenter.dispose();
+  });
+
+  test('a video other than the provided one is looked up', async () => {
+    const net = stubFetch();
+    const { store, video, presenter } = setup(undefined);
+    presenter.start();
+
+    presenter.provide('aaaaaaaaaaa', []);
+    runInAction(() => {
+      video.videoId = 'bbbbbbbbbbb';
+    });
+    await net.respond('bbbbbbbbbbb', 200, [segmentRow(0, 5)]);
+    expect(store.segments.map((s) => s.endSec)).toEqual([5]);
     presenter.dispose();
   });
 

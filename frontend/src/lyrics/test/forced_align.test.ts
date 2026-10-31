@@ -136,6 +136,18 @@ describe('alignLyricsForced', () => {
     expect(fetchCalls.length).toBe(1);
   });
 
+  test('sends the audio start only when it is past the top of the audio', async () => {
+    const sent: (FormDataEntryValue | null)[] = [];
+    fetchHandler = (call) => {
+      sent.push((call.body as FormData).get('audioStartSec'));
+      return ndjsonResponse([{ type: 'result', data: { lines: [] } }]);
+    };
+    const req = { kind: 'mix', audio: { file: makeFile('x') }, realign: { lines: [{ startSec: 0, text: 'hi' }] } } as const;
+    await alignLyricsForced({ ...req, audioStartSec: 18.5 });
+    await alignLyricsForced({ ...req, audioStartSec: 0 });
+    expect(sent).toEqual(['18.5', null]);
+  });
+
   test('models the user has not downloaded reject with ModelsMissingError', async () => {
     fetchHandler = () =>
       new Response(JSON.stringify({ detail: "The AI models for lyrics aren't downloaded." }), { status: 424 });

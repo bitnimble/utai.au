@@ -524,6 +524,38 @@ def _spaced_preprocess(romaji: str, romanize: bool, language: str):
     return (["<star>", " ".join(romaji), "<star>"], ["<star>", romaji, "<star>"])
 
 
+def test_realign_text_hides_audio_before_the_start_and_keeps_whole_file_times(monkeypatch, tmp_path):
+    import numpy as np
+
+    from app.pipeline import lyrics_align, lyrics_onnx
+
+    audio_path = tmp_path / "vocals.wav"
+    audio_path.write_bytes(b"")
+    seen: list[np.ndarray] = []
+
+    class FakeAligner:
+        tokenizer = _LetterTokenizer()
+
+        def generate_emissions(self, audio):
+            seen.append(audio)
+            return _emissions("-")
+
+    monkeypatch.setattr(lyrics_onnx, "load_audio_np", lambda _path: np.arange(160_000, dtype=np.float32))
+    monkeypatch.setattr(lyrics_onnx, "preprocess_text", _spaced_preprocess)
+    monkeypatch.setattr(lyrics_align, "_align_words", lambda *_a, **_k: [{"text": "kao", "start": 0.5, "end": 1.0}])
+    aligner = lyrics_align.LyricsAligner()
+    monkeypatch.setattr(aligner, "_load_ctc_onnx", lambda _path: FakeAligner())
+
+    [line] = aligner.realign_text(audio_path, [InputLine(start_sec=9.0, text="kao")], "en", 2.5)
+
+    assert seen[0].shape[0] == 120_000
+    assert seen[0][0] == 40_000
+    assert line.start_sec == 3.0
+    assert line.words is not None
+    word = line.words[0]
+    assert (word.start_sec, word.end_sec, word.raw_start_sec, word.raw_end_sec) == (3.0, 3.5, 3.0, 3.5)
+
+
 def _nama() -> JpToken:
     return JpToken(
         surface="生",

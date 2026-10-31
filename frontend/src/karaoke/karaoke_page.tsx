@@ -156,10 +156,12 @@ function buildSession(): Session {
   const beats = new BeatStore();
   const lyricsAlign = new LyricsAlignStore();
   const presenter = new KaraokePresenter(song, viewport);
-  const lyricsPresenter = new LyricsPresenter(lyricsAlign, (meta) => presenter.captureSongMeta(meta));
+  const skipSegments = new SkipSegmentsStore(song, playbackEngine);
+  const lyricsPresenter = new LyricsPresenter(lyricsAlign, skipSegments, (meta) => presenter.captureSongMeta(meta));
   const videoStore = new VideoStore(song);
   const videoPresenter = new VideoPresenter(videoStore);
-  const songIo = new SongIoPresenter(song, presenter, lyricsPresenter, beats, videoPresenter);
+  const skipSegmentsPresenter = new SkipSegmentsPresenter(skipSegments, videoStore, playbackEngine);
+  const songIo = new SongIoPresenter(song, presenter, lyricsPresenter, beats, videoPresenter, skipSegmentsPresenter);
   const queue = new QueueStore();
   const queuePresenter = new QueuePresenter(queue, songIo, playbackEngine, prepareSong, identifyTrack, downloadTrack);
   const musicSource = new MusicSourceStore();
@@ -183,8 +185,6 @@ function buildSession(): Session {
   const scoringPresenter = new ScoringPresenter(scoring, createLivePitchSource(), scoringClock, () =>
     referenceTargets(firstPitchedTrack(lyricsStore)),
   );
-  const skipSegments = new SkipSegmentsStore(song, playbackEngine);
-  const skipSegmentsPresenter = new SkipSegmentsPresenter(skipSegments, videoStore, playbackEngine);
   const fullscreen = new FullscreenStore(appSettingsStore);
   const fullscreenPresenter = new FullscreenPresenter(fullscreen, fullscreenDriver(), queuePresenter);
   return {

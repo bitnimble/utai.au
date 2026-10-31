@@ -1,5 +1,28 @@
 import { describe, expect, test } from 'bun:test';
-import { activeLineIndexAt, parseLrc, shiftLines, stripLyricNoise, wordState } from '../lrc';
+import { activeLineIndexAt, parseLrc, rebaseLines, shiftLines, stripLyricNoise, wordState } from '../lrc';
+
+describe('rebaseLines', () => {
+  const line = (startSec: number, wordStartSec: number) => ({
+    startSec,
+    text: 'hi',
+    words: [{ startSec: wordStartSec, endSec: wordStartSec + 1, text: 'hi' }],
+  });
+
+  test('keeps the offset when every line lands after it', () => {
+    expect(rebaseLines([line(25, 25)], 20)).toStrictEqual({ lines: [line(5, 5)], offsetSec: 20 });
+  });
+
+  test('pulls the offset back to a line landing before it, keeping audio times', () => {
+    expect(rebaseLines([line(18, 18), line(25, 25)], 20)).toStrictEqual({
+      lines: [line(0, 0), line(7, 7)],
+      offsetSec: 18,
+    });
+  });
+
+  test('counts a word that starts before its line', () => {
+    expect(rebaseLines([line(19, 17)], 20).offsetSec).toBe(17);
+  });
+});
 
 describe('shiftLines', () => {
   test('moves every timestamp, leaving absent optional fields absent', () => {

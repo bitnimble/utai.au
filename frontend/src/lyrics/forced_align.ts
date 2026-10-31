@@ -30,6 +30,8 @@ export type AlignLyricsRequest = {
   kind: 'mix' | 'vocals';
   audio: JobAudio;
   realign: AlignLyricsRealignInput;
+  /** Where in the audio the lyrics may start; words can't land before it. */
+  audioStartSec?: number;
 };
 
 /** Run `/music/align`, returning the aligned lines (shape `LyricLine`, as the
@@ -39,6 +41,7 @@ export async function alignLyricsForced(req: AlignLyricsRequest, opts?: JobOptio
   setJobAudio(form, req.kind, req.audio);
   form.set('lyrics', JSON.stringify(req.realign.lines.map(({ startSec, text }) => ({ startSec, text }))));
   if (req.realign.language) form.set('language', req.realign.language);
+  if (req.audioStartSec) form.set('audioStartSec', String(req.audioStartSec));
   const { lines } = await runJob('music/align', form, opts);
   return Array.isArray(lines) ? (lines as LyricLine[]) : [];
 }

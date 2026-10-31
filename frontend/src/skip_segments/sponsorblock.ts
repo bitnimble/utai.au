@@ -60,6 +60,12 @@ export function musicStartSec(segments: readonly SkipSegment[], durationSec: num
   return first != null && first.startSec <= VIDEO_EDGE_SLACK_SEC ? first.endSec : 0;
 }
 
+/** Where lyrics may start: {@link musicStartSec}, less how far that crowd-placed
+ *  edge can be out, so an intro segment that runs long can't cut off the first words. */
+export function alignmentStartSec(segments: readonly SkipSegment[], durationSec: number): number {
+  return Math.max(0, musicStartSec(segments, durationSec) - CUT_EDGE_SLACK_SEC);
+}
+
 const VIDEO_EDGE_SLACK_SEC = 0.5;
 const CUT_EDGE_SLACK_SEC = 4;
 

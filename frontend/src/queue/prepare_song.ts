@@ -20,7 +20,7 @@ import { isWrittenIn, parseSongFilename, pickConfidentMatch } from 'src/lyrics/a
 import { detectLanguage } from 'src/lyrics/detect_language';
 import { extractPitch } from 'src/lyrics/extract_pitch';
 import { alignLyricsForced } from 'src/lyrics/forced_align';
-import { LyricLine, parseLrc, shiftLines } from 'src/lyrics/lrc';
+import { LyricLine, parseLrc, rebaseLines } from 'src/lyrics/lrc';
 import { LrclibMatch, searchLrclib } from 'src/lyrics/lrclib';
 import { attachPitchToLines } from 'src/lyrics/pitch_contour';
 import { separateStems, type SeparatedStems } from 'src/lyrics/separate_stems';
@@ -29,6 +29,7 @@ import { ModelsMissingError, type JobProgress } from 'src/net/backend_job';
 import type { JobAudio } from 'src/net/job_audio';
 import { downloadTrack, type TrackResult } from 'src/net/music_source_client';
 import {
+  alignmentStartSec,
   fetchSkipSegments,
   musicDurationSec,
   musicDurationSlackSec,
@@ -73,7 +74,13 @@ export const prepareSong: PrepareSong = async (source, opts) => {
 };
 
 async function prepareFile(file: File, opts: PrepareOptions): Promise<PreparedSong> {
-  const music = { durationSec: await decodeDurationSec(file), startSec: 0, durationSlackSec: 0, isCover: false };
+  const music = {
+    durationSec: await decodeDurationSec(file),
+    startSec: 0,
+    alignmentStartSec: 0,
+    durationSlackSec: 0,
+    isCover: false,
+  };
   const parsed = parseSongFilename(file.name);
   return prepareMix({ file }, {}, music, searchSyncedLyrics(parsed.title, parsed.artist, music, opts.signal), opts);
 }
@@ -88,13 +95,14 @@ async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promi
       onProgress: (p) => opts.onStage({ kind: 'downloading', frac: p.frac }),
     }).audio;
   const identity = opts.identity ?? identifyTrack(track, opts.signal);
-  const music = streamingMusic(track, audio, lookUpSkipSegments(track.sourceUrl, opts.signal), identity);
+  const skipSegments = lookUpSkipSegments(track.sourceUrl, opts.signal);
+  const music = streamingMusic(track, audio, skipSegments, identity);
   const search = Promise.all([identity, music])
     .then(([song, m]) => searchSyncedLyrics(song.title, song.artist, m, opts.signal))
     // Only rejects when `music` does, i.e. a failed download, which the await below reports.
     .catch(() => undefined);
   const lyrics: PickLyrics = async (language) => (await search)?.(language);
-  const [mix, song, knownMusic] = await Promise.all([audio, identity, music]);
+  const [mix, song, knownMusic, segments] = await Promise.all([audio, identity, music, skipSegments]);
   const meta: SongMeta = {
     title: song.title,
     artist: song.artist || undefined,
@@ -102,20 +110,22 @@ async function prepareStreaming(track: TrackResult, opts: PrepareOptions): Promi
     albumArtUrl: track.coverUrl ?? undefined,
     sourceUrl: track.sourceUrl,
   };
-  return prepareMix(mix, meta, knownMusic, lyrics, opts);
+  return { ...(await prepareMix(mix, meta, knownMusic, lyrics, opts)), skipSegments: segments };
 }
 
 async function streamingMusic(
   track: TrackResult,
   download: Promise<JobAudio>,
-  skipSegments: Promise<SkipSegment[]>,
+  skipSegments: Promise<SkipSegment[] | undefined>,
   identity: Promise<SongIdentity>,
 ): Promise<KnownMusic> {
-  const [segments, song] = await Promise.all([skipSegments, identity]);
+  const [found, song] = await Promise.all([skipSegments, identity]);
+  const segments = found ?? [];
   const durationSec = track.durationSec ?? (await decodeDurationSec((await download).file));
   return {
     durationSec: musicDurationSec(segments, durationSec),
     startSec: musicStartSec(segments, durationSec),
+    alignmentStartSec: alignmentStartSec(segments, durationSec),
     durationSlackSec: musicDurationSlackSec(segments, durationSec),
     isCover: song.isCover,
   };
@@ -123,19 +133,29 @@ async function streamingMusic(
 
 const SKIP_SEGMENTS_TIMEOUT_MS = 10_000;
 
-/** Best-effort: without segments, lyrics match against the full length. */
-async function lookUpSkipSegments(sourceUrl: string | undefined, signal: AbortSignal): Promise<SkipSegment[]> {
+/** Best-effort: without segments, lyrics match against the full length.
+ *  Undefined when the lookup failed, leaving playback to try it again. */
+async function lookUpSkipSegments(
+  sourceUrl: string | undefined,
+  signal: AbortSignal,
+): Promise<SkipSegment[] | undefined> {
   const videoId = songVideoId({ sourceUrl });
   if (videoId == null) return [];
   try {
     return await fetchSkipSegments(videoId, AbortSignal.any([signal, AbortSignal.timeout(SKIP_SEGMENTS_TIMEOUT_MS)]));
   } catch (err) {
     if (!signal.aborted) console.warn('[skip-segments] SponsorBlock lookup failed:', message(err));
-    return [];
+    return undefined;
   }
 }
 
-type KnownMusic = { durationSec: number; startSec: number; durationSlackSec: number; isCover: boolean };
+type KnownMusic = {
+  durationSec: number;
+  startSec: number;
+  alignmentStartSec: number;
+  durationSlackSec: number;
+  isCover: boolean;
+};
 
 type SyncedLyrics = { lines: LyricLine[]; trackName: string; artistName: string };
 
@@ -176,8 +196,7 @@ async function prepareMix(
   signal.throwIfAborted();
 
   const [aligned, pitchContour] = await Promise.all([
-    match &&
-      alignWords(match.lines, music.startSec, mix, stems, songLabel, signal, trackStage({ kind: 'aligning' }, onStage)),
+    match && alignWords(match.lines, music, mix, stems, songLabel, signal, trackStage({ kind: 'aligning' }, onStage)),
     stems &&
       extractPitch(stems.vocals, signal).catch((err: unknown) => {
         if (!signal.aborted && !isQuietFailure(err)) console.warn('[pitch] extraction failed:', message(err));
@@ -190,10 +209,9 @@ async function prepareMix(
   if (match) {
     if (aligned && pitchContour) attachPitchToLines(pitchContour, aligned);
     lyrics.push({
-      lines: aligned ? shiftLines(aligned, -music.startSec) : match.lines,
+      ...(aligned ? rebaseLines(aligned, music.startSec) : { lines: match.lines, offsetSec: music.startSec }),
       source: 'lrclib',
       sourceLabel: `LRCLIB · ${match.trackName} - ${match.artistName}`,
-      offsetSec: music.startSec,
     });
   }
 
@@ -235,10 +253,10 @@ export function trackStage(stage: PrepareStage, onStage: (stage: PrepareStage) =
 }
 
 /** Upgrade line-timed lyrics to word timings, in audio time (`lines` are
- *  relative to `offsetSec` into the audio). Undefined when nothing aligned. */
+ *  relative to where the music starts). Undefined when nothing aligned. */
 async function alignWords(
   lines: LyricLine[],
-  offsetSec: number,
+  music: KnownMusic,
   mix: JobAudio,
   stems: SeparatedStems | undefined,
   songLabel: string,
@@ -251,7 +269,8 @@ async function alignWords(
         {
           kind: stems ? 'vocals' : 'mix',
           audio: stems?.vocals ?? mix,
-          realign: { lines: lines.map((l) => ({ startSec: l.startSec + offsetSec, text: l.text })) },
+          realign: { lines: lines.map((l) => ({ startSec: l.startSec + music.startSec, text: l.text })) },
+          audioStartSec: music.alignmentStartSec,
         },
         { signal, onProgress },
       ),

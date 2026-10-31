@@ -1,17 +1,19 @@
 import { reaction, runInAction, type IReactionDisposer } from 'mobx';
 import type { PlaybackEngine } from 'src/editing/playback/playback_engine';
-import { VideoStore } from 'src/video/video_store';
+import type { VideoStore } from 'src/video/video_store';
 import { SkipSegmentsStore } from './skip_segments_store';
-import { fetchSkipSegments } from './sponsorblock';
+import { fetchSkipSegments, type SkipSegment } from './sponsorblock';
 
-/** Looks up the current video's SponsorBlock segments and seeks past one on request. */
+/** Holds the current video's SponsorBlock segments, looking them up unless they
+ *  came with the song, and seeks past one on request. */
 export class SkipSegmentsPresenter {
   private disposer: IReactionDisposer | undefined;
   private controller: AbortController | undefined;
+  private known: { videoId: string; segments: SkipSegment[] } | undefined;
 
   constructor(
     private readonly store: SkipSegmentsStore,
-    private readonly video: VideoStore,
+    private readonly video: Pick<VideoStore, 'videoId'>,
     private readonly engine: Pick<PlaybackEngine, 'seek'>,
   ) {}
 
@@ -27,6 +29,11 @@ export class SkipSegmentsPresenter {
     this.controller = undefined;
   }
 
+  /** Segments already looked up for `videoId`, used once it becomes the current video. */
+  provide(videoId: string, segments: SkipSegment[]): void {
+    this.known = { videoId, segments };
+  }
+
   skipActive = (): void => {
     const segment = this.store.activeSegment;
     if (segment) this.engine.seek(segment.endSec);
@@ -35,10 +42,11 @@ export class SkipSegmentsPresenter {
   private async load(videoId: string | undefined): Promise<void> {
     this.controller?.abort();
     this.controller = undefined;
+    const known = this.known?.videoId === videoId ? this.known?.segments : undefined;
     runInAction(() => {
-      this.store.segments = [];
+      this.store.segments = known ?? [];
     });
-    if (videoId == null) return;
+    if (videoId == null || known != null) return;
     const controller = new AbortController();
     this.controller = controller;
     try {

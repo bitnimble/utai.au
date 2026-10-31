@@ -22,6 +22,7 @@ import { parseEnhancedLrc, serializeEnhancedLrc } from 'src/lyrics/enhanced_lrc'
 import { LyricLine } from 'src/lyrics/lrc';
 import type { PitchContour } from 'src/lyrics/pitch_contour';
 import { LyricsSource } from 'src/lyrics/store';
+import type { SkipSegment } from 'src/skip_segments/sponsorblock';
 import {
   AudioStemDoc,
   AudioStemRole,
@@ -85,6 +86,8 @@ export type PreparedSong = {
   stems: PreparedStem[];
   lyrics: LoadedLyrics[];
   beats?: BeatAnalysis;
+  /** Its video's segments; absent when they haven't been looked up. */
+  skipSegments?: SkipSegment[];
 };
 
 /** Assemble a song bundle into a `application/zip` {@link Blob}. Audio

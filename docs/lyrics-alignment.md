@@ -127,6 +127,15 @@ plus vendored torch-free copies of the package's
 one-time export (never on the runtime path). The C++ Viterbi kernel
 runs from the vendored torch-free build.
 
+**Skipping a non-music intro.** The aligner searches all the audio it's given,
+so speech in a music video's opening skit would attract lyrics. When SponsorBlock
+marks a `music_offtopic` intro, the frontend passes `audioStartSec` to
+`/music/align`: 4 s before the segment's end (`alignmentStartSec`), so a segment
+that runs long can't cut off the first words. The backend aligns only the audio
+from there and returns whole-file timings. A word landing before the marked music
+start pulls the track's offset back with it (`rebaseLines`), keeping lyric
+timestamps non-negative.
+
 ## [4] Post-processing
 
 - **Low-confidence repair** (`_repair_low_score_words`): words whose

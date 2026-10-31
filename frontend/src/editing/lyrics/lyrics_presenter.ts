@@ -4,7 +4,7 @@ import {
   AlignLyricsRequest,
   nameLooksLikeVocals,
 } from 'src/lyrics/forced_align';
-import { LyricLine, shiftLines, stripLyricNoise } from 'src/lyrics/lrc';
+import { LyricLine, rebaseLines, stripLyricNoise } from 'src/lyrics/lrc';
 import { attachPitchToLines } from 'src/lyrics/pitch_contour';
 import { LyricsSource, LyricsTrackId, lyricsStore } from 'src/lyrics/store';
 import { AudioTrackId } from 'src/editing/playback/audio_tracks';
@@ -12,6 +12,7 @@ import { playbackEngine } from 'src/editing/playback/player';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import { SongMeta } from 'src/karaoke/song_schema';
+import type { SkipSegmentsStore } from 'src/skip_segments/skip_segments_store';
 import { LyricsAlignStore } from './lyrics_align_store';
 
 /**
@@ -37,13 +38,21 @@ export class LyricsPresenter {
    *  {@link SongStore} writer, keeping the single-writer rule intact. */
   private readonly onSongMeta?: (meta: SongMeta) => void;
 
-  constructor(lyricsAlign: LyricsAlignStore, onSongMeta?: (meta: SongMeta) => void) {
+  private readonly skipSegments: Pick<SkipSegmentsStore, 'alignmentStartSec'>;
+
+  constructor(
+    lyricsAlign: LyricsAlignStore,
+    skipSegments: Pick<SkipSegmentsStore, 'alignmentStartSec'>,
+    onSongMeta?: (meta: SongMeta) => void,
+  ) {
     this.lyricsAlign = lyricsAlign;
+    this.skipSegments = skipSegments;
     this.onSongMeta = onSongMeta;
-    makeAutoObservable<this, 'onSongMeta'>(this, {
+    makeAutoObservable<this, 'onSongMeta' | 'skipSegments'>(this, {
       lyricsAlign: false,
       lyricsAlignControllers: false,
       onSongMeta: false,
+      skipSegments: false,
     });
   }
 
@@ -225,6 +234,7 @@ export class LyricsPresenter {
       kind: pick.kind,
       audio: { file },
       realign: { lines: lines.map((l) => ({ startSec: l.startSec + offsetSec, text: l.text })) },
+      audioStartSec: this.skipSegments.alignmentStartSec,
     };
 
     // Per-target concurrency: a second align on the SAME track aborts the
@@ -280,11 +290,13 @@ export class LyricsPresenter {
       return;
     }
     if (track.pitchContour) attachPitchToLines(track.pitchContour, result);
+    const rebased = rebaseLines(result, offsetSec);
     runInAction(() => {
-      lyricsStore.replace(targetTrackId, shiftLines(result, -offsetSec), {
+      lyricsStore.replace(targetTrackId, rebased.lines, {
         source: meta.source,
         sourceLabel: meta.sourceLabel,
       });
+      lyricsStore.setOffsetSec(targetTrackId, rebased.offsetSec);
       this.lyricsAlign.lyricsAlignStatuses.delete(targetTrackId);
     });
   }

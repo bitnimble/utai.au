@@ -246,6 +246,7 @@ class LyricsAligner:
         audio_path: Path,
         input_lines: list[InputLine],
         language: str | None = None,
+        audio_start_sec: float = 0.0,
     ) -> list[LyricLine]:
         """Forced-align caller-provided lyric text to `audio_path`.
 
@@ -257,6 +258,9 @@ class LyricsAligner:
         plain-text inputs (where caller timestamps are evenly
         synthesised) and for LRCLIB matches against a different cut of
         the same song; both would otherwise mis-window the aligner.
+
+        `audio_start_sec` hides the audio before it from the aligner, so no
+        word can land there. Returned timings are still in whole-file time.
 
         `language` overrides automatic detection; pass it whenever the
         caller knows (e.g. lifted from a lyrics-file metadata tag). When
@@ -309,7 +313,7 @@ class LyricsAligner:
 
             aligner = self._load_ctc_onnx(model_path)
             tokenizer = aligner.tokenizer
-            audio_waveform = load_audio_np(str(audio_path))
+            audio_waveform = load_audio_np(str(audio_path))[int(audio_start_sec * _AUDIO_SAMPLE_RATE) :]
             alignments_fn = get_alignments_np
 
             # Decide Japanese-aware romanization. cutlet/fugashi reads
@@ -430,6 +434,10 @@ class LyricsAligner:
                     for line in input_lines
                 ]
 
+            word_timestamps = [
+                {**w, "start": w["start"] + audio_start_sec, "end": w["end"] + audio_start_sec}
+                for w in word_timestamps
+            ]
             partitioned = _partition_words_by_line(
                 word_timestamps, line_word_counts,
             )

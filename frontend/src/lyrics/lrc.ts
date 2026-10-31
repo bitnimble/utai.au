@@ -111,6 +111,16 @@ export function shiftLines(lines: LyricLine[], deltaSec: number): LyricLine[] {
   }));
 }
 
+/** Audio-time lines made relative to `offsetSec`, or to their earliest time if
+ *  that's before it: lyric timestamps can't be negative (see `secondsToStamp`). */
+export function rebaseLines(lines: LyricLine[], offsetSec: number): { lines: LyricLine[]; offsetSec: number } {
+  const earliest = Math.min(
+    offsetSec,
+    ...lines.flatMap((line) => [line.startSec, ...(line.words ?? []).map((w) => w.startSec)]),
+  );
+  return { lines: shiftLines(lines, -earliest), offsetSec: earliest };
+}
+
 /**
  * Strip noise from a lyric line: parenthetical asides (echo / harmony
  * voices like `(I'm screaming, I love you so)`) and standalone music

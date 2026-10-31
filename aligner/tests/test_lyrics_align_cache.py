@@ -90,6 +90,13 @@ def test_alignment_cache_key_changes_with_language() -> None:
     )
 
 
+def test_alignment_cache_key_changes_with_audio_start() -> None:
+    h = "a" * 64
+    assert align._alignment_cache_key(_lines(), "en", h, 0.0) != align._alignment_cache_key(
+        _lines(), "en", h, 18.0
+    )
+
+
 def test_alignment_cache_key_treats_none_and_empty_language_alike() -> None:
     """`language or ""` folds the no-hint cases together so an empty form
     field and an omitted one hit the same entry."""
