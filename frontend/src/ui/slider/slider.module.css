@@ -17,6 +17,19 @@
     outline: none;
 }
 
+.range:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.range:disabled::-webkit-slider-thumb {
+    cursor: not-allowed;
+}
+
+.range:disabled::-moz-range-thumb {
+    cursor: not-allowed;
+}
+
 .range::-webkit-slider-runnable-track {
     height: 8px;
     border-radius: var(--radius-md);

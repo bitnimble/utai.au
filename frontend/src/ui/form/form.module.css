@@ -27,6 +27,12 @@
     border-color: transparent;
 }
 
+.field:disabled {
+    background: var(--color-bg-neutral);
+    color: var(--color-text-disabled);
+    cursor: not-allowed;
+}
+
 /* Block variant for textareas / multi-line fields. Same chrome as
    `.field` but with a roomier 8x10 padding that reads better when the
    content wraps; consumers still set their own min-height, resize, and
