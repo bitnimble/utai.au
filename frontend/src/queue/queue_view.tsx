@@ -5,6 +5,7 @@ import React from 'react';
 import { MusicSearchPanel } from 'src/music_source/music_search_panel';
 import type { RemoteQueueStatus } from 'src/session/session_protocol';
 import { ActionMenuItem, DropdownButton } from 'src/ui/dropdown/dropdown';
+import { ScoreSpinner } from 'src/ui/score_spinner/score_spinner';
 import { Spinner } from 'src/ui/spinner/spinner';
 import { Tabs, type TabOption } from 'src/ui/tabs/tabs';
 import { QueuePresenterContext, QueueStoreContext } from './queue_contexts';
@@ -58,8 +59,7 @@ export const QueueLoadingScreen = observer(function QueueLoadingScreen() {
   if (item == null) return null;
   return (
     <div className={styles.loadingScreen} role="status" data-testid="queue-loading">
-      <Spinner size={28} />
-      <span className={styles.loadingHeading}>Up next</span>
+      <ScoreSpinner testId="queue-loading-spinner" />
       <span className={styles.loadingTitle} data-testid="queue-loading-title">
         {item.title}
       </span>

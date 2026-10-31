@@ -38,6 +38,33 @@ test('music search: result rows show the cover thumbnail, or a placeholder witho
   await expect(thumb('none')).toHaveCount(0);
 });
 
+test('music search: shows the score spinner until results arrive', async ({ page }) => {
+  let releaseSearch = (): void => {};
+  const searchHeld = new Promise<void>((resolve) => {
+    releaseSearch = resolve;
+  });
+  await page.route('**/api/music/**', async (route) => {
+    const url = route.request().url();
+    if (url.includes('/music/search')) {
+      await searchHeld;
+      return route.fulfill({ json: { results: RESULTS } });
+    }
+    if (url.includes('/music/services')) return route.fulfill({ json: { services: [] } });
+    return route.fulfill({ json: { priority: [], quality: { format: 'mp3', bitrate: '320k' } } });
+  });
+
+  await page.goto(HOST_PATH);
+  await page.getByTestId('queue-open').click();
+  await page.getByTestId('queue-tab-search').click();
+  await page.getByTestId('music-search-input').fill('anything');
+  await page.getByTestId('music-search-submit').click();
+
+  await expect(page.getByRole('status', { name: 'Searching' })).toBeVisible();
+  releaseSearch();
+  await expect(page.getByTestId('music-search-result-none')).toBeVisible();
+  await expect(page.getByTestId('music-search-spinner')).toHaveCount(0);
+});
+
 test('music settings: YouTube Music opts in to regular YouTube results, off by default', async ({ page }) => {
   const patches: unknown[] = [];
   let config = { priority: ['youtube_music'], includeYoutubeSearch: false };

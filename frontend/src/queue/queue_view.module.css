@@ -44,14 +44,9 @@
     text-align: center;
 }
 
-.loadingHeading {
-    composes: labelSm from '../typography.module.css';
-    margin-top: 12px;
-    color: var(--color-text-muted-alt);
-}
-
 .loadingTitle {
     composes: heading from '../typography.module.css';
+    margin-top: 12px;
     color: var(--color-text);
 }
 

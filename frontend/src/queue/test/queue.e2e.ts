@@ -190,6 +190,8 @@ test('queue: skipping to a song still preparing shows a loading screen until it 
 
   await page.getByTestId('queue-skip').click();
   await expect(page.getByTestId('queue-loading-title')).toHaveText('Held');
+  await expect(page.getByTestId('queue-loading-spinner')).toBeVisible();
+  await expect(page.getByTestId('queue-loading')).not.toContainText('Up next');
   expect(await currentTitle(page)).toBe('');
   expect(await playerState(page)).toBe('idle');
 
