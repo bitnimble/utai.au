@@ -326,11 +326,15 @@ every install.
   lyrics in the **sung language's own script** beat a romanisation
   (`isWrittenIn`): `/music/language` runs **VoxLingua107 ECAPA** (SpeechBrain,
   107 languages, fp32 ONNX on the CPU EP, `language_id.py`) over the vocal
-  stem's loudest 10 s chunks, and is ignored below 0.5 confidence. Without a
-  native-script match the search retries title-only, which finds entries filed
-  under the artist's native name. The model is trained on speech and is
-  unreliable on a full mix. A wrong guess of a Latin-script language just
-  loses the preference; of another script, it usually only costs that retry.
+  stem's loudest 10 s chunks, and is ignored below 0.5 confidence. If no result
+  is that close in length, the same title and artist within 30 s more still
+  counts: likely another cut, and the aligner doesn't rely on its line timings.
+  Without a native-script match the search retries title-only, which finds
+  entries filed under the artist's native name. That retry ignores the artist,
+  so its hit needs the right length and the sung language's script. The
+  model is trained on speech and is unreliable on a full mix. A wrong guess of a
+  Latin-script language just loses the preference; of another script, it costs
+  that retry.
 - The user can also paste plain text (no timings) or load a `.lrc` file.
 
 ## Rendering (frontend)
