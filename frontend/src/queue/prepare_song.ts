@@ -303,12 +303,13 @@ async function sungLanguage(stems: SeparatedStems | undefined, signal: AbortSign
 /**
  * Search LRCLIB for the song's synced lyrics now, and keep a confident match
  * (per {@link pickConfidentMatch}: duration + fuzzy title/artist, preferring the
- * sung language's own script) once the language is known. Without one in that
- * script it retries title-only: LRCLIB's search is artist-sensitive, and the
- * source's "artist" may be a mislabelling YouTube uploader or a romanised name.
- * Silent on a miss.
+ * sung language's own script) once the language is known. The title and artist
+ * matching at a near length, likely another cut, beats a different artist at the
+ * exact length. Without one in that script it retries title-only: LRCLIB's search
+ * is artist-sensitive, and the source's "artist" may be a mislabelling YouTube
+ * uploader or a romanised name. Silent on a miss.
  */
-function searchSyncedLyrics(
+export function searchSyncedLyrics(
   rawTitle: string,
   rawArtist: string,
   music: KnownMusic,
@@ -318,32 +319,33 @@ function searchSyncedLyrics(
   const artist = rawArtist.trim();
   if (title.length === 0 && artist.length === 0) return async () => undefined;
   const { durationSec, durationSlackSec } = music;
-  const artistOpts = {
-    title,
-    artist,
-    durationSlackSec: durationSlackSec + (music.isCover ? COVER_DURATION_SLACK_SEC : 0),
-  };
+  const wideOpts = { title, artist, durationSlackSec: durationSlackSec + WIDE_DURATION_SLACK_SEC };
+  const artistOpts = music.isCover ? wideOpts : { title, artist, durationSlackSec };
   const canRetry = title.length > 0 && artist.length > 0;
   let titleSearch: Promise<LrclibMatch[]> | undefined;
   const searchByTitle = (): Promise<LrclibMatch[]> => (titleSearch ??= searchQuietly(title, '', signal));
   const byArtist = searchQuietly(title, artist, signal).then((matches) => {
     // A miss retries whatever the language turns out to be, so don't wait for it.
-    if (canRetry && pickConfidentMatch(matches, durationSec, artistOpts) == null) void searchByTitle();
+    if (canRetry && pickConfidentMatch(matches, durationSec, wideOpts) == null) void searchByTitle();
     return matches;
   });
   return async (language) => {
-    let best = pickMatch(await byArtist, durationSec, { ...artistOpts, language });
+    const artistMatches = await byArtist;
+    let best = pickMatch(artistMatches, durationSec, { ...artistOpts, language });
+    if (best == null && canRetry && !music.isCover) {
+      best = pickMatch(artistMatches, durationSec, { ...wideOpts, language });
+    }
     const inLanguage = (m: LrclibMatch | undefined): boolean =>
       m?.syncedLyrics != null && isWrittenIn(m.syncedLyrics, language);
     if (!inLanguage(best) && canRetry) {
-      // Title alone is too weak a name gate to also widen for a cover: any same-titled song would pass.
+      // Title alone is too weak a name gate to also widen: any same-titled song would pass.
       const byTitle = pickMatch(await searchByTitle(), durationSec, {
         title,
         ignoreArtist: true,
         language,
         durationSlackSec,
       });
-      if (best == null || inLanguage(byTitle)) best = byTitle;
+      if (inLanguage(byTitle)) best = byTitle;
     }
     if (best?.syncedLyrics == null) return undefined;
     const lines = parseLrc(best.syncedLyrics);
@@ -352,7 +354,7 @@ function searchSyncedLyrics(
   };
 }
 
-const COVER_DURATION_SLACK_SEC = 30;
+const WIDE_DURATION_SLACK_SEC = 30;
 
 async function searchQuietly(trackName: string, artistName: string, signal: AbortSignal): Promise<LrclibMatch[]> {
   try {
