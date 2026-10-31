@@ -91,7 +91,7 @@
     display: none;
 }
 
-/* Subtle uppercase heading that introduces a logical section of menu
+/* Subtle lowercase heading that introduces a logical section of menu
    items inside a DropdownButton panel. Inset to the same left padding
    as the item rows so the heading aligns over the labels. */
 .dropdownSectionHeading {

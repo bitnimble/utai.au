@@ -371,7 +371,7 @@ export const SubmenuItem = ({
 };
 
 /**
- * Section within a {@link DropdownButton} panel: a subtle uppercase
+ * Section within a {@link DropdownButton} panel: a subtle lowercase
  * heading followed by its child items and a thin divider to separate it
  * from the next section. The trailing divider on the last section is
  * suppressed via a `.dropdownPanel > .dropdownDivider:last-child` CSS

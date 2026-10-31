@@ -23,7 +23,7 @@ export function Variant({
         style={{
           padding: '0 4px',
           fontSize: 11,
-          textTransform: 'uppercase',
+          textTransform: 'lowercase',
           letterSpacing: '0.04em',
           opacity: 0.6,
         }}
