@@ -196,9 +196,20 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
     );
   }
   if (!twoLines || shownIdx == null) {
+    const line = shownIdx != null ? lines[shownIdx] : undefined;
     return (
       <div ref={ref} className={styles.overlay} data-testid="karaoke-lyrics">
-        {lineView(shownIdx, playhead.lineWidthPx)}
+        {line?.words?.length && playhead.lineWidthPx > 0 && !isPitched(line, playhead.lineWidthPx) ? (
+          <OneRowLine
+            line={line}
+            idx={shownIdx}
+            widthPx={playhead.lineWidthPx}
+            baseFontSizePx={playhead.baseFontSizePx}
+            lineView={lineView}
+          />
+        ) : (
+          lineView(shownIdx, playhead.lineWidthPx)
+        )}
       </div>
     );
   }
@@ -266,18 +277,16 @@ const TwoLineSlots = observer(function TwoLineSlots({
   baseFontSizePx: number;
   lineView: LineView;
 }) {
-  const [rowWidths, setRowWidths] = React.useState<Partial<Record<Slot, { text: string; px: number }>>>({});
-  const onRowWidth = React.useCallback(
-    (slot: Slot, text: string, px: number) =>
-      setRowWidths((prev) => (prev[slot]?.text === text && prev[slot]?.px === px ? prev : { ...prev, [slot]: { text, px } })),
-    [],
-  );
+  const [topRow, onTopWidth] = useRowWidth();
+  const [bottomRow, onBottomWidth] = useRowWidth();
   const fontReady = lyricsMeasurer.fontReady;
   const furiganaRevision = furiganaAnnotator.revision;
   const slots: [Slot, number | undefined][] = [
     ['top', topIdx],
     ['bottom', bottomIdx],
   ];
+  const rows = [topRow, bottomRow];
+  const onRowWidths = [onTopWidth, onBottomWidth];
   const rowTexts = slots.map(([, idx]) => (idx != null ? lineRowText(lines[idx]) : undefined));
   const pitchedFontSizes = React.useMemo(
     () =>
@@ -290,17 +299,12 @@ const TwoLineSlots = observer(function TwoLineSlots({
     [lines, topIdx, bottomIdx, slotWidthPx, baseFontSizePx, appSettingsStore.karaokeShowPitch, appSettingsStore.japaneseScript, fontReady, furiganaRevision],
   );
   const fontSizePx = Math.min(
-    baseFontSizePx,
-    ...slots.map(([slot], i) => {
-      if (pitchedFontSizes[i] != null) return pitchedFontSizes[i];
-      const row = rowWidths[slot];
-      return row != null && row.text === rowTexts[i] ? (baseFontSizePx * slotWidthPx) / row.px : baseFontSizePx;
-    }),
+    ...slots.map((_, i) => pitchedFontSizes[i] ?? oneRowFontSizePx(rows[i], rowTexts[i], slotWidthPx, baseFontSizePx)),
   );
   return slots.map(([slot, idx], i) => (
     <React.Fragment key={slot}>
       {idx != null && rowTexts[i] != null && (
-        <RowWidthProbe slot={slot} line={lines[idx]} text={rowTexts[i]} fontSizePx={baseFontSizePx} onWidth={onRowWidth} />
+        <RowWidthProbe line={lines[idx]} text={rowTexts[i]} fontSizePx={baseFontSizePx} onWidth={onRowWidths[i]} />
       )}
       <div
         className={classNames(
@@ -316,30 +320,69 @@ const TwoLineSlots = observer(function TwoLineSlots({
   ));
 });
 
+/** The line at the largest size that fits `widthPx` on one row. */
+const OneRowLine = observer(function OneRowLine({
+  line,
+  idx,
+  widthPx,
+  baseFontSizePx,
+  lineView,
+}: {
+  line: LyricLine;
+  idx: number | undefined;
+  widthPx: number;
+  baseFontSizePx: number;
+  lineView: LineView;
+}) {
+  const [row, onRowWidth] = useRowWidth();
+  const text = lineRowText(line);
+  return (
+    <>
+      <RowWidthProbe line={line} text={text} fontSizePx={baseFontSizePx} onWidth={onRowWidth} />
+      {lineView(idx, widthPx, oneRowFontSizePx(row, text, widthPx, baseFontSizePx))}
+    </>
+  );
+});
+
+type RowWidth = { text: string; px: number };
+type OnRowWidth = (text: string, px: number) => void;
+
+function useRowWidth(): [RowWidth | undefined, OnRowWidth] {
+  const [row, setRow] = React.useState<RowWidth>();
+  const onWidth = React.useCallback<OnRowWidth>(
+    (text, px) => setRow((prev) => (prev?.text === text && prev.px === px ? prev : { text, px })),
+    [],
+  );
+  return [row, onWidth];
+}
+
+/** `row` is the line's one-row width at `baseFontSizePx`; one measured for other text is ignored. */
+function oneRowFontSizePx(row: RowWidth | undefined, text: string | undefined, widthPx: number, baseFontSizePx: number): number {
+  return row != null && row.text === text ? Math.min(baseFontSizePx, (baseFontSizePx * widthPx) / row.px) : baseFontSizePx;
+}
+
 /** Reports the line's one-row width at `fontSizePx`, from a hidden DOM copy: a
  *  canvas measure can disagree with the rendered font. `text` keys the report. */
 function RowWidthProbe({
-  slot,
   line,
   text,
   fontSizePx,
   onWidth,
 }: {
-  slot: Slot;
   line: LyricLine;
   text: string;
   fontSizePx: number;
-  onWidth: (slot: Slot, text: string, px: number) => void;
+  onWidth: OnRowWidth;
 }): React.ReactNode {
   const ref = React.useRef<HTMLSpanElement>(null);
   React.useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     // flushSync: apply the fitted size before this frame paints, not one frame late at full size
-    const ro = new ResizeObserver(([entry]) => flushSync(() => onWidth(slot, text, entry.contentRect.width)));
+    const ro = new ResizeObserver(([entry]) => flushSync(() => onWidth(text, entry.contentRect.width)));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [slot, text, onWidth]);
+  }, [text, onWidth]);
   return (
     <span ref={ref} className={styles.rowWidthProbe} style={{ fontSize: fontSizePx }} aria-hidden>
       <LineGlyphs line={line} activeWordIdx={undefined} activeWordEnded={false} />

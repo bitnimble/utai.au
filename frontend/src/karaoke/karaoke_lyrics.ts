@@ -53,8 +53,8 @@ export function lineSegments(line: LyricLine): LineSegment[] {
   return segments;
 }
 
-const SPLIT_ABOVE_WIDTH_FRAC = 0.84;
-const MAX_PART_WIDTH_FRAC = 0.67;
+const SPLIT_ABOVE_WIDTH_FRAC = 1.2;
+const MAX_PART_WIDTH_FRAC = 1;
 const NARROW_CHAR_EM = 0.5;
 const PUNCTUATION_BONUS = 0.3;
 const PAUSE_BONUS_PER_SEC = 0.3;
