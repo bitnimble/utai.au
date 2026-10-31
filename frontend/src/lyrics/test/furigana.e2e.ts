@@ -372,21 +372,16 @@ test('karaoke splits a long Japanese line between phrases, never inside a word',
     });
   });
   await pausePlayback(page);
-  await page.getByTestId('view-menu').click();
-  await page.getByTestId('karaoke-two-lines').click();
-  await page.keyboard.press('Escape');
-  const seek = (sec: number) => page.evaluate((s) => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(s), sec);
-  const baseText = () =>
-    page.getByTestId('karaoke-line').evaluate((el) => {
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(1.2));
+  const baseText = (slot: string) => () =>
+    page.getByTestId(slot).evaluate((el) => {
       const copy = el.cloneNode(true) as HTMLElement;
       copy.querySelectorAll('rt').forEach((rt) => rt.remove());
       return copy.textContent;
     });
 
-  await seek(1.2);
-  await expect.poll(baseText).toBe('君の名前を呼んでいたんだ');
-  await seek(4.1);
-  await expect.poll(baseText).toBe('ずっと遠い空の向こうへ');
+  await expect.poll(baseText('karaoke-slot-top')).toBe('君の名前を呼んでいたんだ');
+  await expect.poll(baseText('karaoke-slot-bottom')).toBe('ずっと遠い空の向こうへ');
 });
 
 test('furigana: karaoke view annotates word-aligned and line-level lyrics', async ({ page }) => {

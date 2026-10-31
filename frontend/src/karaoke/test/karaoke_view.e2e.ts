@@ -294,20 +294,66 @@ test('karaoke splits a line too long for its container: split in the narrower 2-
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
   await pausePlayback(page);
   await page.evaluate(() => {
-    const texts = 'We were dancing in the moonlight now'.split(' ');
+    const texts = 'We were dancing in the moonlight now and forever more'.split(' ');
     const words = texts.map((text, i) => ({ startSec: 2 + i * 0.3, endSec: 2.25 + i * 0.3, text }));
     (window as unknown as { utai: Utai }).utai.lyricsStore.add([{ startSec: 2, text: texts.join(' '), words }], {
       source: 'plaintext',
       sourceLabel: 'probe',
     });
   });
-  await expect(page.getByTestId('karaoke-slot-top')).toHaveText('We were dancing in');
-  await expect(page.getByTestId('karaoke-slot-bottom')).toHaveText('the moonlight now');
+  await expect(page.getByTestId('karaoke-slot-top')).toHaveText('We were dancing in the');
+  await expect(page.getByTestId('karaoke-slot-bottom')).toHaveText('moonlight now and forever more');
 
   await page.getByTestId('view-menu').click();
   await page.getByTestId('karaoke-two-lines').click();
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId('karaoke-line')).toHaveText(['We were dancing in the moonlight now']);
+  await expect(page.getByTestId('karaoke-line')).toHaveText(['We were dancing in the moonlight now and forever more']);
+});
+
+test('karaoke shrinks a line a little too wide for its container instead of splitting or wrapping it', async ({ page }) => {
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
+  await page.evaluate(() => {
+    const texts = 'We were dancing in the moonlight now and forever more oh'.split(' ');
+    const words = texts.map((text, i) => ({ startSec: 2 + i * 0.3, endSec: 2.25 + i * 0.3, text }));
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add(
+      [
+        { startSec: 2, text: texts.join(' '), words },
+        { startSec: 8, text: 'short', words: [{ startSec: 8, endSec: 9, text: 'short' }] },
+      ],
+      { source: 'plaintext', sourceLabel: 'probe' },
+    );
+  });
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('karaoke-two-lines').click();
+  await page.keyboard.press('Escape');
+  const line = page.getByTestId('karaoke-line');
+  await expect(line).toHaveText(['We were dancing in the moonlight now and forever more oh']);
+  const fit = () =>
+    line.evaluate((el) => {
+      const overlay = el.parentElement!;
+      const style = getComputedStyle(overlay);
+      const contentWidth = overlay.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const words = Array.from(el.querySelectorAll('[data-word-state]'), (w) => w.getBoundingClientRect());
+      const rowWidth = Math.max(...words.map((w) => w.right)) - Math.min(...words.map((w) => w.left));
+      return {
+        oneRow: new Set(words.map((w) => Math.round(w.top))).size === 1,
+        fillsWidth: rowWidth >= contentWidth * 0.9,
+        fitsWidth: rowWidth <= contentWidth * 1.02,
+        shrunk: parseFloat(getComputedStyle(el).fontSize) < 0.042 * contentWidth - 1,
+      };
+    });
+  await expect.poll(fit).toEqual({ oneRow: true, fillsWidth: true, fitsWidth: true, shrunk: true });
+
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(8.2));
+  await expect(line).toHaveText(['short']);
+  await expect.poll(fit).toEqual({ oneRow: true, fillsWidth: false, fitsWidth: true, shrunk: false });
 });
 
 test('karaoke counts a line in after a gap: 3, 2, 1 dots above its first word, the last out on the line', async ({ page }) => {
