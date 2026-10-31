@@ -1,0 +1,5 @@
+.toggle {
+    composes: ghost from '../ui/button/button.module.css';
+    padding: 6px;
+    color: var(--color-text-secondary);
+}

@@ -1,13 +1,14 @@
 // Fits the generated Android project (src-tauri/gen/android, which `tauri android init` writes and
 // git ignores) for Android TV: a launcher banner, no touchscreen required, and a MainActivity that
 // tells the page it is on a TV and hands the remote's Back and media buttons to it. On phones too, it
-// allows cleartext, for a plain-http server. scripts/tauri-build.ts
+// allows cleartext, for a plain-http server, and installs the app's launcher icons. scripts/tauri-build.ts
 // runs it after `android init` and before every other android command; it is idempotent.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { TV_AGENT, TV_BACK, TV_KEY } from '../frontend/src/tv_remote/tv';
 
-const MAIN = join(import.meta.dir, '..', 'src-tauri', 'gen', 'android', 'app', 'src', 'main');
+const SRC_TAURI = join(import.meta.dir, '..', 'src-tauri');
+const MAIN = join(SRC_TAURI, 'gen', 'android', 'app', 'src', 'main');
 
 const LEANBACK = '<uses-feature android:name="android.software.leanback" android:required="false" />';
 const TOUCHSCREEN = '<uses-feature android:name="android.hardware.touchscreen" android:required="false" />';
@@ -22,7 +23,7 @@ const BANNER_DRAWABLE = `<?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#1a1814" />
+            <solid android:color="#1b1520" />
             <size android:width="320dp" android:height="180dp" />
         </shape>
     </item>
@@ -126,12 +127,15 @@ export function patchAndroidProject(): void {
   const manifestPath = join(MAIN, 'AndroidManifest.xml');
   writeFileSync(manifestPath, patchManifest(readFileSync(manifestPath, 'utf8')));
 
+  // `android init` writes Tauri's stock launcher icons, not ours.
+  cpSync(join(SRC_TAURI, 'icons', 'android'), join(MAIN, 'res'), { recursive: true });
+
   const drawables = join(MAIN, 'res', 'drawable');
   mkdirSync(drawables, { recursive: true });
   writeFileSync(join(drawables, 'tv_banner.xml'), BANNER_DRAWABLE);
 
   const identifier: string = JSON.parse(
-    readFileSync(join(import.meta.dir, '..', 'src-tauri', 'tauri.conf.json'), 'utf8'),
+    readFileSync(join(SRC_TAURI, 'tauri.conf.json'), 'utf8'),
   ).identifier;
   const activity = join(MAIN, 'java', ...identifier.split('.'), 'MainActivity.kt');
   if (!existsSync(activity)) throw new Error(`[android-tv] no ${activity}: the Tauri template changed`);

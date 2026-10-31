@@ -20,7 +20,7 @@
 
 .busy {
     background: var(--color-busy-bg);
-    color: var(--color-accent-busy);
+    color: var(--color-accent-on-text);
     border: 1px solid var(--color-busy-border);
 }
 

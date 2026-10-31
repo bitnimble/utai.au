@@ -37,7 +37,7 @@
 }
 
 .option:focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-focus-ring);
     outline-offset: -2px;
 }
 
@@ -49,5 +49,5 @@
 .optionActive,
 .optionActive:hover:not(:disabled) {
     background: var(--color-accent);
-    color: var(--color-accent-on-text);
+    color: var(--color-on-brand);
 }

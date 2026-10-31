@@ -25,5 +25,5 @@
    CSS Modules mangles both occurrences to the same name within a single
    file.) `:has()` is Baseline 2023; every target browser supports it. */
 :global(html):has(.gutterResizeHandle:hover) .gutterResizeHandle {
-    background: var(--color-border-subtle-2);
+    background: var(--color-border);
 }

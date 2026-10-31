@@ -11,10 +11,18 @@ into `bun run build`) catches.
   once from [src/index.tsx](../src/index.tsx) as a plain (non-module)
   stylesheet so the vars are visible to every module. Grouped
   semantically: `--color-bg-*`, `--color-border-*`, `--color-text-*`,
-  `--color-accent-*`, `--color-error-*`, `--color-success-*`,
-  `--color-busy-*`, `--color-toggle-active-*`,
+  `--color-accent-*`, `--color-secondary-*`, `--color-on-brand`,
+  `--color-focus-ring`, `--color-error-*`, `--color-success-*`,
+  `--color-busy-*`, `--color-warning-*`,
   `--radius-{xs,sm,md,lg,xl,circle,pill}`,
-  `--shadow-{sm,md,lg,note,playhead-label,accent-glow}`.
+  `--shadow-{sm,md,lg,playhead-label,secondary-glow}`.
+  The palette comes from the `u!` logo: orange `--color-accent` (`#fdc01c`) for
+  fills and primary actions, pink `--color-secondary` (`#c97cb3`) for the
+  playhead, waveform, solo and pitch line. Both are too pale for text on white:
+  text goes through `--color-accent-on-text` / `--color-secondary-text`, and text
+  on a brand fill through `--color-on-brand`. Light and dark themes share token
+  names; `AppSettingsPresenter.applyTheme` keeps `data-theme` on `<html>` in step
+  with `AppSettingsStore.theme`, and `public/apply_theme.js` sets it before first paint.
 - **[src/typography.module.css](../src/typography.module.css)**, one
   CSS-modules class per typography **use case**, not per atomic property:
   `heading`, `body`, `bodySm`, `bodyMd`, `bodyEmphasis`, `label`,
@@ -58,7 +66,7 @@ into `bun run build`) catches.
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-accent);
-    color: var(--color-bg-base);
+    color: var(--color-on-brand);
 }
 ```
 
@@ -101,10 +109,9 @@ conventions like `composes:` and camelCase class names).
 
 ## Carve-outs (stay as raw values, by design)
 
-- `LANE_COLORS` in [src/jot.ts](../src/jot.ts), an 8-color data palette
-  consumed by JS to set per-lane note colors, not styling chrome.
-- Canvas drawing in `mixer.tsx` (`ctx.fillStyle = '#…'`), the Canvas2D
-  API requires literal color strings; `var(--…)` would mean a
+- `WAVEFORM_PAINT_COLOR` in
+  [src/editing/utils/waveform_color.ts](../frontend/src/editing/utils/waveform_color.ts),
+  the Canvas2D API requires literal color strings; `var(--…)` would mean a
   `getComputedStyle` per paint.
 - True one-off typography (tuplet number italic, 22px transport glyph,
   single-use empty-state text), listed in the typography file's header.
@@ -112,7 +119,8 @@ conventions like `composes:` and camelCase class names).
 ## Adding a new visual primitive
 
 1. *Color/radius/shadow* → add a semantically-named token to
-   `design_tokens.css`.
+   `design_tokens.css`, in both the `:root` and dark blocks unless it's
+   the same in both themes.
 2. *Typography use case* appearing in ≥2 places → add a class to
    `typography.module.css`, `composes:` it.
 3. *React UI widget* used by ≥2 pages → drop it under

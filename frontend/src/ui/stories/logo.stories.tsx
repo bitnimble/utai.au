@@ -13,14 +13,11 @@ type Story = StoryObj;
 export const All: Story = {
   render: () => (
     <Gallery>
-      <Variant label="Small (24)">
-        <Logo size={24} />
+      <Variant label="Launch pages (360)">
+        <Logo />
       </Variant>
-      <Variant label="Medium (56)">
-        <Logo size={56} />
-      </Variant>
-      <Variant label="Large (128, with title)">
-        <Logo size={128} title="utai.au" />
+      <Variant label="Small (180)">
+        <Logo width={180} />
       </Variant>
     </Gallery>
   ),

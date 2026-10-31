@@ -19,6 +19,7 @@ import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { formatDuration, ResultSummary } from 'src/music_source/music_search_panel';
 import { statusLabel } from 'src/queue/queue_view';
+import { ThemeToggle } from 'src/settings/theme_toggle';
 import { Modal, ModalBody, ModalHeader } from 'src/ui/modal/modal';
 import { Slider } from 'src/ui/slider/slider';
 import { Spinner } from 'src/ui/spinner/spinner';
@@ -69,6 +70,7 @@ export const RemotePage = observer(function RemotePage({ sessionId, apiBase }: {
           <span className={styles.code}>{sessionId}</span>
         </button>
         <ConnectionStatus store={store} />
+        <ThemeToggle />
       </header>
       <ShareModal store={store} presenter={presenter} />
       <NowPlaying store={store} presenter={presenter} />

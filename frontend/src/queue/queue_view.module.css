@@ -4,7 +4,7 @@
     padding: 0 5px;
     border-radius: var(--radius-lg);
     background: var(--color-accent);
-    color: var(--color-bg-base);
+    color: var(--color-on-brand);
     text-align: center;
 }
 

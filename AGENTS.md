@@ -211,7 +211,8 @@ Frontend (`bun`, repo root):
 | `bun run e2e` | Playwright suite. |
 | `bun run tauri` | Tauri desktop build (via `scripts/tauri-build.ts`). |
 | `bun run wasm:build` | Rebuild the committed `track_effects.wasm` from `src-tauri/crates/audio` (run after changing a track effect; the web AudioWorklet runs the same Rust effect chain as the desktop mixer). |
-| `bun run android:init` | Generate `src-tauri/gen/android` (gitignored), TV-patched. |
+| `bun run tauri icon src-tauri/app-icon.json` | Regenerate `src-tauri/icons/` from the `u!` sources. Delete `src-tauri/gen/android` first: when it exists, the Android icons land there instead. |
+| `bun run android:init` | Generate `src-tauri/gen/android` (gitignored), TV-patched, with our launcher icons. |
 | `bun run android:build` | Android APK. |
 | `bun run release [version]` | Bump, write the changelog, commit + tag `v<version>`. |
 | `bun run win:build` | **Cross-build** the Windows app (binary + NSIS installer) from Linux via cargo-xwin, no Wine. |

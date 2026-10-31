@@ -30,6 +30,7 @@ const LOCAL_BACKEND_RETRY_MS = 15_000;
 
 pageLog.follow();
 if (onTv()) followRemote();
+appSettingsPresenter.applyTheme(document.documentElement);
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Missing #root mount element');

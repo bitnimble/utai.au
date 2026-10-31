@@ -9,9 +9,10 @@
     bottom: 0;
     left: 0;
     width: 2px;
-    background: var(--color-accent-strong);
+    background: var(--color-secondary);
     z-index: 5;
-    box-shadow: var(--shadow-accent-glow);
+    /* halo: the waveform is the same pink, the line would vanish over it */
+    box-shadow: 0 0 0 1px var(--color-bg-base), var(--shadow-secondary-glow);
     cursor: ew-resize;
     /* 3D transform (not translateX): Chrome's compositor honours sub-pixel
        positions reliably for 3D transforms; a 2D translate on a
@@ -37,8 +38,8 @@
     top: 0;
     left: 1px;
     transform: translateX(-50%);
-    background: var(--color-accent-strong);
-    color: var(--color-bg-base);
+    background: var(--color-secondary);
+    color: var(--color-on-brand);
     /* stylelint-disable-next-line property-disallowed-list -- tabular-nums stops the timecode jumping width as digits change. */
     font-variant-numeric: tabular-nums;
     /* stylelint-disable-next-line property-disallowed-list -- looser tracking so the timecode reads as a chip. */

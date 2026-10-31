@@ -1,6 +1,7 @@
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
+import { ThemeToggle } from 'src/settings/theme_toggle';
 import { Logo } from 'src/ui/logo/logo';
 import { ToastContainer } from 'src/ui/toasts/toast_container';
 import { LandingPresenter } from './landing_presenter';
@@ -26,9 +27,11 @@ export const LandingPage = observer(function LandingPage() {
 
   return (
     <div className={styles.page} data-testid="landing-page">
+      <ThemeToggle className={styles.themeToggle} />
       <main className={styles.card}>
-        <Logo size={56} title="utai.au" />
-        <h1 className={styles.title}>utai.au</h1>
+        <h1 className={styles.title}>
+          <Logo />
+        </h1>
         <button
           type="button"
           className={styles.create}

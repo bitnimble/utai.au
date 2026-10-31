@@ -36,8 +36,8 @@
 }
 
 .wrap:focus-within .fieldBg {
-    border-color: var(--color-accent);
-    box-shadow: 0 0 0 1px var(--color-accent);
+    border-color: var(--color-focus-ring);
+    box-shadow: 0 0 0 1px var(--color-focus-ring);
 }
 
 .segment {
@@ -100,7 +100,7 @@
 
 .stepBtn:hover:not(:disabled) {
     background: var(--color-bg-hover);
-    color: var(--color-text-secondary-alt);
+    color: var(--color-text-secondary);
 }
 
 .stepBtn:focus-visible {

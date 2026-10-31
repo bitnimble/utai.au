@@ -9,8 +9,9 @@ import styles from './server_setup.module.css';
 export const ServerSetupPage = (): React.ReactElement => (
   <div className={styles.page} data-testid="server-setup-page">
     <main className={styles.card}>
-      <Logo size={56} title="utai.au" />
-      <h1 className={styles.title}>utai.au</h1>
+      <h1 className={styles.title}>
+        <Logo />
+      </h1>
       <p className={styles.hint}>Connect to a utai.au server to search for songs and sing.</p>
       <ServerSetupForm />
     </main>

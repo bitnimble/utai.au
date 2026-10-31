@@ -20,6 +20,8 @@ export type AutoscrollMode = 'off' | 'center' | 'page' | 'line';
  *  and overlays the current lyric lines on a full-size video. */
 export type ViewMode = 'tracks' | 'karaoke';
 
+export type Theme = 'light' | 'dark';
+
 /** Default lyrics-chip font size (px): ~20% larger than the prior fixed 22px so
  *  the karaoke text reads comfortably. The View-menu stepper adjusts it within
  *  {@link MIN_LYRIC_FONT_SIZE_PX}..{@link MAX_LYRIC_FONT_SIZE_PX}. */
@@ -41,6 +43,8 @@ export class AppSettingsStore {
    * proxy serves on the app's own origin.
    */
   alignerUrl: string = DEFAULT_ALIGNER_URL;
+
+  theme: Theme = 'dark';
 
   /** Origin phones open to join this device's session as a remote; empty = what the backend advertises. */
   remoteBaseUrl: string = '';

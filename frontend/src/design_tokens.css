@@ -16,144 +16,74 @@
     color-scheme: light;
 
     /* ─── Surfaces / backgrounds ──────────────────────────────────── */
-    /* The base UI sits on white; the warm-beige ramp paints panels,
-       gutters, hover states, and the rest of the cream-paper aesthetic. */
     --color-bg-base: #fff;
-    --color-bg-neutral: #fafaf7;        /* near-white app neutral */
-    --color-bg-cream: #fbf6ec;          /* palest cream: gutters, tuplet bg */
-    --color-bg-cream-strong: #fff6e8;   /* instrument-row stripe */
-    --color-bg-cream-warm: #f0ebe2;     /* dropdown menu group bg */
-    --color-bg-hover: #f6efe0;          /* hover treatment on transport/icon buttons */
-
-    /* Translucent overlays (used for blur backdrops & subtle veils). */
-    --color-bg-overlay-soft: rgba(255, 255, 255, 0.5);
+    --color-bg-neutral: #fffcf5;
+    --color-bg-cream: #fff8e6;
+    --color-bg-cream-warm: #fcefd2;
+    --color-bg-hover: #fdf0cd;
     --color-bg-overlay: rgba(255, 255, 255, 0.65);
-    --color-bg-overlay-strong: rgba(255, 255, 255, 0.85);
-    --color-bg-cream-translucent: rgba(251, 246, 236, 0.55);
 
     /* ─── Borders ─────────────────────────────────────────────────── */
-    --color-border: #c9bfae;            /* primary border (most chrome) */
-    --color-border-soft: #e7e0d5;       /* low-emphasis divider */
-    --color-border-soft-alt: #e7e0d2;   /* near-duplicate used by one toolbar group */
-    --color-border-subtle: #e2d8c4;     /* very low contrast outline */
-    --color-border-subtle-2: #d5cab4;
-    --color-border-subtle-3: #b8a98c;
-    --color-border-strong: #b09d80;     /* darker border for hover/active */
-    --color-border-translucent: rgba(201, 191, 174, 0.55);
-    --color-border-translucent-faint: rgba(201, 191, 174, 0.12);
+    --color-border: #dacdd5;
+    --color-border-soft: #eee4ea;
+    --color-border-subtle: #e6dae2;
+    --color-border-strong: #ab98a5;
+    --color-border-translucent: rgba(171, 152, 165, 0.55);
 
     /* ─── Text ────────────────────────────────────────────────────── */
-    --color-text: #2b2b2b;              /* primary copy */
-    --color-text-strong: #333;          /* slightly darker variant (toolbar) */
-    --color-text-secondary: #4a4a4a;
-    --color-text-secondary-alt: #444;
-    --color-text-muted: #555;
-    --color-text-muted-alt: #6b6b6b;    /* most-common "muted readout" grey */
-    --color-text-muted-warm: #6b6256;
-    --color-text-faint: #666;
-    --color-text-faint-alt: #777;
-    --color-text-faint-strong: #888;    /* common "faint label" grey */
-    --color-text-disabled: #999;
-    --color-text-disabled-warm: #b0a48c;
-    --color-text-disabled-strong: #b9b0a0;
+    --color-text: #2a1f29;
+    --color-text-strong: #1f161e;
+    --color-text-secondary: #4b3d49;
+    --color-text-muted: #5c4d59;
+    --color-text-muted-alt: #6c5c68;
+    --color-text-faint-strong: #7d6d79;
+    --color-text-disabled: #a596a0;
 
-    /* ─── Accent (orange) ─────────────────────────────────────────── */
-    --color-accent: #ff8c55;            /* primary accent (focus rings, sliders, action buttons) */
-    --color-accent-hover: #ff7335;      /* accent button hover */
-    --color-accent-strong: #ff5c0a;     /* playhead, drop indicator, alert orange */
-    --color-accent-on-text: #b03d00;    /* high-contrast text on light accent bg */
-    --color-accent-on-text-alt: #b46100; /* near-duplicate toolbar variant */
-    --color-accent-busy: #b95c1e;       /* status-pill "busy/working" text */
+    /* ─── Accent: the logo's orange ───────────────────────────────── */
+    --color-accent: #fdc01c;
+    --color-accent-hover: #f0ae00;
+    --color-accent-on-text: #855700;    /* accent as text: #fdc01c is illegible on white */
+    --color-accent-overlay-light: rgba(253, 192, 28, 0.14);
+    --color-accent-overlay-medium: rgba(253, 192, 28, 0.22);
 
-    /* Accent overlays — the accent at fractional opacity, used as washes. */
-    --color-accent-overlay-faint: rgba(255, 140, 85, 0.04);
-    --color-accent-overlay-light: rgba(255, 140, 85, 0.1);
-    --color-accent-overlay-medium: rgba(255, 140, 85, 0.12);
-    --color-accent-strong-glow: rgba(255, 92, 10, 0.5);     /* playhead halo */
-    --color-accent-strong-ring: rgba(255, 92, 10, 0.35);    /* selected-note ring */
+    /* ─── Secondary: the logo's pink ──────────────────────────────── */
+    --color-secondary: #c97cb3;
+    --color-secondary-hover: #b86aa2;
+    --color-secondary-active: #a35a8f;
+    --color-secondary-text: #96487f;    /* links */
+    --color-focus-ring: #a9558f;
+
+    /* Text on either brand fill, in both themes. */
+    --color-on-brand: #2a1f29;
 
     /* ─── Status ──────────────────────────────────────────────────── */
-    --color-error: #b00020;             /* error red (text, border, stop button) */
-    --color-error-hover: #8a0019;
-    --color-error-alt: #b1281c;         /* slightly different red (one toolbar group) */
-    --color-error-bg: #ffecec;
-    --color-error-border: #ffc7c7;
+    --color-error: #b3243f;
+    --color-error-hover: #8f1a30;
+    --color-error-bg: #fdecef;
+    --color-error-border: #f6c6cf;
 
-    --color-success: #1b5e20;
-    --color-success-bg: #e8f5e9;
-    --color-success-border: #b7dfb9;
+    --color-success: #1f6f4a;
+    --color-success-bg: #e7f6ee;
+    --color-success-border: #b5dfc9;
 
-    --color-busy-bg: #fff3e6;
-    --color-busy-border: #ffd4a8;
+    --color-busy-bg: #fff6df;
+    --color-busy-border: #fbdf9a;
 
-    --color-warning: #8a5a00;
-    --color-warning-bg: #fff3e0;
-    --color-warning-border: #ffd9a0;
-
-    /* ─── Toggle accent (solo button yellow) ──────────────────────── */
-    --color-toggle-active: #f2b300;
-    --color-toggle-active-border: #d99f00;
-    --color-toggle-active-hover-border: #b88600;
-    --color-toggle-active-text: #2b2b2b;
-
-    /* ─── Pattern bracket palette ─────────────────────────────────── */
-    /* Distinct colors cycled through to tell pattern brackets apart in
-       the score. Each is dark/saturated enough that the small white
-       pattern label text stays legible. The assigner in jot.ts wraps
-       at the end of this list so all 12 slots are consumed before a
-       jot starts reusing colors. Keep them visually distinct (different
-       hues, not just shades) since adjacent patterns often sit on the
-       same row in the mixer. */
-    --color-pattern-1: #ff7f50;         /* coral */
-    --color-pattern-2: #5ba8e8;         /* sky blue */
-    --color-pattern-3: #7bc74d;         /* leaf green */
-    --color-pattern-4: #a155e0;         /* violet */
-    --color-pattern-5: #daa520;         /* goldenrod */
-    --color-pattern-6: #ef476f;         /* rose */
-    --color-pattern-7: #06aed5;         /* cyan */
-    --color-pattern-8: #8d6e63;         /* warm brown */
-    --color-pattern-9: #2a9d8f;         /* teal */
-    --color-pattern-10: #e76f51;        /* terracotta */
-    --color-pattern-11: #6a5acd;        /* slate-blue */
-    --color-pattern-12: #b85590;        /* magenta */
-
-    /* ─── Misc one-off colors ─────────────────────────────────────── */
-    /* These appear once each but still belong in the palette so the
-       "no naked color literals" rule holds end-to-end. */
-    --color-teal: #2aa198;              /* score: special role indicator */
-    --color-blue-info: #5a7d9a;         /* toolbar: informational accent */
-
-    /* ─── Grid lines ──────────────────────────────────────────────── */
-    /* Sub-beat practice grids drawn behind the notes when toggled from
-       the View menu. Tuned so the visual hierarchy reads main beat
-       (most prominent, dashed) > 16ths > 48ths (most subtle); triplets
-       use a distinct violet hue so they don't blur into the warm-gray
-       16th/48th lines when both are on. The triplet color is sized to
-       sit between 16ths and 48ths in visual weight. */
-    --color-grid-subbeat: #cfc3a6;      /* 16ths: warm gray, lighter than the main beat */
-    --color-grid-subbeat-48: #d7c9ab;   /* 48ths: faint warm gray, just below 16ths */
-    --color-grid-quarter-triplet: #8554b8; /* 6ths: deeper violet so it reads as the "parent" of 12ths */
-    --color-grid-triplet: #a374cf;      /* triplets: subtle violet, distinct hue */
+    --color-warning: #92500f;
+    --color-warning-bg: #fff0e2;
+    --color-warning-border: #f9d2ac;
 
     /* Beat lines drawn over the audio + lyrics tracks from the Beat This!
-       analysis. Translucent warm gray so they read as a faint grid behind the
-       waveform / lyric chips; the downbeat is thicker AND more opaque so bar
-       starts stand out without shouting. */
-    --color-beat-line: rgba(120, 110, 88, 0.16);
-    --color-beat-line-downbeat: rgba(96, 84, 60, 0.42);
-
-    /* "LEAD-IN" caption floating over the hatched lead-in stripe.
-       Subtle warm gray on the cream paper background so it doesn't
-       compete with the bars; the dark-theme override below brightens
-       it so contrast against the dark surface stays readable. */
-    --color-lead-in-label: #8a7e6b;
+       analysis; the downbeat is thicker AND more opaque. */
+    --color-beat-line: rgba(92, 70, 88, 0.16);
+    --color-beat-line-downbeat: rgba(72, 50, 68, 0.42);
 
     /* Karaoke lyrics over the video: no dark override, the video sets the contrast. */
     --color-karaoke-text: #fff;
-    --color-karaoke-outline: #111;
-    --color-karaoke-outline-sung: #2f7fd8;
-    --color-karaoke-outline-current: #ff5c0a;
-    --color-karaoke-banner-bg: rgba(10, 10, 14, 0.72);
+    --color-karaoke-outline: #1b1520;
+    --color-karaoke-outline-sung: #d81b9a;
+    --color-karaoke-outline-current: #e85d00;
+    --color-karaoke-banner-bg: rgba(27, 21, 32, 0.72);
     --color-fullscreen-bg: #000;
 
     /* ─── Radii ───────────────────────────────────────────────────── */
@@ -183,126 +113,76 @@
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
     --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.12);
     --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.14);
-    --shadow-note: 0 1px 2px rgba(0, 0, 0, 0.18);
     --shadow-playhead-label: 0 1px 3px rgba(0, 0, 0, 0.2);
-    --shadow-accent-glow: 0 0 4px rgba(255, 92, 10, 0.5);
+    --shadow-secondary-glow: 0 0 4px rgba(201, 124, 179, 0.6);
 }
 
 /* ─── Dark theme override ──────────────────────────────────────────
- * Applied when `<html data-theme="dark">` is set (explicit user
- * override, or `data-theme="system"` resolving to dark via the OS
- * preference; see src/theme.ts). The radius tokens above are
- * structural so they carry over; everything else is re-mapped to a
- * warm-dark palette that keeps the original cream aesthetic recognisable
- * by inverting only the lightness ramp, not the hue.
- *
- * Token names match the light block one-for-one so consuming module
- * CSS stays unchanged; the lint-banned naked color literals never
- * appear here either.
+ * Applied when `<html data-theme="dark">` is set: the default, and the
+ * View menu / theme toggle's other choice (AppSettingsStore.theme).
+ * Radii are structural so they carry over; every color is re-mapped.
  */
 :root[data-theme='dark'] {
     color-scheme: dark;
 
     /* ─── Surfaces / backgrounds ──────────────────────────────────── */
-    --color-bg-base: #1a1814;
-    --color-bg-neutral: #1f1d18;
-    --color-bg-cream: #25221b;
-    --color-bg-cream-strong: #2c2820;
-    --color-bg-cream-warm: #322e25;
-    --color-bg-hover: #3a352b;
-
-    --color-bg-overlay-soft: rgba(26, 24, 20, 0.5);
-    --color-bg-overlay: rgba(26, 24, 20, 0.65);
-    --color-bg-overlay-strong: rgba(26, 24, 20, 0.85);
-    --color-bg-cream-translucent: rgba(37, 34, 27, 0.6);
+    --color-bg-base: #1b1520;
+    --color-bg-neutral: #201925;
+    --color-bg-cream: #271f2c;
+    --color-bg-cream-warm: #2e2534;
+    --color-bg-hover: #372c3d;
+    --color-bg-overlay: rgba(27, 21, 32, 0.65);
 
     /* ─── Borders ─────────────────────────────────────────────────── */
-    --color-border: #4a4438;
-    --color-border-soft: #38332a;
-    --color-border-soft-alt: #38332a;
-    --color-border-subtle: #322e25;
-    --color-border-subtle-2: #3f3a30;
-    --color-border-subtle-3: #6b6354;
-    --color-border-strong: #7a6f5c;
-    --color-border-translucent: rgba(122, 111, 92, 0.55);
-    --color-border-translucent-faint: rgba(122, 111, 92, 0.18);
+    --color-border: #4b3f52;
+    --color-border-soft: #382e3e;
+    --color-border-subtle: #33293a;
+    --color-border-strong: #75657d;
+    --color-border-translucent: rgba(117, 101, 125, 0.55);
 
     /* ─── Text ────────────────────────────────────────────────────── */
-    --color-text: #ece8de;
-    --color-text-strong: #f4f0e6;
-    --color-text-secondary: #d8d2c2;
-    --color-text-secondary-alt: #d8d2c2;
-    --color-text-muted: #b5ad9c;
-    --color-text-muted-alt: #9c9381;
-    --color-text-muted-warm: #a8a08e;
-    --color-text-faint: #8a8170;
-    --color-text-faint-alt: #807866;
-    --color-text-faint-strong: #6f6757;
-    --color-text-disabled: #5f5748;
-    --color-text-disabled-warm: #5a5345;
-    --color-text-disabled-strong: #4d473b;
+    --color-text: #f3ecf1;
+    --color-text-strong: #fbf6fa;
+    --color-text-secondary: #dcd2da;
+    --color-text-muted: #bfb3bd;
+    --color-text-muted-alt: #a99ca7;
+    --color-text-faint-strong: #8d808b;
+    --color-text-disabled: #675b65;
 
-    /* ─── Accent (orange) ─────────────────────────────────────────── */
-    /* Slight tone shifts so the orange stays vibrant on the dark surface; `accent-strong` brightens (#ff5c0a reads dim on dark bg) and
-       `accent-on-text` lightens so text on a light-accent fill stays
-       legible. */
-    --color-accent: #ff8c55;
-    --color-accent-hover: #ff9866;
-    --color-accent-strong: #ff7a3a;
-    --color-accent-on-text: #ffd1a8;
-    --color-accent-on-text-alt: #ffc28e;
-    --color-accent-busy: #ffa066;
+    /* ─── Accent: the logo's orange ───────────────────────────────── */
+    --color-accent: #fdc01c;
+    --color-accent-hover: #ffcf4f;
+    --color-accent-on-text: #fdc01c;
+    --color-accent-overlay-light: rgba(253, 192, 28, 0.12);
+    --color-accent-overlay-medium: rgba(253, 192, 28, 0.2);
 
-    --color-accent-overlay-faint: rgba(255, 140, 85, 0.06);
-    --color-accent-overlay-light: rgba(255, 140, 85, 0.16);
-    --color-accent-overlay-medium: rgba(255, 140, 85, 0.22);
-    --color-accent-strong-glow: rgba(255, 122, 58, 0.55);
-    --color-accent-strong-ring: rgba(255, 122, 58, 0.45);
+    /* ─── Secondary: the logo's pink ──────────────────────────────── */
+    --color-secondary: #c97cb3;
+    --color-secondary-hover: #d691c2;
+    --color-secondary-active: #e2a8d1;
+    --color-secondary-text: #e2a8d1;
+    --color-focus-ring: #e2a8d1;
 
     /* ─── Status ──────────────────────────────────────────────────── */
-    --color-error: #ff6b78;
-    --color-error-hover: #ff8590;
-    --color-error-alt: #ff7a6a;
-    --color-error-bg: #3a1c1f;
-    --color-error-border: #5a2d33;
+    --color-error: #f27f83;
+    --color-error-hover: #f79a9d;
+    --color-error-bg: #3a1c26;
+    --color-error-border: #5e2d3b;
 
-    --color-success: #7dd391;
-    --color-success-bg: #1c2e22;
-    --color-success-border: #2e4d36;
+    --color-success: #97d3b4;
+    --color-success-bg: #1b2e28;
+    --color-success-border: #2f4d41;
 
-    --color-busy-bg: #3a2e1d;
-    --color-busy-border: #5a4628;
+    --color-busy-bg: #38291a;
+    --color-busy-border: #5c4522;
 
-    --color-warning: #e6b35c;
-    --color-warning-bg: #3a2e1d;
-    --color-warning-border: #5a4628;
+    --color-warning: #f4a23c;
+    --color-warning-bg: #3a2a1c;
+    --color-warning-border: #5e4326;
 
-    /* ─── Toggle accent (solo button yellow) ──────────────────────── */
-    --color-toggle-active: #f2b300;
-    --color-toggle-active-border: #c9920a;
-    --color-toggle-active-hover-border: #ffd24d;
-    --color-toggle-active-text: #1a1814;
-
-    /* ─── Misc one-off colors ─────────────────────────────────────── */
-    --color-teal: #5dc4b8;
-    --color-blue-info: #88a9c4;
-
-    /* ─── Grid lines ──────────────────────────────────────────────── */
-    /* Mirrors the light-theme intent: less contrast against the dark
-       bg = more subtle. 16ths read just dim enough to clearly defer
-       to the main-beat dashed line; 48ths sit close to the bg
-       luminance; triplets keep a violet hue that still reads on dark. */
-    --color-grid-subbeat: #574f41;      /* 16ths: dim warm gray */
-    --color-grid-subbeat-48: #4a4232;   /* 48ths: faint warm gray, just below 16ths */
-    --color-grid-quarter-triplet: #b393d8; /* 6ths: brighter violet so it reads as the "parent" of 12ths on the dark bg */
-    --color-grid-triplet: #9676b8;      /* triplets: muted violet, distinct hue */
-
-    /* Beat lines: light warm gray on the dark surface, same faint/prominent
-       split as the light theme. */
-    --color-beat-line: rgba(216, 208, 188, 0.14);
-    --color-beat-line-downbeat: rgba(232, 224, 204, 0.36);
-
-    --color-lead-in-label: #b5ac98;     /* bright enough to read against dark bg */
+    /* Beat lines: same faint/prominent split as the light theme. */
+    --color-beat-line: rgba(222, 208, 218, 0.14);
+    --color-beat-line-downbeat: rgba(236, 224, 232, 0.36);
 
     /* ─── Shadows ─────────────────────────────────────────────────── */
     /* Dark surfaces need deeper alphas to read as elevation against the
@@ -310,9 +190,8 @@
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
     --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.55);
     --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.65);
-    --shadow-note: 0 1px 2px rgba(0, 0, 0, 0.55);
     --shadow-playhead-label: 0 1px 3px rgba(0, 0, 0, 0.6);
-    --shadow-accent-glow: 0 0 4px rgba(255, 122, 58, 0.55);
+    --shadow-secondary-glow: 0 0 4px rgba(201, 124, 179, 0.7);
 }
 
 /* Per-frame playhead position, written by the `autorun` in

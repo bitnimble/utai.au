@@ -965,6 +965,14 @@ const ViewMenu = observer(function ViewMenu() {
               testId="show-romaji"
             />
           </DropdownSection>
+          <DropdownSection label="Appearance">
+            <ToggleMenuItem
+              label="Light theme"
+              active={appSettingsStore.theme === 'light'}
+              onToggle={() => appSettingsPresenter.toggleTheme()}
+              testId="light-theme"
+            />
+          </DropdownSection>
         </>
       )}
     </DropdownButton>

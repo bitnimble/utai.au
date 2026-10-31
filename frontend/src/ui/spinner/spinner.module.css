@@ -34,7 +34,7 @@
    neutral surfaces (status pills, the full-page loading overlay). */
 .toneAccent {
     border-color: var(--color-border-translucent);
-    border-top-color: var(--color-accent);
+    border-top-color: var(--color-accent-on-text);
 }
 
 /* Muted three-quarter ring (transparent head): a quieter indicator that

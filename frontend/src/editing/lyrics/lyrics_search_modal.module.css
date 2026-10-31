@@ -100,7 +100,7 @@
 .resultItemSelected,
 .resultItemSelected:hover {
     background: var(--color-bg-cream);
-    border-left-color: var(--color-accent);
+    border-left-color: var(--color-accent-on-text);
 }
 
 .resultPrimary {

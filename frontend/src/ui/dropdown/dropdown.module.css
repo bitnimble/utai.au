@@ -43,7 +43,7 @@
 
 .dropdownItemActive {
     background: var(--color-bg-hover);
-    color: var(--color-accent);
+    color: var(--color-accent-on-text);
 }
 
 .submenu {
@@ -115,7 +115,7 @@
     align-items: center;
     justify-content: center;
     width: 12px;
-    color: var(--color-accent);
+    color: var(--color-accent-on-text);
     line-height: 1;
 }
 

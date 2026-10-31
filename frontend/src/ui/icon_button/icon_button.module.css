@@ -32,7 +32,7 @@
 
 .iconBox:hover {
     border-color: var(--color-text-faint-strong);
-    color: var(--color-text-secondary-alt);
+    color: var(--color-text-secondary);
 }
 
 .iconButton {
@@ -66,14 +66,15 @@
 }
 
 .soloActive {
-    background: var(--color-toggle-active);
-    border-color: var(--color-toggle-active-border);
-    color: var(--color-toggle-active-text);
+    background: var(--color-secondary);
+    border-color: var(--color-secondary-hover);
+    color: var(--color-on-brand);
 }
 
 .soloActive:hover {
-    background: var(--color-toggle-active-border);
-    border-color: var(--color-toggle-active-hover-border);
+    background: var(--color-secondary-hover);
+    border-color: var(--color-secondary-active);
+    color: var(--color-on-brand);
 }
 
 /* Clear holds an icon (lucide X), not letter-spaced text, so the

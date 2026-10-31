@@ -1,10 +1,14 @@
-export const Logo = ({ size = 56, title }: { size?: number; title?: string }) => (
+import logoUrl from './utai_logo.svg';
+
+const LOGO_ASPECT = 361 / 900;
+
+export const Logo = ({ width = 360 }: { width?: number }) => (
   <img
-    src="/favicon.svg"
-    alt={title ?? ''}
-    title={title}
-    width={size}
-    height={size}
+    src={logoUrl}
+    alt="utai.au"
+    width={width}
+    height={Math.round(width * LOGO_ASPECT)}
+    style={{ display: 'block', margin: '0 auto', maxWidth: '100%', height: 'auto' }}
     draggable={false}
   />
 );

@@ -24,7 +24,7 @@
     content: '';
     width: 4px;
     height: 8px;
-    border: solid var(--color-bg-base);
+    border: solid var(--color-on-brand);
     border-width: 0 1.5px 1.5px 0;
     transform: rotate(45deg) translate(-0.5px, -1px);
     opacity: 0;
@@ -35,7 +35,7 @@
 }
 
 .checkbox:focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-focus-ring);
     outline-offset: 1px;
 }
 

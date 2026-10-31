@@ -37,7 +37,7 @@
     padding: 8px 10px;
     border-radius: var(--radius-md);
     background: var(--color-bg-cream);
-    color: var(--color-text-faint);
+    color: var(--color-text-faint-strong);
 }
 
 .button {
@@ -48,7 +48,7 @@
     border: none;
     border-radius: var(--radius-md);
     background: var(--color-accent);
-    color: var(--color-bg-base);
+    color: var(--color-on-brand);
     cursor: pointer;
 }
 

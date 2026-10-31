@@ -27,6 +27,7 @@ export class AppSettingsPresenter {
     autorun(() => {
       const snapshot = JSON.stringify({
         alignerUrl: this.settings.alignerUrl,
+        theme: this.settings.theme,
         remoteBaseUrl: this.settings.remoteBaseUrl,
         showLyricsPitch: this.settings.showLyricsPitch,
         showLyricsVibrato: this.settings.showLyricsVibrato,
@@ -50,6 +51,17 @@ export class AppSettingsPresenter {
 
   setAlignerUrl(url: string): void {
     this.settings.alignerUrl = url;
+  }
+
+  toggleTheme(): void {
+    this.settings.theme = this.settings.theme === 'dark' ? 'light' : 'dark';
+  }
+
+  /** Keeps `root`'s `data-theme`, which design_tokens.css keys off, on the current theme. */
+  applyTheme(root: { dataset: DOMStringMap }): void {
+    autorun(() => {
+      root.dataset.theme = this.settings.theme;
+    });
   }
 
   setRemoteBaseUrl(url: string): void {
@@ -125,6 +137,9 @@ export class AppSettingsPresenter {
       const obj = parsed as Record<string, unknown>;
       if (typeof obj.alignerUrl === 'string') {
         this.settings.alignerUrl = obj.alignerUrl;
+      }
+      if (obj.theme === 'light' || obj.theme === 'dark') {
+        this.settings.theme = obj.theme;
       }
       if (typeof obj.remoteBaseUrl === 'string') {
         this.settings.remoteBaseUrl = obj.remoteBaseUrl;

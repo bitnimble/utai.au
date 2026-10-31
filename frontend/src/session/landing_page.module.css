@@ -1,5 +1,12 @@
 .page {
     composes: page from '../ui/launch_page/launch_page.module.css';
+    position: relative;
+}
+
+.themeToggle {
+    position: absolute;
+    top: 12px;
+    right: 12px;
 }
 
 .card {

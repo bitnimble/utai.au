@@ -22,7 +22,7 @@
 
 .url {
     composes: bodyMd from '../typography.module.css';
-    color: var(--color-accent);
+    color: var(--color-secondary-text);
     word-break: break-all;
 }
 

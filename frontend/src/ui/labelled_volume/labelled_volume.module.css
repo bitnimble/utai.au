@@ -28,7 +28,7 @@
 }
 
 .muteButton[aria-pressed='true'] {
-    color: var(--color-accent);
+    color: var(--color-accent-on-text);
 }
 
 .slider {
