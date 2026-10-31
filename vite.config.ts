@@ -114,6 +114,9 @@ export default defineConfig({
     target: 'esnext',
   },
   optimizeDeps: {
+    // Pre-bundling moves its JS away from its .wasm, whose import.meta.url-relative
+    // fetch then gets index.html from the SPA fallback.
+    exclude: ['onnxruntime-web'],
     esbuildOptions: {
       target: ESBUILD_TARGET,
     },
