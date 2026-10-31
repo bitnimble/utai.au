@@ -43,6 +43,7 @@ def _annotate(body: JapaneseRequest) -> JapaneseResponse:
                     JapaneseWordOut(
                         segments=[RubySegment(base=s.base, reading=s.reading) for s in w.segments],
                         romaji=w.romaji,
+                        romajiJoinsNext=w.romaji_joins_next,
                     )
                     for w in ann.words
                 ],

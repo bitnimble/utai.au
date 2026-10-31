@@ -231,6 +231,8 @@ export type LyricWordMeasureInput = {
   segments?: readonly RubySegment[];
   /** Romaji rendered under the word, which widens it when longer. */
   romaji?: string;
+  /** Its romaji and the next word's are parts of one romanized word. */
+  romajiJoinsNext?: boolean;
 };
 
 export type LyricLineMeasureInput = {
@@ -298,12 +300,13 @@ export function layoutLyricWords(
           width: w.romaji ? Math.max(textPx, lyricsMeasurer.measureRomajiPx(w.romaji, font, fontSizePx)) : textPx,
           cellPx: w.beatWidth * pxPerBeat,
           text: w.text,
+          romajiJoinsNext: w.romajiJoinsNext,
         };
       })
       .sort((a, b) => a.natural - b.natural);
     const gaps = words
       .slice(1)
-      .map((w, i) => (needsWordSpace(words[i].text, w.text) ? spacePx : MIN_GAP_PX));
+      .map((w, i) => (!words[i].romajiJoinsNext && needsWordSpace(words[i].text, w.text) ? spacePx : MIN_GAP_PX));
     const { positions, shown } = packLine(
       words.map((w) => w.natural),
       words.map((w) => w.width),
@@ -360,6 +363,7 @@ export function lyricMeasureInputs(
         beatWidth: w.beatWidth,
         segments: display[j].segments,
         romaji: display[j].romaji,
+        romajiJoinsNext: display[j].romajiJoinsNext,
       })),
     };
   });

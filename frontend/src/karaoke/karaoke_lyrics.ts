@@ -1,4 +1,5 @@
 import { needsWordSpace, WIDE_CHAR_RE } from 'src/editing/lyrics/lyrics_measure';
+import { baseText, WordDisplay } from 'src/lyrics/furigana';
 import { activeLineIndexAt, isBlankLyricLine, lineSpanSec, LyricLine } from 'src/lyrics/lrc';
 
 const LINE_LEAD_IN_SEC = 3;
@@ -84,10 +85,16 @@ export function splitLongLines(
 }
 
 /** Whether a space shows before each segment: romaji shown in place of
- *  unspaced Japanese still needs one between words. */
-export function spacesBefore(segments: readonly LineSegment[], shown: readonly string[]): boolean[] {
+ *  unspaced Japanese still needs one between words, though not between the
+ *  parts of one romanized word. */
+export function spacesBefore(segments: readonly LineSegment[], display: readonly WordDisplay[]): boolean[] {
+  const shown = display.map((d) => baseText(d.segments));
   return shown.map(
-    (text, i) => i > 0 && needsWordSpace(shown[i - 1], text) && !needsWordSpace(segments[i - 1].text, segments[i].text),
+    (text, i) =>
+      i > 0 &&
+      !display[i - 1].romajiJoinsNext &&
+      needsWordSpace(shown[i - 1], text) &&
+      !needsWordSpace(segments[i - 1].text, segments[i].text),
   );
 }
 

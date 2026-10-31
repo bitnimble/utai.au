@@ -9,9 +9,9 @@ type Utai = {
 };
 
 type Seg = { base: string; reading?: string };
-/** A morpheme the stub backend knows: its ruby, its romaji word, and whether a
- *  phrase starts at it. */
-type Entry = { surface: string; segments: Seg[]; romaji: string; phrase?: boolean };
+/** A morpheme the stub backend knows: its ruby, its romaji, whether that runs
+ *  into the next morpheme's, and whether a phrase starts at it. */
+type Entry = { surface: string; segments: Seg[]; romaji: string; joinsNext?: boolean; phrase?: boolean };
 
 const kana = (surface: string, romaji: string, phrase?: boolean): Entry => ({
   surface,
@@ -36,8 +36,13 @@ const LEXICON: Entry[] = [
   { surface: '嗤って', segments: [{ base: '嗤', reading: 'わら' }, { base: 'って' }], romaji: 'waratte' },
   kana('きた', 'kita'),
   { surface: '奴ら', segments: [{ base: '奴', reading: 'やつ' }, { base: 'ら' }], romaji: 'yatsura' },
-  { surface: '上がって', segments: [{ base: '上', reading: 'あ' }, { base: 'がって' }], romaji: 'agatte' },
+  { surface: '上がっ', segments: [{ base: '上', reading: 'あ' }, { base: 'がっ' }], romaji: 'agat', joinsNext: true },
+  kana('て', 'te'),
   kana('いる', 'iru'),
+  { surface: '堂々', segments: [{ base: '堂々', reading: 'どうどう' }], romaji: 'doudou' },
+  { surface: 'さらし', segments: [{ base: 'さらし' }], romaji: 'sarashi', joinsNext: true },
+  kana('た', 'ta'),
+  { surface: '罪', segments: [{ base: '罪', reading: 'つみ' }], romaji: 'tsumi' },
   { surface: '生', segments: [{ base: '生', reading: 'なま' }], romaji: 'nama' },
   kana('の', 'no'),
   { surface: '名前', segments: [{ base: '名前', reading: 'なまえ' }], romaji: 'namae', phrase: true },
@@ -53,8 +58,8 @@ const LEXICON: Entry[] = [
 const HEARD_ROMAJI: Record<string, string> = { せい: 'sei', わたし: 'watashi', こころ: 'kokoro' };
 
 /** Annotates a line the way `POST /lyrics/japanese` does: the words read
- *  together, each taking back its span and the romaji of the words starting
- *  in it; a heard reading wins. */
+ *  together, each taking back its span and that span's romaji; a heard reading
+ *  wins. */
 function annotate(words: { text: string; reading?: string }[]) {
   const line = words.map((w) => w.text).join('');
   const morphemes: { start: number; entry?: Entry; text: string }[] = [];
@@ -81,11 +86,9 @@ function annotate(words: { text: string; reading?: string }[]) {
         off += seg.base.length;
       }
     }
-    const romaji = morphemes
-      .filter((m) => m.entry && m.start >= span[0] && m.start < span[1])
-      .map((m) => m.entry!.romaji)
-      .join(' ');
-    return { segments, romaji };
+    const inSpan = morphemes.filter((m) => m.entry && m.start >= span[0] && m.start < span[1]).map((m) => m.entry!);
+    const romaji = inSpan.map((e, i) => (i > 0 && !inSpan[i - 1].joinsNext ? ' ' : '') + e.romaji).join('');
+    return { segments, romaji, romajiJoinsNext: inSpan.at(-1)?.joinsNext ?? false };
   });
   return { words: out, phraseStarts: morphemes.filter((m) => m.entry?.phrase).map((m) => m.start) };
 }
@@ -235,6 +238,49 @@ test('karaoke keeps romaji wider than its kanji clear of the next word', async (
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('karaoke-line').locator('[data-testid^="lyrics-word-"]')).toHaveCount(2);
   await expectClear();
+});
+
+test('karaoke: romaji splits with a split word, and highlights with its part', async ({ page }) => {
+  await stubJapaneseReadings(page);
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await pausePlayback(page);
+  await page.evaluate(() =>
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add(
+      [
+        {
+          startSec: 1,
+          text: '堂々さらした罪',
+          words: [
+            { startSec: 1, endSec: 1.5, text: '堂々' },
+            { startSec: 1.5, endSec: 2, text: 'さらし' },
+            { startSec: 2, endSec: 2.5, text: 'た' },
+            { startSec: 2.5, endSec: 3, text: '罪' },
+          ],
+        },
+      ],
+      { source: 'plaintext', sourceLabel: 'probe' },
+    ),
+  );
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('show-romaji').click();
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(2.2));
+  const line = page.getByTestId('karaoke-line');
+  await expect(line.locator('rt[data-romaji]')).toHaveText(['doudou', 'sarashi', 'ta', 'tsumi']);
+  await expect(line.locator('[data-word-state="current"] rt[data-romaji]')).toHaveText('ta');
+
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('show-kanji').click();
+  await page.getByTestId('show-furigana').click();
+  await page.keyboard.press('Escape');
+  await expect(line).toHaveText('doudou sarashita tsumi');
+  await expect(line.locator('[data-word-state="current"]')).toHaveText('ta');
 });
 
 test("tracks view keeps Japanese words clear of each other's text", async ({ page }) => {

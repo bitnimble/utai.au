@@ -79,9 +79,10 @@ Two wrinkles:
   comes back: per word, ruby segments (the reading fitted over its kanji,
   okurigana bare) and romaji, plus the line's phrase (bunsetsu) starts for
   karaoke line splitting. Words are read together, in context, then each
-  takes its span back; a word shows the romaji of every romanized word
-  starting in it, so one the aligner split (やっ · て) reads whole on its
-  first part. Dictionary-only: no model is involved, so it works without
+  takes its span back, romaji included, so a romanized word the aligner
+  split (やっ · て) reads in matching parts (yat · te) that highlight with
+  their kana, shown unspaced when romaji replaces the text.
+  Dictionary-only: no model is involved, so it works without
   alignment or provisioned models (the frontend shows bare text until the
   backend answers).
 - **Heard readings.** Text alone can't settle a kanji word with several

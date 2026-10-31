@@ -34,8 +34,9 @@ export type FuriganaWord = Pick<LyricWord, 'text' | 'reading'>;
 export type JapaneseScript = { kanji: boolean; furigana: boolean; romaji: boolean };
 
 /** A word as shown: `segments` its main text (readings over its kanji), with
- *  `romaji` under it. */
-export type WordDisplay = { segments: RubySegment[]; romaji?: string };
+ *  `romaji` under it. `romajiJoinsNext`: its romaji and the next word's are
+ *  parts of one romanized word. */
+export type WordDisplay = { segments: RubySegment[]; romaji?: string; romajiJoinsNext?: boolean };
 
 /** How a word with furigana `segments` and `romaji` ('' when it has none)
  *  shows under `script`. Without kanji, the furigana or else the romaji
@@ -60,10 +61,13 @@ export const hasReading = (segments: readonly RubySegment[]): boolean => segment
 
 /** `phraseStarts`: UTF-16 offsets into the joined words, past the first, where
  *  a bunsetsu (a content word plus the particles and endings it carries) begins. */
-type LineAnnotation = { words: { segments: RubySegment[]; romaji: string }[]; phraseStarts: number[] };
+type LineAnnotation = {
+  words: { segments: RubySegment[]; romaji: string; romajiJoinsNext: boolean }[];
+  phraseStarts: number[];
+};
 
 type WireLine = {
-  words: { segments: { base: string; reading?: string | null }[]; romaji: string }[];
+  words: { segments: { base: string; reading?: string | null }[]; romaji: string; romajiJoinsNext: boolean }[];
   phraseStarts: number[];
 };
 
@@ -95,9 +99,9 @@ class FuriganaAnnotator {
     return words.map((w, i) => annotation?.words[i].segments ?? [{ base: w.text }]);
   }
 
-  /** Romaji for each word of a line: a word shows every romanized word that
-   *  starts in it (君と → `kimi to`), so one split across words (やっ · て)
-   *  reads whole on its first. Empty while unread, and for non-Japanese text. */
+  /** Romaji for each word of a line: a word shows its own span's (君と →
+   *  `kimi to`), so one split across words reads in matching parts (やっ · て →
+   *  `yat` · `te`). Empty while unread, and for non-Japanese text. */
   romajiForWords(words: readonly FuriganaWord[]): string[] {
     const annotation = this.annotation(words);
     return words.map((_, i) => annotation?.words[i].romaji ?? '');
@@ -105,7 +109,11 @@ class FuriganaAnnotator {
 
   displayForWords(words: readonly FuriganaWord[], script: JapaneseScript): WordDisplay[] {
     const romaji = script.romaji ? this.romajiForWords(words) : [];
-    return this.segmentsForWords(words).map((segs, i) => displayWord(segs, romaji[i] ?? '', script));
+    const annotated = this.annotation(words)?.words;
+    return this.segmentsForWords(words).map((segs, i) => ({
+      ...displayWord(segs, romaji[i] ?? '', script),
+      romajiJoinsNext: annotated?.[i].romajiJoinsNext ?? false,
+    }));
   }
 
   /** {@link LineAnnotation.phraseStarts} of a line's words; undefined while
@@ -177,6 +185,7 @@ function fromWire(line: WireLine): LineAnnotation {
     words: line.words.map((w) => ({
       segments: w.segments.map((s) => (s.reading != null ? { base: s.base, reading: s.reading } : { base: s.base })),
       romaji: w.romaji,
+      romajiJoinsNext: w.romajiJoinsNext,
     })),
     phraseStarts: line.phraseStarts,
   };

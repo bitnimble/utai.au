@@ -60,8 +60,17 @@ def test_reads_each_word_in_the_context_of_the_line():
     ]
 
 
-def test_a_word_shows_the_romaji_of_every_word_starting_in_it():
-    assert [romaji for _, romaji in _shown("どう", "やっ", "て")] == ["dou", "yatte", ""]
+def test_a_word_shows_the_romaji_of_its_own_span():
+    assert [romaji for _, romaji in _shown("どう", "やっ", "て")] == ["dou", "yat", "te"]
+    assert [romaji for _, romaji in _shown("堂々", "さらし", "た", "罪", "の", "群れ", "と")] == [
+        "doudou",
+        "sarashi",
+        "ta",
+        "tsumi",
+        "no",
+        "mure",
+        "to",
+    ]
     assert _shown("君と二人で行った")[0][1] == "kimi to futari de itta"
     assert _shown("嗤ってきた奴ら")[0] == (
         [("嗤", "わら"), ("ってきた", None), ("奴", "やつ"), ("ら", None)],
@@ -69,8 +78,30 @@ def test_a_word_shows_the_romaji_of_every_word_starting_in_it():
     )
 
 
+def test_romaji_joins_next_only_across_one_romanized_word():
+    ann = annotate_line([("どう", None), ("やっ", None), ("て", None), ("空", None)])
+    assert [w.romaji_joins_next for w in ann.words] == [False, True, False, False]
+    before_punctuation = annotate_line([("やっ", None), ("、", None), ("て", None)])
+    assert [w.romaji_joins_next for w in before_punctuation.words] == [False, False, False]
+
+
 def test_a_word_cutting_a_morpheme_reads_on_its_own_in_furigana_and_romaji():
     assert _shown("心", "内") == [([("心", "こころ")], "kokoro"), ([("内", "うち")], "uchi")]
+
+
+def test_a_word_cutting_a_bare_morpheme_shows_its_share_of_the_romaji():
+    ann = annotate_line([("あり", None), ("がとう", None)])
+    assert [(w.romaji, w.romaji_joins_next) for w in ann.words] == [("ari", True), ("gatou", False)]
+
+
+def test_a_word_cut_right_after_a_sokuon_keeps_the_doubled_consonant():
+    ann = annotate_line([("ちょっ", None), ("と", None)])
+    assert [(w.romaji, w.romaji_joins_next) for w in ann.words] == [("chot", True), ("to", False)]
+
+
+def test_a_heard_word_inside_a_morpheme_still_joins_the_next():
+    ann = annotate_line([("生き", "いき"), ("る", None)])
+    assert [(w.romaji, w.romaji_joins_next) for w in ann.words] == [("iki", True), ("ru", False)]
 
 
 def test_phrase_starts_count_utf16_units_past_an_astral_kanji():
@@ -82,7 +113,7 @@ def test_phrase_starts_count_utf16_units_past_an_astral_kanji():
 def test_a_heard_reading_wins_over_the_dictionary():
     shown = _shown("上がっ", "て", "いる", "、", ("生", "せい"), "。")
     assert shown[4] == ([("生", "せい")], "sei")
-    assert shown[0] == ([("上", "あ"), ("がっ", None)], "agatte")
+    assert shown[0] == ([("上", "あ"), ("がっ", None)], "agat")
 
 
 def test_latin_and_punctuation_stay_bare_and_unromanized():
@@ -106,12 +137,31 @@ def test_route_annotates_each_line():
     app.include_router(router)
     res = TestClient(app).post(
         "/lyrics/japanese",
-        json={"lines": [{"words": [{"text": "生", "reading": "せい"}]}, {"words": [{"text": "hello"}]}]},
+        json={
+            "lines": [
+                {"words": [{"text": "生", "reading": "せい"}]},
+                {"words": [{"text": "hello"}]},
+                {"words": [{"text": "やっ"}, {"text": "て"}]},
+            ]
+        },
     )
     assert res.status_code == 200
     assert res.json() == {
         "lines": [
-            {"words": [{"segments": [{"base": "生", "reading": "せい"}], "romaji": "sei"}], "phraseStarts": []},
-            {"words": [{"segments": [{"base": "hello", "reading": None}], "romaji": ""}], "phraseStarts": []},
+            {
+                "words": [{"segments": [{"base": "生", "reading": "せい"}], "romaji": "sei", "romajiJoinsNext": False}],
+                "phraseStarts": [],
+            },
+            {
+                "words": [{"segments": [{"base": "hello", "reading": None}], "romaji": "", "romajiJoinsNext": False}],
+                "phraseStarts": [],
+            },
+            {
+                "words": [
+                    {"segments": [{"base": "やっ", "reading": None}], "romaji": "yat", "romajiJoinsNext": True},
+                    {"segments": [{"base": "て", "reading": None}], "romaji": "te", "romajiJoinsNext": False},
+                ],
+                "phraseStarts": [],
+            },
         ]
     }

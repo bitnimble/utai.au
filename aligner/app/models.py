@@ -32,6 +32,7 @@ class RubySegment(BaseModel):
 class JapaneseWordOut(BaseModel):
     segments: list[RubySegment]
     romaji: str
+    romajiJoinsNext: bool
 
 
 class JapaneseLineOut(BaseModel):

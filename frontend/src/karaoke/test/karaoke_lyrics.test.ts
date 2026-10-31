@@ -180,9 +180,20 @@ describe('splitLongLines', () => {
 
 describe('spacesBefore', () => {
   test('spaces words romaji runs together, not ones already spaced', () => {
-    expect(spacesBefore([{ text: '君', wordIdx: 0 }, { text: 'と', wordIdx: 1 }], ['kimi', 'to'])).toEqual([false, true]);
+    const shown = (...texts: string[]) => texts.map((base) => ({ segments: [{ base }] }));
+    expect(spacesBefore([{ text: '君', wordIdx: 0 }, { text: 'と', wordIdx: 1 }], shown('kimi', 'to'))).toEqual([false, true]);
     const latin = [{ text: 'a', wordIdx: 0 }, { text: ' ', wordIdx: 0 }, { text: 'b', wordIdx: 1 }];
-    expect(spacesBefore(latin, ['a', ' ', 'b'])).toEqual([false, false, false]);
+    expect(spacesBefore(latin, shown('a', ' ', 'b'))).toEqual([false, false, false]);
+  });
+
+  test('leaves the parts of one romanized word unspaced', () => {
+    const split = [{ text: 'さらし', wordIdx: 0 }, { text: 'た', wordIdx: 1 }, { text: '罪', wordIdx: 2 }];
+    const display = [
+      { segments: [{ base: 'sarashi' }], romajiJoinsNext: true },
+      { segments: [{ base: 'ta' }] },
+      { segments: [{ base: 'tsumi' }] },
+    ];
+    expect(spacesBefore(split, display)).toEqual([false, false, true]);
   });
 });
 

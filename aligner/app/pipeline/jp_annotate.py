@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.pipeline import jp_romaji
-from app.pipeline.jp_romaji import Morpheme, is_han, is_kana, kana_romaji, morpheme_romaji
+from app.pipeline.jp_romaji import Morpheme, geminate, is_han, is_kana, kana_romaji, morpheme_romaji
 
 _CONTENT_POS1 = frozenset(
     {"名詞", "代名詞", "動詞", "形容詞", "形状詞", "副詞", "連体詞", "接続詞", "感動詞", "接頭辞"}
@@ -33,6 +33,7 @@ class Segment:
 class WordAnnotation:
     segments: list[Segment]
     romaji: str
+    romaji_joins_next: bool = False
 
 
 @dataclass
@@ -43,18 +44,11 @@ class LineAnnotation:
     phrase_starts: list[int]
 
 
-@dataclass
-class _RomajiWord:
-    start: int
-    end: int
-    romaji: str
-
-
 def annotate_line(words: list[tuple[str, str | None]]) -> LineAnnotation:
     """Annotate a line given as `(text, heard reading)` display words. A word
-    shows the romaji of every romanized word that starts in it, so one the
-    aligner split (やっ · て) reads whole on its first part (yatte) and the
-    rest show none."""
+    shows the romaji of its own span, so a romanized word the aligner split
+    (やっ · て) reads in matching parts (yat · te), each marked as joining the
+    next."""
     line = "".join(text for text, _ in words)
     if not _is_japanese(line):
         return LineAnnotation([WordAnnotation([Segment(text)], "") for text, _ in words], [])
@@ -64,16 +58,15 @@ def annotate_line(words: list[tuple[str, str | None]]) -> LineAnnotation:
         spans.append((start, start + len(text)))
         start += len(text)
     ms = _morphemes(line)
-    heard ={span: reading for span, (_, reading) in zip(spans, words, strict=True) if reading}
+    heard = {span: reading for span, (_, reading) in zip(spans, words, strict=True) if reading}
     for m in ms:
         reading = heard.pop((m.start, m.end), None)
         if reading is not None:
             m.kana, m.romaji = reading, morpheme_romaji(reading, m.pos1, None)
     jp_romaji.geminate_all(ms)
     line_segments = _line_segments(line, ms)
-    romaji_words = _romaji_words(ms)
     out = [
-        _word(text, heard.get(span), span, line_segments, romaji_words)
+        _word(text, heard.get(span), span, line_segments, ms)
         for (text, _), span in zip(words, spans, strict=True)
     ]
     return LineAnnotation(out, [_utf16_offset(line, i) for i in _phrase_starts(ms)])
@@ -145,7 +138,7 @@ def _word(
     unmatched_reading: str | None,
     span: tuple[int, int],
     line_segments: list[Segment],
-    romaji_words: list[_RomajiWord],
+    ms: list[Morpheme],
 ) -> WordAnnotation:
     """`unmatched_reading`: a heard reading for a word that isn't one
     morpheme of the line, so it couldn't stand in for one."""
@@ -153,14 +146,14 @@ def _word(
     if unmatched_reading:
         heard = fit_furigana(text, unmatched_reading)
         if _has_reading(heard):
-            return WordAnnotation(heard, kana_romaji(unmatched_reading))
+            return WordAnnotation(heard, kana_romaji(unmatched_reading), _romaji_runs_across(end, ms))
     segments = slice_segments(line_segments, start, end)
     if segments is None:
         # The word cuts through a morpheme (心 · 内 of 心内), so it reads on its
         # own, furigana and romaji alike.
         return annotate_line([(text, unmatched_reading)]).words[0]
-    romaji = " ".join(w.romaji for w in romaji_words if start <= w.start < end)
-    return WordAnnotation(segments, kana_romaji(unmatched_reading) if unmatched_reading else romaji)
+    romaji = kana_romaji(unmatched_reading) if unmatched_reading else _span_romaji(start, end, line_segments, ms)
+    return WordAnnotation(segments, romaji, _romaji_runs_across(end, ms))
 
 
 def _morphemes(line: str) -> list[Morpheme]:
@@ -195,22 +188,37 @@ def _line_segments(line: str, ms: list[Morpheme]) -> list[Segment]:
     return _merge_bare(segments)
 
 
-def _romaji_words(ms: list[Morpheme]) -> list[_RomajiWord]:
-    """Romanized words: a morpheme's romaji with the ones it joins onto
-    (inflections, auxiliaries)."""
-    words: list[_RomajiWord] = []
-    glue = False
+def _span_romaji(start: int, end: int, line_segments: list[Segment], ms: list[Morpheme]) -> str:
+    """Romaji of `[start, end)`, spaced between romanized words. A morpheme the
+    span cuts contributes the romaji of its share of the reading."""
+    romaji = ""
     for m in ms:
-        if not m.romaji:
-            glue = False
+        if m.end <= start or m.start >= end:
             continue
-        if glue and words:
-            words[-1].romaji += m.romaji
-            words[-1].end = m.end
-        else:
-            words.append(_RomajiWord(m.start, m.end, m.romaji))
-        glue = m.joins_next
-    return words
+        piece = m.romaji if start <= m.start and m.end <= end else _share_romaji(m, start, end, line_segments)
+        if piece:
+            romaji += piece if not romaji or _romaji_runs_across(m.start, ms) else f" {piece}"
+    return romaji
+
+
+def _share_romaji(m: Morpheme, start: int, end: int, line_segments: list[Segment]) -> str:
+    reading = _reading(line_segments, max(start, m.start), min(end, m.end))
+    if m.end > end and reading.endswith("っ"):
+        return geminate(kana_romaji(reading[:-1]) + "っ", kana_romaji(_reading(line_segments, end, m.end)))
+    return kana_romaji(reading)
+
+
+def _reading(line_segments: list[Segment], start: int, end: int) -> str:
+    return "".join(s.reading or s.base for s in slice_segments(line_segments, start, end) or [])
+
+
+def _romaji_runs_across(at: int, ms: list[Morpheme]) -> bool:
+    """Whether line offset `at` falls inside one romanized word: a morpheme's
+    romaji with the ones it joins onto (inflections, auxiliaries)."""
+    return any(m.start < at < m.end and m.romaji for m in ms) or any(
+        m.end == at == following.start and m.joins_next and m.romaji and following.romaji
+        for m, following in zip(ms, ms[1:], strict=False)
+    )
 
 
 def _phrase_starts(ms: list[Morpheme]) -> list[int]:

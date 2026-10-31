@@ -1,5 +1,47 @@
-import { describe, expect, test } from 'bun:test';
-import { lyricFontSizeAt, needsWordSpace, packLine, sustainSpan } from '../lyrics_measure';
+import { afterEach, describe, expect, test } from 'bun:test';
+import {
+  KARAOKE_LYRIC_FONT,
+  layoutLyricWords,
+  lyricFontSizeAt,
+  lyricWordKey,
+  needsWordSpace,
+  packLine,
+  sustainSpan,
+} from '../lyrics_measure';
+
+describe('layoutLyricWords', () => {
+  const realOffscreenCanvas = globalThis.OffscreenCanvas;
+  afterEach(() => {
+    globalThis.OffscreenCanvas = realOffscreenCanvas;
+  });
+
+  test('packs the parts of one romanized word closer than separate words', () => {
+    globalThis.OffscreenCanvas = class {
+      getContext() {
+        return { measureText: (text: string) => ({ width: text.length * 10 }) };
+      }
+    } as unknown as typeof OffscreenCanvas;
+    const secondWordShift = (romajiJoinsNext: boolean): number | undefined =>
+      layoutLyricWords(
+        [
+          {
+            lineIdx: 0,
+            lineStartBeat: 0,
+            words: [
+              { sourceIdx: 0, text: 'sarashi', beatOffset: 0, beatWidth: 1, romajiJoinsNext },
+              { sourceIdx: 1, text: 'ta', beatOffset: 0.01, beatWidth: 1 },
+            ],
+          },
+        ],
+        100,
+        26,
+        KARAOKE_LYRIC_FONT,
+      ).get(lyricWordKey(0, 1))?.shift;
+
+    expect(secondWordShift(true)).toBe(73);
+    expect(secondWordShift(false)).toBe(79);
+  });
+});
 
 describe('sustainSpan', () => {
   test('shows from just past the text to the end of the time cell', () => {

@@ -28,7 +28,6 @@ import {
   followingLineIdx,
   followsGap,
   lineSegments,
-  LineSegment,
   lineSplitLimits,
   shownLineIdx,
   spacesBefore,
@@ -76,9 +75,9 @@ export const KaraokeLyricsOverlay = observer(function KaraokeLyricsOverlay() {
         lineSplitLimits(this.lineWidthEm),
         (segments) => furiganaAnnotator.phraseStartsFor(segments),
         (segments) => {
-          const shown = shownTexts(segments);
-          const spaced = spacesBefore(segments, shown);
-          return shown.map((text, i) => (spaced[i] ? ` ${text}` : text));
+          const display = furiganaAnnotator.displayForWords(segments, appSettingsStore.japaneseScript);
+          const spaced = spacesBefore(segments, display);
+          return display.map((d, i) => (spaced[i] ? ` ${baseText(d.segments)}` : baseText(d.segments)));
         },
       );
     },
@@ -397,7 +396,7 @@ const LineGlyphs = observer(function LineGlyphs({
 }) {
   const segments = React.useMemo(() => lineSegments(line), [line]);
   const display = furiganaAnnotator.displayForWords(segments, appSettingsStore.japaneseScript);
-  const spaced = spacesBefore(segments, display.map((d) => baseText(d.segments)));
+  const spaced = spacesBefore(segments, display);
   return segments.map((s, i) => {
     const countInHere = i === 0 ? countIn : undefined;
     return (
@@ -535,10 +534,6 @@ function fitLineToWidth(
 }
 
 /** The line laid out on a timeline of its own sung span. */
-function shownTexts(segments: readonly LineSegment[]): string[] {
-  return furiganaAnnotator.displayForWords(segments, appSettingsStore.japaneseScript).map((d) => baseText(d.segments));
-}
-
 function positionKaraokeLine(lines: readonly LyricLine[], lineIdx: number): PositionedLine | undefined {
   const span = lineSpanSec(lines, lineIdx);
   const durationSec = span.endSec - span.startSec + 1;

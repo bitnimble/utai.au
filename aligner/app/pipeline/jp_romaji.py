@@ -175,7 +175,7 @@ def morphemes(text: str) -> list[Morpheme]:
 def geminate_all(ms: list[Morpheme]) -> None:
     """Resolve each romaji ending in っ against the morpheme after it."""
     for i, m in enumerate(ms):
-        m.romaji = _geminate(m.romaji, ms[i + 1].romaji if i + 1 < len(ms) else "")
+        m.romaji = geminate(m.romaji, ms[i + 1].romaji if i + 1 < len(ms) else "")
 
 
 def kana_romaji(kana: str) -> str:
@@ -290,7 +290,7 @@ def _squash(romaji: str) -> str:
     return "".join(romaji.split()).lower()
 
 
-def _geminate(romaji: str, following: str) -> str:
+def geminate(romaji: str, following: str) -> str:
     """Romaji ending in the sokuon っ (a stem cut off before its ending, 分かっ
     + て) with the consonant it doubles: wakat + te. Left as っ, uroman reads it
     as a whole "tsu" syllable."""
@@ -310,7 +310,7 @@ def _readings(surface: str, kana: str | None, romaji: str, following: str) -> li
     readings = [Reading(kana=kana, romaji=romaji)]
     for alt in [*_homographs(surface), *_okurigana_readings(surface)]:
         try:
-            alt_romaji = _geminate(_squash(_cutlet().map_kana(alt)), following)
+            alt_romaji = geminate(_squash(_cutlet().map_kana(alt)), following)
         except KeyError:  # kana cutlet has no romaji for
             continue
         if alt_romaji and all(alt_romaji != r.romaji for r in readings):

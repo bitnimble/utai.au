@@ -33,8 +33,8 @@ describe('furiganaAnnotator', () => {
           {
             words: [
               { segments: [{ base: 'どう', reading: null }], romaji: 'dou' },
-              { segments: [{ base: 'やっ', reading: null }], romaji: 'yatte' },
-              { segments: [{ base: 'て', reading: null }], romaji: '' },
+              { segments: [{ base: 'やっ', reading: null }], romaji: 'yat', romajiJoinsNext: true },
+              { segments: [{ base: 'て', reading: null }], romaji: 'te' },
               { segments: [{ base: '生', reading: 'せい' }], romaji: 'sei' },
             ],
             phraseStarts: [],
@@ -48,8 +48,13 @@ describe('furiganaAnnotator', () => {
     expect(furiganaAnnotator.segmentsForWords(words)[3]).toEqual([{ base: '生' }]);
     await when(() => furiganaAnnotator.romajiForWords(words)[1] !== '');
 
-    expect(furiganaAnnotator.romajiForWords(words)).toEqual(['dou', 'yatte', '', 'sei']);
+    expect(furiganaAnnotator.romajiForWords(words)).toEqual(['dou', 'yat', 'te', 'sei']);
     expect(furiganaAnnotator.segmentsForWords(words)[3]).toEqual([{ base: '生', reading: 'せい' }]);
+    expect(
+      furiganaAnnotator
+        .displayForWords(words, { kanji: false, furigana: false, romaji: true })
+        .map((d) => d.romajiJoinsNext),
+    ).toEqual([false, true, false, false]);
     expect(bodies).toEqual([
       {
         lines: [
