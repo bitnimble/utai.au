@@ -62,7 +62,7 @@ export const ScoringControls = observer(function ScoringControls() {
       >
         {DIFFICULTIES.map((d) => (
           <option key={d} value={d}>
-            {d[0].toUpperCase() + d.slice(1)}
+            {d}
           </option>
         ))}
       </select>
