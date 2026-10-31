@@ -1156,7 +1156,8 @@ def _preprocess_lines(
     non_empty_indices)`:
 
       - `all_tokens` / `all_text`: concatenated `preprocess_text` output
-        over every non-empty line (`all_text` keeps `<star>` markers).
+        over every non-empty line, then a closing `<star>` (`all_text` keeps
+        `<star>` markers).
       - `jp_words`: flat list parallel to the NON-star words (one entry per
         emitted alignment word, in order). A Japanese token contributes its
         `JpToken` (original surface, e.g. "君", plus its readings);
@@ -1243,6 +1244,12 @@ def _preprocess_lines(
         jp_words.extend(line_jp_words)
         line_word_counts.append(line_real)
         non_empty_indices.append(idx)
+
+    if all_tokens:
+        # preprocess_text only stars before a word. Without this one the outro
+        # has no absorber: the last word gets dragged to, or stretched over, it.
+        all_tokens.append("<star>")
+        all_text.append("<star>")
 
     return all_tokens, all_text, jp_words, line_word_counts, non_empty_indices
 

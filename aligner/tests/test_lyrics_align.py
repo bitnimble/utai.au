@@ -16,6 +16,7 @@ from app.pipeline.lyrics_align import (
     InputLine,
     LyricLine,
     LyricWord,
+    _align_words,
     _aligned_reading,
     _detect_language_from_text,
     _hear_readings,
@@ -521,7 +522,50 @@ def _emissions(sung: str):
 
 
 def _spaced_preprocess(romaji: str, romanize: bool, language: str):
-    return (["<star>", " ".join(romaji), "<star>"], ["<star>", romaji, "<star>"])
+    return (["<star>", " ".join(romaji)], ["<star>", romaji])
+
+
+def _align_sung(sung: str, lyrics: str) -> list[dict]:
+    """Full-song alignment of `lyrics` over audio that sings `sung`, through
+    the real preprocess, Viterbi and span code."""
+    from app.pipeline.lyrics_onnx import (
+        get_alignments_np,
+        get_spans,
+        postprocess_results,
+        preprocess_text,
+    )
+
+    all_tokens, all_text, _, _, _ = _preprocess_lines(
+        _lines(lyrics),
+        use_jp_romaji=False,
+        treat_kanji_as_japanese=False,
+        iso3="eng",
+        preprocess_text=preprocess_text,
+    )
+    emissions, seconds = _emissions(sung)
+    return _align_words(
+        all_tokens,
+        all_text,
+        emissions=emissions,
+        audio_seconds=seconds,
+        tokenizer=_LetterTokenizer(),
+        stride=20,
+        get_alignments=get_alignments_np,
+        get_spans=get_spans,
+        postprocess_results=postprocess_results,
+    )
+
+
+def test_last_word_ends_when_sung_before_a_silent_outro():
+    *_, last = _align_sung("ka-no" + "-" * 40, "ka no")
+    assert 0.1 <= last["start"] <= 0.2
+    assert last["end"] <= 0.3
+
+
+def test_last_word_stays_where_sung_before_an_outro_the_model_hears_as_letters():
+    *_, last = _align_sung("ka-no" + "s" * 40, "ka no")
+    assert 0.1 <= last["start"] <= 0.2
+    assert last["end"] <= 0.3
 
 
 def test_realign_text_hides_audio_before_the_start_and_keeps_whole_file_times(monkeypatch, tmp_path):
@@ -633,15 +677,15 @@ def test_stitch_lines_carries_the_heard_reading_to_the_wire():
 
 class _RecordingPreprocess:
     """Stand-in for ctc_forced_aligner.preprocess_text. Returns one
-    alignment word per call (wrapped in <star> on each side, mirroring
-    the real output shape) and records (unit, language) calls."""
+    alignment word per call (with its leading <star>, mirroring the real
+    output shape) and records (unit, language) calls."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
     def __call__(self, unit: str, romanize: bool, language: str):
         self.calls.append((unit, language))
-        return (["<star>", unit, "<star>"], ["<star>", unit, "<star>"])
+        return (["<star>", unit], ["<star>", unit])
 
 
 def test_preprocess_lines_mixed_threads_surfaces_and_counts():
@@ -659,6 +703,18 @@ def test_preprocess_lines_mixed_threads_surfaces_and_counts():
     assert counts == [3]
     assert non_empty == [0]
     assert [w.surface if w else None for w in jp_words] == ["君", "と", None]
+
+
+def test_preprocess_lines_closes_the_song_with_an_absorber():
+    all_tokens, all_text, _, _, _ = _preprocess_lines(
+        _lines("ka", "", "no"),
+        use_jp_romaji=False,
+        treat_kanji_as_japanese=False,
+        iso3="eng",
+        preprocess_text=_RecordingPreprocess(),
+    )
+    assert all_tokens == ["<star>", "ka", "<star>", "no", "<star>"]
+    assert all_text == ["<star>", "ka", "<star>", "no", "<star>"]
 
 
 def test_preprocess_lines_feeds_romaji_as_english_not_charlevel():
