@@ -3,7 +3,7 @@ import { Music, Search } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import type { TrackResult } from 'src/net/music_source_client';
-import { Spinner } from 'src/ui/spinner/spinner';
+import { ScoreSpinner } from 'src/ui/score_spinner/score_spinner';
 import { MusicSourcePresenterContext, MusicSourceStoreContext } from './music_source_contexts';
 import type { MusicSourcePresenter } from './music_source_presenter';
 import type { MusicSourceStore } from './music_source_store';
@@ -47,7 +47,7 @@ export const MusicSearchPanel = observer(function MusicSearchPanel() {
           title={searching ? 'Searching…' : 'Search'}
           data-testid="music-search-submit"
         >
-          {searching ? <Spinner size={16} tone="current" /> : <Search size={16} aria-hidden="true" />}
+          <Search size={16} aria-hidden="true" />
         </button>
       </form>
       <ResultsView store={store} presenter={presenter} />
@@ -82,7 +82,7 @@ const ResultsView = observer(function ResultsView({
   }
   let content: React.ReactNode = null;
   let errorTone = false;
-  if (phase.kind === 'searching') content = 'Searching…';
+  if (phase.kind === 'searching') content = <ScoreSpinner label="Searching" testId="music-search-spinner" />;
   else if (phase.kind === 'no-results') content = 'No tracks found.';
   else if (phase.kind === 'error') {
     content = `Search failed: ${phase.message}`;

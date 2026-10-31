@@ -43,6 +43,8 @@ into `bun run build`) catches.
   - `form.module.css`, `field` (input chrome), `fieldBlock` (textarea).
   - `spinner.module.css`, one `spinner` class (circle + 0.8s rotation
     keyframes defined once).
+  - `score_spinner.tsx`, the 80×45 scrolling-stave loader for loading states
+    with room for it; `Spinner` covers the small inline ones.
   - `dropdown.module.css`, `popoverPanel` chrome that
     `dropdownPanel` / `submenuPanel` / etc. compose; `dropdownItem`
     composes `ghost` so dropdown rows are real buttons.

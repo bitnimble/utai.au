@@ -1,0 +1,36 @@
+.score {
+    flex: 0 0 auto;
+    width: 80px;
+    height: 45px;
+    overflow: hidden;
+    mask-image: linear-gradient(90deg, transparent, black 25%, black 75%, transparent);
+}
+
+.tape {
+    display: block;
+    width: 300%;
+    height: 100%;
+    animation: score-spinner-scroll 1.714s linear infinite;
+}
+
+@keyframes score-spinner-scroll {
+    to {
+        transform: translateX(-50%);
+    }
+}
+
+.stave {
+    stroke: var(--color-border-strong);
+    stroke-width: 1px;
+    vector-effect: non-scaling-stroke;
+}
+
+.stem {
+    stroke: var(--color-accent-on-text);
+    stroke-width: 1.5px;
+    vector-effect: non-scaling-stroke;
+}
+
+.ink {
+    fill: var(--color-accent-on-text);
+}
