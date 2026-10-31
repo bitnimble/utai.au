@@ -159,7 +159,8 @@ header `backendFetch` attaches.
 - **Model inference is ONNX ONLY; the runtime NEVER imports torch.** Every
   ML model runs torch-free on onnxruntime, on a CUDA box separation
   auto-rides the **TensorRT** EP (engine cached under `cache_dir/tensorrt`),
-  CUDA/DirectML (Windows)/CoreML otherwise. torch exists SOLELY for the BUILD side: the one-time
+  CUDA/CoreML otherwise; on Windows, separation rides the **TensorRT-RTX** EP where it
+  loads, and DirectML runs everything else. torch exists SOLELY for the BUILD side: the one-time
   `.onnx` export (`separation/export.py`, `lyrics_onnx.export_ctc_model`) and the
   offline torch<->ONNX parity checks (`tests/test_separation_parity.py` via
   `separation/loader.py` + `runner.py`). There is NO runtime torch path anymore;

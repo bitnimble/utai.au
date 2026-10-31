@@ -16,7 +16,12 @@ from pathlib import Path
 
 import numpy as np
 
-from app.pipeline.onnx_cuda import default_providers, log_bound_ep, release_arena_run_options
+from app.pipeline.onnx_cuda import (
+    default_providers,
+    gpu_session_options,
+    log_bound_ep,
+    release_arena_run_options,
+)
 from app.pipeline.pitch.features import SR, F0Contour
 
 N_FFT = 1024
@@ -40,7 +45,9 @@ class Rmvpe:
     def __init__(self, onnx_path: str | Path, providers=None) -> None:
         import onnxruntime as ort
 
-        self._sess = ort.InferenceSession(str(onnx_path), providers=providers or default_providers())
+        self._sess = ort.InferenceSession(
+            str(onnx_path), sess_options=gpu_session_options(), providers=providers or default_providers()
+        )
         log_bound_ep(self._sess, onnx_path)
         self._input_name = self._sess.get_inputs()[0].name
         self._mel_basis: np.ndarray | None = None  # built lazily (needs librosa)

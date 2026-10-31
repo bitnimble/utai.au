@@ -61,8 +61,11 @@ separation = [
     # CUDA-12 line: 1.26 moved to a CUDA-13 build (libcudart.so.13); the CUDA libs
     # below are CUDA 12, so <=1.25.x matches. Bump only alongside a CUDA-13 base.
     "onnxruntime-gpu>=1.19,<1.26; sys_platform == 'linux'",
-    "onnxruntime-directml>=1.19,<1.26; sys_platform == 'win32'",
+    "onnxruntime-directml>=1.24,<1.26; sys_platform == 'win32'",
     "onnxruntime>=1.19,<1.26; sys_platform == 'darwin'",
+    # TensorRT-RTX EP plugin for the vocals body on RTX 30-series+ (driver 580.88+), bundling its
+    # runtime. Anything else stays on DirectML. Needs onnxruntime>=1.24.
+    "onnxruntime-ep-nv-tensorrt-rtx-cu13>=0.5,<0.6; sys_platform == 'win32'",
     # `onnx` (distinct from onnxruntime): the folded STFT/iSTFT path builds its
     # forward/inverse graphs with onnx.helper at runtime (onnx_stft.py), so it's a
     # separation runtime dep, not just export tooling. Without it the fold's import

@@ -21,7 +21,7 @@ from app.models import ProvisionStatusResponse
 from app.pipeline import language_id
 from app.pipeline.beats import analyze as beats
 from app.pipeline.lyrics_align import aligner
-from app.pipeline.onnx_cuda import preload_cuda_libs
+from app.pipeline.onnx_cuda import preload_cuda_libs, trt_rtx_devices
 from app.pipeline.pitch import analyze as pitch
 from app.pipeline.provision import (
     AssetCheck,
@@ -142,6 +142,8 @@ class Provisioner:
         # find the CUDA libs on its own; must run before any ORT session is created.
         preload_cuda_libs()
         _import_native_modules()
+        # Loads the EP's DLLs, so on this thread for the reason in _import_native_modules.
+        trt_rtx_devices()
         self._spawn(self._check())
         self._spawn(self._load())
 

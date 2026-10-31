@@ -204,11 +204,21 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   find its runtime libs in a torch-free process (`RTLD_GLOBAL`).
   `default_providers()` is CUDA-first and drops TensorRT for **variable-length**
   audio (the CTC aligner) -- a per-shape engine rebuild would dominate.
+- **TensorRT-RTX** (Windows, vocals body only, `np_inference._trt_rtx_session`): an EP
+  plugin wheel (111 MB, bundles its runtime) for RTX 30-series+ with driver 580.88+. ~165 ms
+  per 8 s chunk on a 3080 at ~1.7 GB VRAM, corr 0.99999 vs CUDA. The rewritten body (add-scatter
+  as Gather + Add, weights decoded once) and `nv_runtime_cache_path` live per model version under
+  `settings.cache_dir/tensorrt_rtx`. An uncached session build took ~27 s; how much of that the
+  cache saves on later launches is unmeasured. STFT pre/post stays in numpy. A machine with no EP
+  device or a failed build falls back to DirectML; `UTAI_SEP_TRT=0` opts out.
 - **DirectML** (Windows, `onnxruntime-directml`, any DirectX 12 GPU): DML's scatter
   kernel rejects reductions and the CPU EP has no fp16 add, so the vocals body's
-  add-scatter is rewritten to a MatMul when the session loads (`np_inference._dml_body`).
-  STFT pre/post stays in numpy (`UTAI_SEP_FOLD_STFT=1` opts into `_RoformerFoldInverse`);
-  arena shrinking is off.
+  add-scatter is rewritten to Gather + Add when the session loads (`np_inference._dml_body`).
+  Graph fusion is off on every session (`onnx_cuda.gpu_session_options`): fused, the vocals
+  body computes wrong output (corr 0.69 vs CUDA, 1.5-3 s per chunk) and can hang the GPU;
+  unfused it matches CUDA (corr 0.99999) at ~430 ms per 8 s chunk on a 3080, ~2.2x CUDA.
+  With DirectML bound, STFT pre/post stays in numpy (`UTAI_SEP_FOLD_STFT=1` opts into
+  `_RoformerFoldInverse`). Arena shrinking is off on DirectML and TensorRT-RTX.
 - **VRAM**: models stay loaded (a reload costs 40 s+), so only activation memory
   is trimmed. CUDA sessions get `arena_extend_strategy=kSameAsRequested` and
   `cudnn_conv_use_max_workspace=0` (`onnx_cuda._CUDA_OPTIONS`); every model passes
@@ -218,7 +228,7 @@ models (`settings.pitch_model_offline` = RMVPE, `settings.pitch_model_live`
   for wav2vec2's fp16 grouped pos_conv and ORT silently falls back to CPU. The TRT
   separator shares one context buffer across its subgraphs. Measured on a 3080
   (both test songs, both aligners loaded): ~2.7 GB resident, ~3.5 GB peak.
-- **TensorRT** (separation only, `np_inference._with_tensorrt`): the vocals
+- **TensorRT** (Linux, separation only, `np_inference._with_tensorrt`): the vocals
   body runs a **fixed** 8s chunk, so its engine builds once and is cached
   (`settings.cache_dir/tensorrt`) -- the ~100x-realtime path (vs ~8-18x on
   CUDA). The EP is prepended ahead of CUDA when the TRT runtime is installed

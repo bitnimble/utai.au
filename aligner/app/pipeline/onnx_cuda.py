@@ -33,7 +33,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+TRT_RTX_EP = "NvTensorRTRTXExecutionProvider"
+
 _done = False
+_trt_rtx_loaded: bool | None = None
 
 _CUDA_OPTIONS = {
     # default kNextPowerOfTwo reserves up to ~2x the real activation peak
@@ -58,11 +61,21 @@ def default_providers() -> list[str | tuple[str, dict[str, str]]]:
     # CoreML only for separation, whose graph is rewritten to run whole on it
     # (`_separation_providers`): other models split into many CPU<->CoreML
     # partitions and run slower than on the CPU alone.
-    skip = {"TensorrtExecutionProvider", "CoreMLExecutionProvider"}
+    skip = {"TensorrtExecutionProvider", TRT_RTX_EP, "CoreMLExecutionProvider"}
     avail = [p for p in ort.get_available_providers() if p not in skip]
     # CUDA to the front, CPU to the back.
     avail.sort(key=lambda p: (p != "CUDAExecutionProvider", p == "CPUExecutionProvider"))
     return [(p, dict(_CUDA_OPTIONS)) if p == "CUDAExecutionProvider" else p for p in avail]
+
+
+def gpu_session_options() -> ort.SessionOptions:
+    """SessionOptions for any session a GPU EP may bind."""
+    import onnxruntime as ort
+
+    so = ort.SessionOptions()
+    # Fused DML graphs miscompute the vocals body (corr 0.69 vs CUDA) and can hang the GPU (887A0006).
+    so.add_session_config_entry("ep.dml.disable_graph_fusion", "1")
+    return so
 
 
 def release_arena_run_options(session) -> ort.RunOptions:
@@ -73,8 +86,8 @@ def release_arena_run_options(session) -> ort.RunOptions:
 
     providers = session.get_providers()
     opts = ort.RunOptions()
-    # a shrink spec ORT rejects fails the run; untested on DML
-    if "DmlExecutionProvider" in providers:
+    # a shrink spec ORT rejects fails the run; untested on these
+    if {"DmlExecutionProvider", TRT_RTX_EP} & set(providers):
         return opts
     devices = ["cpu:0"]
     if "CUDAExecutionProvider" in providers:
@@ -89,6 +102,27 @@ def log_bound_ep(session, onnx_path) -> None:
     this is the line to check when a model runs far slower than expected."""
     with contextlib.suppress(Exception):
         log.info("ONNX %s -> %s", os.path.basename(str(onnx_path)), session.get_providers())
+
+
+def trt_rtx_devices() -> list:
+    """The devices the TensorRT-RTX EP can bind, registering it on first call: none off
+    Windows, or on a GPU or driver it doesn't support. Idempotent; never raises."""
+    global _trt_rtx_loaded
+    if _trt_rtx_loaded is False:
+        return []
+    try:
+        import onnxruntime as ort
+
+        if _trt_rtx_loaded is None:
+            import onnxruntime_ep_nv_tensorrt_rtx as trt_rtx
+
+            ort.register_execution_provider_library(trt_rtx.get_ep_name(), trt_rtx.get_library_path())
+            _trt_rtx_loaded = True
+        return [d for d in ort.get_ep_devices() if d.ep_name == TRT_RTX_EP]
+    except Exception as exc:
+        _trt_rtx_loaded = False
+        log.info("TensorRT-RTX EP unavailable: %s", exc)
+        return []
 
 
 def preload_cuda_libs() -> None:

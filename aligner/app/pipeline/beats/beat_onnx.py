@@ -20,7 +20,12 @@ from pathlib import Path
 
 import numpy as np
 
-from app.pipeline.onnx_cuda import default_providers, log_bound_ep, release_arena_run_options
+from app.pipeline.onnx_cuda import (
+    default_providers,
+    gpu_session_options,
+    log_bound_ep,
+    release_arena_run_options,
+)
 from app.request_context import check_cancelled
 
 SR, N_FFT, HOP, N_MELS, FMIN, FMAX = 22050, 1024, 441, 128, 30, 11000
@@ -162,7 +167,7 @@ class OnnxBeatThis:
         if providers is None:
             providers = default_providers()
         try:
-            self.sess = ort.InferenceSession(str(onnx_path), providers=providers)
+            self.sess = ort.InferenceSession(str(onnx_path), sess_options=gpu_session_options(), providers=providers)
         except Exception:
             self.sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
         log_bound_ep(self.sess, onnx_path)

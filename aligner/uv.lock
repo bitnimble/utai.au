@@ -1621,6 +1621,15 @@ wheels = [
 ]
 
 [[package]]
+name = "onnxruntime-ep-nv-tensorrt-rtx-cu13"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/64/6a704b972f2c6806b3a13abce3e0d827deb0e4192e7f4240ffdafa8d099c/onnxruntime_ep_nv_tensorrt_rtx_cu13-0.5.0-py3-none-win_amd64.whl", hash = "sha256:609b19f7236c8522ef005a9f763003a78f492e5d871afad39fe1b247760eb3c7", size = 110875664, upload-time = "2026-10-21T10:27:18.148Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/ce/466b4bf509bea2fc3e21fb72edb0233d02fdad4d1a362c591ba25bb7029d/onnxruntime_ep_nv_tensorrt_rtx_cu13-0.5.0-py3-none-win_arm64.whl", hash = "sha256:b60932e1acd243722915953e3dc6714327038d4f1db6b728de20cead0bc7c4ac", size = 98491796, upload-time = "2026-10-21T10:29:51.611Z" },
+]
+
+[[package]]
 name = "onnxruntime-gpu"
 version = "1.25.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3245,6 +3254,7 @@ lyrics = [
     { name = "onnx" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
     { name = "onnxruntime-directml", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'" },
     { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -3268,6 +3278,7 @@ pitch = [
     { name = "onnx" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
     { name = "onnxruntime-directml", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'" },
     { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -3290,6 +3301,7 @@ separation = [
     { name = "onnx" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
     { name = "onnxruntime-directml", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'" },
     { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -3346,7 +3358,8 @@ lyrics = [
     { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'", specifier = ">=9,<10" },
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.19,<1.26" },
-    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'", specifier = ">=1.19,<1.26" },
+    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'", specifier = ">=1.24,<1.26" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'", specifier = ">=0.5,<0.6" },
     { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'", specifier = ">=1.19,<1.26" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
@@ -3366,7 +3379,8 @@ pitch = [
     { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'", specifier = ">=9,<10" },
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.19,<1.26" },
-    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'", specifier = ">=1.19,<1.26" },
+    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'", specifier = ">=1.24,<1.26" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'", specifier = ">=0.5,<0.6" },
     { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'", specifier = ">=1.19,<1.26" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
@@ -3386,7 +3400,8 @@ separation = [
     { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'", specifier = ">=9,<10" },
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.19,<1.26" },
-    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'", specifier = ">=1.19,<1.26" },
+    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'", specifier = ">=1.24,<1.26" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'", specifier = ">=0.5,<0.6" },
     { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'", specifier = ">=1.19,<1.26" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
