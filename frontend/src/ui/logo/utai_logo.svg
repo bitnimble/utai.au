@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 325" role="img" aria-label="utai.au! 歌い合う">
+  <defs>
+    <path id="glyph-u" d="M18 70V145a37 37 0 0 0 74 0V70M92 145V200M55 182H92"/>
+    <path id="glyph-a" d="M92 70V200M92 125a37 37 0 0 0-37-37a37 37 0 0 0-37 37V145a37 37 0 0 0 37 37a37 37 0 0 0 37-37M55 88H92M55 182H92"/>
+    <clipPath id="mic-head-clip">
+      <circle cx="18" cy="30" r="23"/>
+    </clipPath>
+    <g id="mic" stroke="none">
+      <path d="M-1 72H37L32 198H4z" fill="currentColor" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/>
+      <rect x="12" y="94" width="12" height="28" rx="6" fill="#000" fill-opacity=".18"/>
+      <circle cx="18" cy="30" r="23" fill="currentColor"/>
+      <g clip-path="url(#mic-head-clip)">
+        <path transform="rotate(45 18 30)" d="M-8 9H44M-8 23H44M-8 37H44M-8 51H44M-3 4V56M11 4V56M25 4V56M39 4V56" fill="none" stroke="#000" stroke-opacity=".18" stroke-width="3.500"/>
+      </g>
+    </g>
+    <g id="note-quaver" stroke="none">
+      <ellipse cx="8" cy="30" rx="8" ry="6" transform="rotate(-20 8 30)"/>
+      <path d="M13 29V2h3.500C17 10 26 12 25 22C23.500 16 20 14 16.500 13V29z"/>
+    </g>
+    <g id="note-crotchet" stroke="none">
+      <ellipse cx="8" cy="30" rx="8" ry="6" transform="rotate(-20 8 30)"/>
+      <path d="M13 29V2h3.500V29z"/>
+    </g>
+    <g id="note-beamed" stroke="none">
+      <ellipse cx="7" cy="31" rx="7.500" ry="5.500" transform="rotate(-20 7 31)"/>
+      <ellipse cx="33" cy="27" rx="7.500" ry="5.500" transform="rotate(-20 33 27)"/>
+      <path d="M11.500 30V8L41 2V26H37.500V12L15 16.500V30z"/>
+    </g>
+    <g id="note-semiquaver" stroke="none">
+      <ellipse cx="8" cy="30" rx="8" ry="6" transform="rotate(-20 8 30)"/>
+      <path d="M13 29V0h3.500V29z"/>
+      <path d="M16.500 0C17 7 25 9 24.500 17C23 12.500 20 11 16.500 10z"/>
+      <path d="M16.500 9C17 16 25 18 24.500 26C23 21.500 20 20 16.500 19z"/>
+    </g>
+  </defs>
+
+  <g fill="none" stroke-width="36" stroke-linejoin="round" transform="translate(50 10)">
+    <use href="#glyph-u" stroke="#fdc01c"/>
+    <g transform="translate(130 0)" stroke="#c6d93f">
+      <path d="M36 20V146C36 170 50 182 72 182H92M0 88H92"/>
+    </g>
+    <use href="#glyph-a" transform="translate(246 0)" stroke="#b7b38c"/>
+    <use href="#mic" transform="translate(376 0)" color="#f27f83"/>
+    <circle cx="452" cy="179" r="21" fill="#97d3b4"/>
+    <use href="#glyph-a" transform="translate(494 0)" stroke="#78cce0"/>
+    <use href="#glyph-u" transform="translate(624 0)" stroke="#f4934d"/>
+    <use href="#mic" transform="translate(760 0) rotate(180 18 103.500)" color="#c97cb3"/>
+  </g>
+
+  <g fill="none" stroke="#f4a23c" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" transform="translate(323 242) scale(.66)">
+    <path d="M6 12H54M14 20V34M14 20H34V33M14 33H34M44 12V38Q44 45 37 44M6 52H54M14 60V74M14 60H34V73M14 73H34M44 52V85Q44 93 35 91M68 10C66 22 62 30 56 38M67 24H90C90 30 86 36 82 40M76 40C75 62 68 80 56 92M77 56C80 72 86 84 96 92"/>
+    <path transform="translate(104 0)" d="M22 22C18 50 18 72 30 84C36 88 40 78 44 70M72 30C80 40 86 52 86 64"/>
+    <path transform="translate(200 0)" d="M50 8C42 24 28 38 8 48M50 8C58 24 72 38 92 48M30 48H70M22 60V92M22 60H78V92M22 88H78"/>
+    <path transform="translate(300 0)" d="M35 12C45 18 55 18 65 14M22 42C40 36 70 30 74 46C78 64 60 84 40 92"/>
+  </g>
+
+  <g fill="#f4a23c">
+    <use href="#note-quaver" transform="translate(142 254) scale(1.150)"/>
+    <use href="#note-beamed" transform="translate(197 254) scale(1.150)"/>
+    <use href="#note-crotchet" transform="translate(270 254) scale(1.150)"/>
+    <use href="#note-crotchet" transform="translate(611 254) scale(1.150)"/>
+    <use href="#note-beamed" transform="translate(656 254) scale(1.150)"/>
+    <use href="#note-semiquaver" transform="translate(729 254) scale(1.150)"/>
+  </g>
+</svg>

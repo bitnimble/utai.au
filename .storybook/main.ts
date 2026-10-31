@@ -17,6 +17,7 @@ import path from 'node:path';
 const config: StorybookConfig = {
   stories: ['../frontend/src/**/stories/*.stories.@(ts|tsx)'],
   framework: { name: '@storybook/react-vite', options: {} },
+  staticDirs: ['../frontend/public'],
   viteFinal: async (cfg) => {
     cfg.plugins = cfg.plugins ?? [];
     // `unshift` so the CSS-modules patch wraps Vite's handling before the
