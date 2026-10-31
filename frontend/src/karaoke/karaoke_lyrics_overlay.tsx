@@ -235,9 +235,9 @@ type LineView = (idx: number | undefined, lineWidthPx: number, oneRowFontSizePx?
 type CountIn = { total: number; left: number };
 
 /** The count-in's dots, spent from the right so the rest keep their place. */
-function CountInDots({ countIn, aboveRuby }: { countIn: CountIn; aboveRuby?: boolean }): React.ReactNode {
+function CountInDots({ countIn }: { countIn: CountIn }): React.ReactNode {
   return (
-    <span className={classNames(styles.countIn, aboveRuby && styles.countInAboveRuby)} data-testid="karaoke-count-in" aria-hidden>
+    <span className={styles.countIn} data-testid="karaoke-count-in" aria-hidden>
       {Array.from({ length: countIn.total }, (_, i) => (
         <span key={i} className={styles.countInDot} data-spent={i >= countIn.left || undefined} />
       ))}
@@ -397,23 +397,15 @@ const LineGlyphs = observer(function LineGlyphs({
   const segments = React.useMemo(() => lineSegments(line), [line]);
   const display = furiganaAnnotator.displayForWords(segments, appSettingsStore.japaneseScript);
   const spaced = spacesBefore(segments, display);
-  return segments.map((s, i) => {
-    const countInHere = i === 0 ? countIn : undefined;
-    return (
-      <React.Fragment key={i}>
-        {spaced[i] && ' '}
-        <span
-          className={classNames(countInHere && styles.countInAnchor)}
-          data-word-state={wordState(s.wordIdx, activeWordIdx, activeWordEnded)}
-        >
-          {countInHere && (
-            <CountInDots countIn={countInHere} aboveRuby={hasReading(display[i].segments)} />
-          )}
-          <RubyText {...display[i]} romajiBaseClassName={styles.romajiBase} />
-        </span>
-      </React.Fragment>
-    );
-  });
+  return segments.map((s, i) => (
+    <React.Fragment key={i}>
+      {spaced[i] && ' '}
+      <span data-word-state={wordState(s.wordIdx, activeWordIdx, activeWordEnded)}>
+        {i === 0 && countIn && <CountInDots countIn={countIn} />}
+        <RubyText {...display[i]} romajiBaseClassName={styles.romajiBase} />
+      </span>
+    </React.Fragment>
+  ));
 });
 
 /** The line through the track view's pitched renderer, its sung time scaled to

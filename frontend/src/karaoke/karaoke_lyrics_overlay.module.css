@@ -15,6 +15,7 @@
 
 .line {
     composes: karaokeLyric from '../typography.module.css';
+    position: relative;
     margin: 0;
     text-align: center;
     text-wrap: balance;
@@ -63,21 +64,14 @@
     font-variation-settings: 'wght' 800;
 }
 
-.countInAnchor {
-    position: relative;
-}
-
 .countIn {
     position: absolute;
-    left: var(--lyric-word-pad-left, 0);
+    /* auto = static position, the first word's left edge; only an inline-level box gets that, a block-level one takes the line's */
+    left: var(--lyric-word-pad-left, auto);
     bottom: 100%;
-    display: flex;
+    display: inline-flex;
     gap: 0.3em;
     padding-bottom: 0.15em;
-}
-
-.countInAboveRuby {
-    bottom: calc(100% + 0.5em);
 }
 
 .countInDot {

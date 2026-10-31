@@ -401,3 +401,77 @@ test('furigana: karaoke view annotates word-aligned and line-level lyrics', asyn
   await utai(5.2);
   await expect(page.getByTestId('karaoke-line').locator('rt')).toHaveText(['か', 'ち']);
 });
+
+test('furigana: karaoke count-in dots clear the readings of every word they span', async ({ page }) => {
+  await stubJapaneseReadings(page);
+  await page.route('**/music/beats', async (route) => {
+    const beats = {
+      beats: Array.from({ length: 40 }, (_, i) => i * 0.5),
+      downbeats: Array.from({ length: 10 }, (_, i) => i * 2),
+      bpm: 120,
+      timeSignature: [4, 4],
+    };
+    const body = [JSON.stringify({ type: 'running' }), JSON.stringify({ type: 'result', data: { beats } })].join('\n') + '\n';
+    await route.fulfill({ status: 200, contentType: 'application/x-ndjson', body });
+  });
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('beats-readout')).toHaveText('120 BPM · 4/4', { timeout: 15_000 });
+  await pausePlayback(page);
+  await page.evaluate(() =>
+    (window as unknown as { utai: Utai }).utai.lyricsStore.add(
+      [
+        {
+          startSec: 4,
+          text: '本当に',
+          words: [
+            { startSec: 4, endSec: 4.5, text: '本当' },
+            { startSec: 4.5, endSec: 5, text: 'に' },
+          ],
+        },
+        {
+          startSec: 12,
+          text: 'て本当',
+          words: [
+            { startSec: 12, endSec: 12.5, text: 'て' },
+            { startSec: 12.5, endSec: 13, text: '本当' },
+          ],
+        },
+      ],
+      { source: 'plaintext', sourceLabel: 'probe' },
+    ),
+  );
+  const seek = (sec: number) => page.evaluate((s) => (window as unknown as { utai: Utai }).utai.playbackEngine.seek(s), sec);
+  const countIn = page.getByTestId('karaoke-count-in');
+  const line = page.getByTestId('karaoke-line');
+
+  const expectDotsClearReadings = async (): Promise<void> => {
+    await expect(countIn).toHaveCount(1);
+    await expect(line.locator('rt')).toHaveText(['ほんとう']);
+    const [dots, reading, firstWord] = [
+      await countIn.boundingBox(),
+      await line.locator('rt').boundingBox(),
+      await line.locator('[data-word-state]').first().boundingBox(),
+    ];
+    const besideReading = dots!.x + dots!.width <= reading!.x || reading!.x + reading!.width <= dots!.x;
+    const aboveReading = dots!.y + dots!.height <= reading!.y + 1;
+    expect(besideReading || aboveReading).toBe(true);
+    expect(Math.abs(dots!.x - firstWord!.x)).toBeLessThan(8);
+  };
+
+  for (const sec of [3, 11]) {
+    await seek(sec);
+    await expectDotsClearReadings();
+  }
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('karaoke-show-pitch').click();
+  await page.keyboard.press('Escape');
+  for (const sec of [3, 11]) {
+    await seek(sec);
+    await expectDotsClearReadings();
+  }
+});
