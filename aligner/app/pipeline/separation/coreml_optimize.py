@@ -22,13 +22,16 @@ CPU. This pass eliminates all of them:
        Pow(x, 2) -> Mul(x, x) (Pow is CoreML-native only at fp32)
   3. A second onnx-simplifier pass cleans up now-dead Shape nodes.
 
-Verified numerically identical to the original on CPU (max|Δ| ~2e-6). Build-time
-only (needs onnx-simplifier, a dev dep); the shipped runtime never imports this.
+Verified numerically identical to the original on CPU (max|Δ| ~2e-6). The `coreml_optimize`
+pass is build-time only (needs onnx-simplifier, a dev dep). The module's other runtime
+users: DirectML and TensorRT-RTX sessions apply `rewrite_scatter_add_as_gather` at load,
+and TensorRT-RTX `decode_weights_once`.
 """
 
 from __future__ import annotations
 
 import math
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -174,6 +177,91 @@ def rewrite_flatten(graph: onnx.GraphProto) -> int:
     return len(flattens)
 
 
+def decode_weights_once(graph: onnx.GraphProto) -> int:
+    """DequantizeLinear -> Cast(fp16) on constant per-tensor int8 weights -> a plain fp16
+    initializer, so they decode here rather than on every run."""
+    inits = {i.name: i for i in graph.initializer}
+    casts = {n.input[0]: n for n in graph.node if n.op_type == "Cast"}
+    consumers = Counter(i for n in graph.node for i in n.input)
+    dropped: set[str] = set()
+    for node in graph.node:
+        cast = casts.get(node.output[0])
+        if node.op_type != "DequantizeLinear" or cast is None or not all(i in inits for i in node.input):
+            continue
+        if consumers[node.output[0]] != 1:
+            continue
+        if next(a.i for a in cast.attribute if a.name == "to") != TensorProto.FLOAT16:
+            continue
+        weights, scale, zero = (numpy_helper.to_array(inits[i]) for i in node.input)
+        decoded = (weights.astype(np.float32) - float(zero)) * float(scale)
+        graph.initializer.append(numpy_helper.from_array(decoded.astype(np.float16), cast.output[0]))
+        dropped.update((node.output[0], cast.output[0]))
+    kept = [n for n in graph.node if n.output[0] not in dropped]
+    del graph.node[:]
+    graph.node.extend(kept)
+    return len(dropped) // 2
+
+
+def drop_unused_initializers(graph: onnx.GraphProto) -> int:
+    used = {i for n in graph.node for i in n.input} | {o.name for o in graph.output}
+    kept = [i for i in graph.initializer if i.name in used]
+    dropped = len(graph.initializer) - len(kept)
+    del graph.initializer[:]
+    graph.initializer.extend(kept)
+    return dropped
+
+
+def _constant_add_scatter(node: onnx.NodeProto, inits: dict) -> tuple[np.ndarray, int, np.ndarray]:
+    """(zeros, axis, each source's target along axis) of an add-scatter into zeros whose
+    constant indices vary only along that axis."""
+    data_name, idx_name, _ = node.input
+    attrs = {a.name: helper.get_attribute_value(a) for a in node.attribute}
+    if attrs.get("reduction") != b"add" or data_name not in inits or idx_name not in inits:
+        raise ValueError(f"coreml_optimize: unhandled ScatterElements {node.name!r} (needs constant add-scatter)")
+    data = numpy_helper.to_array(inits[data_name])
+    idx = numpy_helper.to_array(inits[idx_name])
+    axis = attrs.get("axis", 0) % idx.ndim
+    rows = np.moveaxis(idx, axis, -1).reshape(-1, idx.shape[axis])
+    same_off_axis = np.delete(idx.shape, axis).tolist() == np.delete(data.shape, axis).tolist()
+    if np.any(data) or not same_off_axis or np.any(rows != rows[0]):
+        raise ValueError(f"coreml_optimize: unhandled ScatterElements {node.name!r} (indices must vary only along axis {axis} into zeros)")
+    return data, axis, rows[0] % data.shape[axis]
+
+
+def rewrite_scatter_add_as_gather(graph: onnx.GraphProto) -> int:
+    """ScatterElements(zeros, idx, upd, axis=a, reduction='add') (the mel-band overlap merge)
+    -> pad `upd` with one zero source along `a`, then Gather + Add each target's sources."""
+    inits = {i.name: i for i in graph.initializer}
+    out, n = [], 0
+    for node in graph.node:
+        if node.op_type != "ScatterElements":
+            out.append(node)
+            continue
+        data, axis, targets = _constant_add_scatter(node, inits)
+        sources: list[list[int]] = [[] for _ in range(data.shape[axis])]
+        for source, target in enumerate(targets.tolist()):
+            sources[target].append(source)
+        b = node.name or f"scatter_add_{n}"
+        pad_shape = [1 if d == axis else s for d, s in enumerate(data.shape)]
+        graph.initializer.append(numpy_helper.from_array(np.zeros(pad_shape, data.dtype), f"{b}/zero"))
+        out.append(helper.make_node("Concat", [node.input[2], f"{b}/zero"], [f"{b}/padded"], name=f"{b}/Pad", axis=axis))
+        total = None
+        for k in range(max(len(s) for s in sources)):
+            picks = np.array([s[k] if k < len(s) else len(targets) for s in sources], np.int64)
+            graph.initializer.append(numpy_helper.from_array(picks, f"{b}/picks{k}"))
+            out.append(helper.make_node("Gather", [f"{b}/padded", f"{b}/picks{k}"], [f"{b}/g{k}"], name=f"{b}/Gather{k}", axis=axis))
+            if total is None:
+                total = f"{b}/g{k}"
+            else:
+                out.append(helper.make_node("Add", [total, f"{b}/g{k}"], [f"{b}/s{k}"], name=f"{b}/Add{k}"))
+                total = f"{b}/s{k}"
+        out.append(helper.make_node("Identity", [total], [node.output[0]], name=f"{b}/Out"))
+        n += 1
+    del graph.node[:]
+    graph.node.extend(out)
+    return n
+
+
 def rewrite_scatter_add(graph: onnx.GraphProto) -> int:
     """ScatterElements(zeros, idx, upd, axis=a, reduction='add') with constant indices
     that vary only along `a` (the mel-band overlap merge) -> Transpose `a` last, MatMul
@@ -184,21 +272,12 @@ def rewrite_scatter_add(graph: onnx.GraphProto) -> int:
         if node.op_type != "ScatterElements":
             out.append(node)
             continue
-        data_name, idx_name, upd_name = node.input
-        attrs = {a.name: helper.get_attribute_value(a) for a in node.attribute}
-        if attrs.get("reduction") != b"add" or data_name not in inits or idx_name not in inits:
-            raise ValueError(f"coreml_optimize: unhandled ScatterElements {node.name!r} (needs constant add-scatter)")
-        data = numpy_helper.to_array(inits[data_name])
-        idx = numpy_helper.to_array(inits[idx_name])
-        axis = attrs.get("axis", 0) % idx.ndim
-        rows = np.moveaxis(idx, axis, -1).reshape(-1, idx.shape[axis])
-        same_off_axis = np.delete(idx.shape, axis).tolist() == np.delete(data.shape, axis).tolist()
-        if np.any(data) or not same_off_axis or np.any(rows != rows[0]):
-            raise ValueError(f"coreml_optimize: unhandled ScatterElements {node.name!r} (indices must vary only along axis {axis} into zeros)")
+        upd_name = node.input[2]
+        data, axis, targets = _constant_add_scatter(node, inits)
         width = data.shape[axis]
-        onehot = np.zeros((idx.shape[axis], width), np.float32)
-        onehot[np.arange(idx.shape[axis]), rows[0] % width] = 1.0
-        fwd = [d for d in range(idx.ndim) if d != axis] + [axis]
+        onehot = np.zeros((len(targets), width), np.float32)
+        onehot[np.arange(len(targets)), targets] = 1.0
+        fwd = [d for d in range(data.ndim) if d != axis] + [axis]
         b = node.name or f"scatter_add_{n}"
         graph.initializer.append(numpy_helper.from_array(onehot, f"{b}/onehot"))
         out.append(helper.make_node("Transpose", [upd_name], [f"{b}/t"], name=f"{b}/Transpose", perm=fwd))

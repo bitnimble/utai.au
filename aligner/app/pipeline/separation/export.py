@@ -9,7 +9,7 @@ dynamic axis would risk.
 
 Mel-Band Roformer exports `forward_mask` (spectrogram -> real averaged mask); the
 numpy inference path applies the complex mask + iSTFT around it
-(np_inference.bs_apply_mask / bs_unpack). The CUDA/TensorRT body is mixed
+(np_inference.bs_apply_mask / bs_unpack). The CUDA/TensorRT/DirectML body is mixed
 fp16/fp32 (RMSNorm reductions fp32 for quality); see `_to_mixed_fp16`.
 """
 
@@ -88,7 +88,7 @@ def _to_mixed_fp16(out_path: Path) -> None:
 
 
 def _int8_enabled() -> bool:
-    """Weight-only int8 on disk is the primary CUDA/TensorRT format (~half the download).
+    """Weight-only int8 on disk is the primary CUDA/TensorRT/DirectML format (~half the download).
     Opt out with UTAI_SEP_INT8=0 to ship the plain mixed fp16 body instead."""
     return os.environ.get("UTAI_SEP_INT8", "1").strip().lower() not in ("0", "false", "no", "off")
 

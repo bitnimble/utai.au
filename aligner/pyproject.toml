@@ -55,34 +55,36 @@ runtime = [
 # torch is opt-in via the `torch` group (ONNX export + the offline parity checks).
 separation = [
     { include-group = "runtime" },
-    # Cross-platform ONNX inference path. `onnxruntime-gpu`
-    # (CUDA / DirectML) ships Linux + Windows wheels only; on macOS the standard
-    # `onnxruntime` arm64 wheel carries the CoreML EP (Apple GPU/ANE). Pin the
+    # Cross-platform ONNX inference path: `onnxruntime-gpu` (CUDA) on Linux,
+    # `onnxruntime-directml` (any DirectX 12 GPU) on Windows, and on macOS the standard
+    # `onnxruntime` arm64 wheel, which carries the CoreML EP (Apple GPU/ANE). Pin the
     # CUDA-12 line: 1.26 moved to a CUDA-13 build (libcudart.so.13); the CUDA libs
     # below are CUDA 12, so <=1.25.x matches. Bump only alongside a CUDA-13 base.
-    "onnxruntime-gpu>=1.19,<1.26; sys_platform != 'darwin'",
+    "onnxruntime-gpu>=1.19,<1.26; sys_platform == 'linux'",
+    "onnxruntime-directml>=1.24,<1.26; sys_platform == 'win32'",
     "onnxruntime>=1.19,<1.26; sys_platform == 'darwin'",
+    # TensorRT-RTX EP plugin for the vocals body on RTX 30-series+ (driver 580.88+), bundling its
+    # runtime. Anything else stays on DirectML. Needs onnxruntime>=1.24.
+    "onnxruntime-ep-nv-tensorrt-rtx-cu13>=0.5,<0.6; sys_platform == 'win32'",
     # `onnx` (distinct from onnxruntime): the folded STFT/iSTFT path builds its
     # forward/inverse graphs with onnx.helper at runtime (onnx_stft.py), so it's a
     # separation runtime dep, not just export tooling. Without it the fold's import
     # fails and separation silently falls back to the (2x slower) numpy pre/post.
     "onnx>=1.16",
-    # CUDA 12 runtime libs for the onnxruntime-gpu CUDA EP (Linux/Windows). These
-    # used to arrive transitively via torch's nvidia-* wheels; with torch out of
+    # CUDA 12 runtime libs for the onnxruntime-gpu CUDA EP (Linux). With torch out of
     # the runtime we depend on them directly. `onnx_cuda.preload_cuda_libs` globs
     # site-packages/nvidia/*/lib/*.so and RTLD_GLOBAL-preloads them so the CUDA EP
-    # can dlopen its provider. cuDNN 9.x matches onnxruntime-gpu 1.19-1.25; macOS
-    # uses the CoreML EP (no CUDA).
-    "nvidia-cudnn-cu12>=9,<10; sys_platform != 'darwin'",
-    "nvidia-cublas-cu12; sys_platform != 'darwin'",
+    # can dlopen its provider. cuDNN 9.x matches onnxruntime-gpu 1.19-1.25.
+    "nvidia-cudnn-cu12>=9,<10; sys_platform == 'linux'",
+    "nvidia-cublas-cu12; sys_platform == 'linux'",
     # TensorRT runtime for the onnxruntime TensorRT EP. Separation runs a FIXED 8s chunk, so the
     # per-shape engine rebuild that makes TRT a poor fit for variable-length audio is a one-time,
     # cached cost -- and it's the ~100x-realtime path (vs ~8-18x on the CUDA EP). Opt out via
     # UTAI_SEP_TRT=0; onnx_cuda.preload_tensorrt_libs RTLD_GLOBAL-preloads its libnvinfer so the EP
     # can dlopen it. TRT 10.x matches onnxruntime-gpu 1.19-1.25 (CUDA 12); absent -> stays on CUDA.
-    "tensorrt-cu12>=10,<11; sys_platform != 'darwin'",
+    "tensorrt-cu12>=10,<11; sys_platform == 'linux'",
     # Direct so its NVIDIA [tool.uv.sources] entry applies: PyPI's stub sdist fails to lock on macOS.
-    "tensorrt-cu12-libs; sys_platform != 'darwin'",
+    "tensorrt-cu12-libs; sys_platform == 'linux'",
 ]
 
 # Lyrics alignment: MahmoudAshraf97's long-form CTC forced aligner (MMS-300m).
@@ -189,7 +191,7 @@ explicit = true
 torch = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
 torchaudio = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
-tensorrt-cu12-libs = [{ index = "nvidia", marker = "sys_platform != 'darwin'" }]
+tensorrt-cu12-libs = [{ index = "nvidia", marker = "sys_platform == 'linux'" }]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

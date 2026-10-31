@@ -269,12 +269,12 @@ def get_alignments_np(emissions: np.ndarray, tokens: list, tokenizer):
 def _ort_session(onnx_path, providers):
     import onnxruntime as ort
 
-    from app.pipeline.onnx_cuda import default_providers, log_bound_ep
+    from app.pipeline.onnx_cuda import default_providers, gpu_session_options, log_bound_ep
 
     if providers is None:
         providers = default_providers()
     try:
-        sess = ort.InferenceSession(str(onnx_path), providers=providers)
+        sess = ort.InferenceSession(str(onnx_path), sess_options=gpu_session_options(), providers=providers)
     except Exception:
         sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     log_bound_ep(sess, onnx_path)

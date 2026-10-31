@@ -1411,7 +1411,6 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/29/99/db44d685f0e257ff0e213ade1964fc459b4a690a73293220e98feb3307cf/nvidia_cublas_cu12-12.8.4.1-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:b86f6dd8935884615a0683b663891d43781b819ac4f2ba2b0c9604676af346d0", size = 590537124, upload-time = "2025-03-07T01:43:53.556Z" },
     { url = "https://files.pythonhosted.org/packages/dc/61/e24b560ab2e2eaeb3c839129175fb330dfcfc29e5203196e5541a4c44682/nvidia_cublas_cu12-12.8.4.1-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:8ac4e771d5a348c551b2a426eda6193c19aa630236b418086020df5ba9667142", size = 594346921, upload-time = "2025-03-07T01:44:31.254Z" },
-    { url = "https://files.pythonhosted.org/packages/70/61/7d7b3c70186fb651d0fbd35b01dbfc8e755f69fd58f817f3d0f642df20c3/nvidia_cublas_cu12-12.8.4.1-py3-none-win_amd64.whl", hash = "sha256:47e9b82132fa8d2b4944e708049229601448aaad7e6f296f630f2d1a32de35af", size = 567544208, upload-time = "2025-03-07T01:53:30.535Z" },
 ]
 
 [[package]]
@@ -1451,7 +1450,6 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/09/b8/277c51962ee46fa3e5b203ac5f76107c650f781d6891e681e28e6f3e9fe6/nvidia_cudnn_cu12-9.19.0.56-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:08caaf27fe556aca82a3ee3b5aa49a77e7de0cfcb7ff4e5c29da426387a8267e", size = 656910700, upload-time = "2026-02-03T20:40:25.508Z" },
     { url = "https://files.pythonhosted.org/packages/c5/41/65225d42fba06fb3dd3972485ea258e7dd07a40d6e01c95da6766ad87354/nvidia_cudnn_cu12-9.19.0.56-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:ac6ad90a075bb33a94f2b4cf4622eac13dd4dc65cf6dd9c7572a318516a36625", size = 657906812, upload-time = "2026-02-03T20:44:12.638Z" },
-    { url = "https://files.pythonhosted.org/packages/a7/a5/48f07449fc9c6cc146dcafe6149fa5d69630137d2ec5b7d9e09f255fadd7/nvidia_cudnn_cu12-9.19.0.56-py3-none-win_amd64.whl", hash = "sha256:cec70596b9ce878fab83810c3f5a2e606d35f510e5fee579759e4cbc68a23750", size = 644003014, upload-time = "2026-02-03T20:46:25.768Z" },
 ]
 
 [[package]]
@@ -1605,6 +1603,33 @@ wheels = [
 ]
 
 [[package]]
+name = "onnxruntime-directml"
+version = "1.24.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "flatbuffers", marker = "sys_platform != 'darwin'" },
+    { name = "numpy", marker = "sys_platform != 'darwin'" },
+    { name = "packaging", marker = "sys_platform != 'darwin'" },
+    { name = "protobuf", marker = "sys_platform != 'darwin'" },
+    { name = "sympy", marker = "sys_platform != 'darwin'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/90/99566dc6398028e7691a5b12720fd85f757a0901818b84599d28abb3f085/onnxruntime_directml-1.24.4-cp311-cp311-win_amd64.whl", hash = "sha256:96642a787e5a6f33bf043521c0f06eb1eb663f6b830e5862a2026d03f9c90543", size = 25106000, upload-time = "2026-03-17T21:47:15.438Z" },
+    { url = "https://files.pythonhosted.org/packages/88/ea/33814eb0ec96775eda4c1d30b0d86e91d7d2cd0d84c66d3915aef0e06fa3/onnxruntime_directml-1.24.4-cp312-cp312-win_amd64.whl", hash = "sha256:f2ecb68b7b7b259d2ef3112ae760149f9b5a1e7c0fbb73d539da6250a648a614", size = 25111930, upload-time = "2026-03-17T21:47:18.419Z" },
+    { url = "https://files.pythonhosted.org/packages/60/53/2bd2696fac19cf8ca55496a0bcfe431f3aff9579eabbb0e231dc238acf6f/onnxruntime_directml-1.24.4-cp313-cp313-win_amd64.whl", hash = "sha256:2f1031cb2281e5b27cca9efe0b9399317c7286e4d226f7a79d4ab79bbd94d19e", size = 25112253, upload-time = "2026-03-17T21:47:22.043Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/04/816932a3ade867a687e406716ca76e0774c6b921545b45818e3ebfcc54ce/onnxruntime_directml-1.24.4-cp314-cp314-win_amd64.whl", hash = "sha256:51d86bb949488e572b00422f344990a4a81d982416d73b6c0e4ced2bcd423d19", size = 25571098, upload-time = "2026-03-17T21:47:25.461Z" },
+]
+
+[[package]]
+name = "onnxruntime-ep-nv-tensorrt-rtx-cu13"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/64/6a704b972f2c6806b3a13abce3e0d827deb0e4192e7f4240ffdafa8d099c/onnxruntime_ep_nv_tensorrt_rtx_cu13-0.5.0-py3-none-win_amd64.whl", hash = "sha256:609b19f7236c8522ef005a9f763003a78f492e5d871afad39fe1b247760eb3c7", size = 110875664, upload-time = "2026-10-21T10:27:18.148Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/ce/466b4bf509bea2fc3e21fb72edb0233d02fdad4d1a362c591ba25bb7029d/onnxruntime_ep_nv_tensorrt_rtx_cu13-0.5.0-py3-none-win_arm64.whl", hash = "sha256:b60932e1acd243722915953e3dc6714327038d4f1db6b728de20cead0bc7c4ac", size = 98491796, upload-time = "2026-10-21T10:29:51.611Z" },
+]
+
+[[package]]
 name = "onnxruntime-gpu"
 version = "1.25.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1616,14 +1641,10 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/bb/d0aeb0910beee46d34568af9ba07d40bf9c5f94f188bf43c0ff47388f6de/onnxruntime_gpu-1.25.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fcdd93f7a74659e08137b5d9c705390e57b37ac86e6956ec0d7ccd81001afe0c", size = 271246304, upload-time = "2026-04-27T22:06:00.753Z" },
-    { url = "https://files.pythonhosted.org/packages/41/a8/1e93491d72ea04318445b0053c00ab7aedecb2327f79a560868e97423ea4/onnxruntime_gpu-1.25.1-cp311-cp311-win_amd64.whl", hash = "sha256:5c2d00d7b62c098e5d0c720ae9e81dcb3143a4285516a43e39c4997fa9fcc1f3", size = 221700978, upload-time = "2026-04-27T21:59:31.581Z" },
     { url = "https://files.pythonhosted.org/packages/54/d9/0dc74ca5d208848e931abacde743d61c0c33ecc916ffac2b54d604b4cfe5/onnxruntime_gpu-1.25.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:264b65ed81c1a32c2e410423ef3e4ba3ebb603c099d5a374c8780fbeb3496239", size = 271272487, upload-time = "2026-04-27T22:06:11.243Z" },
-    { url = "https://files.pythonhosted.org/packages/0e/10/2f72ca2a2c606e3245dca27e843f74493e544bf976bf5e97c41b0259d18b/onnxruntime_gpu-1.25.1-cp312-cp312-win_amd64.whl", hash = "sha256:d73660da130e03d6f5bfba2522af01491e26902643589fe466a10f6936dfc71a", size = 221708572, upload-time = "2026-04-27T21:59:41.786Z" },
     { url = "https://files.pythonhosted.org/packages/5b/45/cd3eacbe8b250164f2d3b745d7f66162139ed669b1c51cf4d4b5305bc6bf/onnxruntime_gpu-1.25.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:098a0f1eb7b6b5e0ae1befcb996cddfd67cbe5a0aad2356da162cc3f8213e870", size = 271272750, upload-time = "2026-04-27T22:06:21.099Z" },
-    { url = "https://files.pythonhosted.org/packages/4b/e8/252532842000aded7cb9030a99d7564ac5205c6631588fb0807b3d0a6881/onnxruntime_gpu-1.25.1-cp313-cp313-win_amd64.whl", hash = "sha256:a03cc135ad38b249f5c343cc6f80333ba7571ced4c85c940ee282d5f931f207e", size = 221716176, upload-time = "2026-04-27T21:59:52.821Z" },
     { url = "https://files.pythonhosted.org/packages/cc/c1/f97022dcae5b52276117d37c127732abadd5c21d606bf40ef8af279e1906/onnxruntime_gpu-1.25.1-cp313-cp313t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7d9ba9bc88084a270134c49f20d9d546f372a95bc4bd1bedc22f581a19820a4f", size = 271282502, upload-time = "2026-04-27T22:06:31.4Z" },
     { url = "https://files.pythonhosted.org/packages/77/53/0715544ca64145701e9cb9ff6f459969bd09f81bb7cd4825a019d6bcf2f3/onnxruntime_gpu-1.25.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b67c4f61d2ff62683271a2e52ce37e94f1e26ead24492e62ed68fb28aa29882a", size = 271274506, upload-time = "2026-04-27T22:06:41.099Z" },
-    { url = "https://files.pythonhosted.org/packages/a5/80/0cfd2fba98eadb39cd71e298aa05a0ab175e4b6c85de50d2cc1a24426816/onnxruntime_gpu-1.25.1-cp314-cp314-win_amd64.whl", hash = "sha256:4d69af9d1c4de4a48f3d2a7f5c0d8f25d73febd6f467b02f545c6912005b04e6", size = 224246737, upload-time = "2026-04-27T22:00:02.606Z" },
     { url = "https://files.pythonhosted.org/packages/85/01/c863a5f27f17247d1bce7af2d5666bdaae2fd55843e848c2ba3bf2faf44a/onnxruntime_gpu-1.25.1-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:dacff3a1e1590da3caa08f86e65ae12c589b4f0a11205047bad2203948111917", size = 271276260, upload-time = "2026-04-27T22:06:50.95Z" },
 ]
 
@@ -2873,11 +2894,8 @@ version = "10.16.1.11"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/9a/0b148ab0e3019d0a43e0a2404ff52ac0b3c230dbf776f4aed8960c647cc9/tensorrt_cu12_bindings-10.16.1.11-cp311-none-manylinux_2_28_x86_64.whl", hash = "sha256:150ef2b672487e29a8ea916353467c3e199994fb33589167e3641a928e243aa7", size = 1346362, upload-time = "2026-04-07T19:48:43.236Z" },
-    { url = "https://files.pythonhosted.org/packages/9a/f8/a264f4837ac8196ba4764a989e3526edc72ac83799c3b7659208e57b70dd/tensorrt_cu12_bindings-10.16.1.11-cp311-none-win_amd64.whl", hash = "sha256:425382e26ea149ac4a3cba3ae9b1abb4187a14c0cf9add58206d9bb1a236aa26", size = 963754, upload-time = "2026-04-07T19:46:28.672Z" },
     { url = "https://files.pythonhosted.org/packages/81/93/8364c6e89d9a0ad596ddbefe1545e334c55bf1e85491d8cd3af6f5853572/tensorrt_cu12_bindings-10.16.1.11-cp312-none-manylinux_2_28_x86_64.whl", hash = "sha256:8e339335e7255b3fb3954eca61b4acbbdfcf7b28505bd711914519647ba310c8", size = 1341247, upload-time = "2026-04-07T19:49:05.057Z" },
-    { url = "https://files.pythonhosted.org/packages/82/50/2153496271c772e9fb6e46de7f00c7d5bd08fea33bdf7a38d60521f5a396/tensorrt_cu12_bindings-10.16.1.11-cp312-none-win_amd64.whl", hash = "sha256:e4d7105b9700987b4fd9362adacc0dfa7bee3025c8ad147a86a4316b6362a85b", size = 964884, upload-time = "2026-04-07T19:47:17.234Z" },
     { url = "https://files.pythonhosted.org/packages/9f/d4/ad07d2448df6ae02f980d9092a067b685604121bc471b7e81f0ede345239/tensorrt_cu12_bindings-10.16.1.11-cp313-none-manylinux_2_28_x86_64.whl", hash = "sha256:f2a08cedfa48e300720e5bed070a45e390ea67dbcf475ffce725d10e0a2b3ba7", size = 1341148, upload-time = "2026-04-07T19:47:39.718Z" },
-    { url = "https://files.pythonhosted.org/packages/44/8a/a4763ff95242b97dcd750c6d4a0a61e08431849304c4aa2b30c09fb5c0cb/tensorrt_cu12_bindings-10.16.1.11-cp313-none-win_amd64.whl", hash = "sha256:9794032093940924429957c89ebf27f893a7823b3daf48fd9427bfa23a9a52de", size = 964908, upload-time = "2026-04-07T19:45:42.506Z" },
 ]
 
 [[package]]
@@ -2886,7 +2904,6 @@ version = "10.16.1.11"
 source = { registry = "https://pypi.nvidia.com/" }
 wheels = [
     { url = "https://pypi.nvidia.com/tensorrt-cu12-libs/tensorrt_cu12_libs-10.16.1.11-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:8e45036efeb964d323231544442a73619201136ccc84392560254cc8f0d516e4" },
-    { url = "https://pypi.nvidia.com/tensorrt-cu12-libs/tensorrt_cu12_libs-10.16.1.11-py3-none-win_amd64.whl", hash = "sha256:ed0d4536f1322aa2f76da54feb3f9bd2d14d89e4325cef02165a98f3a2c1a493" },
 ]
 
 [[package]]
@@ -3232,16 +3249,18 @@ lyrics = [
     { name = "ctc-forced-aligner" },
     { name = "librosa" },
     { name = "numpy" },
-    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'" },
     { name = "onnx" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
-    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'" },
+    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "soundfile" },
-    { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'" },
+    { name = "tensorrt-cu12", marker = "sys_platform == 'linux'" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform == 'linux'" },
     { name = "transformers" },
 ]
 music = [
@@ -3254,16 +3273,18 @@ onthespot = [
 pitch = [
     { name = "librosa" },
     { name = "numpy" },
-    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'" },
     { name = "onnx" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
-    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'" },
+    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "soundfile" },
-    { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'" },
+    { name = "tensorrt-cu12", marker = "sys_platform == 'linux'" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform == 'linux'" },
 ]
 runtime = [
     { name = "librosa" },
@@ -3275,16 +3296,18 @@ runtime = [
 separation = [
     { name = "librosa" },
     { name = "numpy" },
-    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'" },
     { name = "onnx" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
-    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'" },
+    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "soundfile" },
-    { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'" },
+    { name = "tensorrt-cu12", marker = "sys_platform == 'linux'" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform == 'linux'" },
 ]
 torch = [
     { name = "einops" },
@@ -3331,15 +3354,17 @@ lyrics = [
     { name = "ctc-forced-aligner", git = "https://github.com/MahmoudAshraf97/ctc-forced-aligner.git?rev=264e7a1f81bff9ff5e787a5537020c2ad0b0df02" },
     { name = "librosa", specifier = ">=0.10.2" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'", specifier = ">=9,<10" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'", specifier = ">=9,<10" },
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.19,<1.26" },
-    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'", specifier = ">=1.19,<1.26" },
+    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'", specifier = ">=1.24,<1.26" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'", specifier = ">=0.5,<0.6" },
+    { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'", specifier = ">=1.19,<1.26" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
-    { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'", specifier = ">=10,<11" },
-    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'", index = "https://pypi.nvidia.com/" },
+    { name = "tensorrt-cu12", marker = "sys_platform == 'linux'", specifier = ">=10,<11" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform == 'linux'", index = "https://pypi.nvidia.com/" },
     { name = "transformers", specifier = ">=4.40" },
 ]
 music = [{ name = "librespot", git = "https://github.com/justin025/librespot-python.git" }]
@@ -3350,15 +3375,17 @@ onthespot = [
 pitch = [
     { name = "librosa", specifier = ">=0.10.2" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'", specifier = ">=9,<10" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'", specifier = ">=9,<10" },
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.19,<1.26" },
-    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'", specifier = ">=1.19,<1.26" },
+    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'", specifier = ">=1.24,<1.26" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'", specifier = ">=0.5,<0.6" },
+    { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'", specifier = ">=1.19,<1.26" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
-    { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'", specifier = ">=10,<11" },
-    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'", index = "https://pypi.nvidia.com/" },
+    { name = "tensorrt-cu12", marker = "sys_platform == 'linux'", specifier = ">=10,<11" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform == 'linux'", index = "https://pypi.nvidia.com/" },
 ]
 runtime = [
     { name = "librosa", specifier = ">=0.10.2" },
@@ -3369,15 +3396,17 @@ runtime = [
 separation = [
     { name = "librosa", specifier = ">=0.10.2" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
-    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'", specifier = ">=9,<10" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'", specifier = ">=9,<10" },
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.19,<1.26" },
-    { name = "onnxruntime-gpu", marker = "sys_platform != 'darwin'", specifier = ">=1.19,<1.26" },
+    { name = "onnxruntime-directml", marker = "sys_platform == 'win32'", specifier = ">=1.24,<1.26" },
+    { name = "onnxruntime-ep-nv-tensorrt-rtx-cu13", marker = "sys_platform == 'win32'", specifier = ">=0.5,<0.6" },
+    { name = "onnxruntime-gpu", marker = "sys_platform == 'linux'", specifier = ">=1.19,<1.26" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "soundfile", specifier = ">=0.12" },
-    { name = "tensorrt-cu12", marker = "sys_platform != 'darwin'", specifier = ">=10,<11" },
-    { name = "tensorrt-cu12-libs", marker = "sys_platform != 'darwin'", index = "https://pypi.nvidia.com/" },
+    { name = "tensorrt-cu12", marker = "sys_platform == 'linux'", specifier = ">=10,<11" },
+    { name = "tensorrt-cu12-libs", marker = "sys_platform == 'linux'", index = "https://pypi.nvidia.com/" },
 ]
 torch = [
     { name = "einops", specifier = ">=0.8" },

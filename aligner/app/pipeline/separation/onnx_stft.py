@@ -8,8 +8,8 @@ from ~50% to ~100%. These builders emit torch-free onnx graphs (via `onnx.helper
 like the rest of the runtime) that are numerically identical to the numpy path
 (verified in `tests/test_onnx_stft.py`). The CUDA folds (`np_inference._RoformerFold`,
 `_RoformerFoldFrames`) chain them via IOBinding so the spectrogram/mask stay resident in
-VRAM across the three sessions; the Mac fold (`_RoformerFoldMac`) runs them with a plain
-`run` (the ANE can't keep the intermediates device-resident).
+VRAM across the three sessions; `_RoformerFoldInverse` (CoreML, DirectML) runs them with
+a plain `run` (the ANE can't keep the intermediates device-resident).
 
 - `build_forward` mirrors `bs_pack` / `np_stft.stft` (reflect-`center`, periodic
   Hann, one-sided rFFT as a matmul).
@@ -17,8 +17,8 @@ VRAM across the three sessions; the Mac fold (`_RoformerFoldMac`) runs them with
   mask multiply, iRFFT-as-matmul, windowed Σw² weighted-overlap-add, center strip)
   -- the full CUDA inverse.
 - `build_inverse_frames` emits mask + iRFFT only (the matmuls), leaving the
-  overlap-add to `np_stft.overlap_add` in numpy. Two consumers: the Mac fold
-  (`_RoformerFoldMac`, the ANE won't run the index-heavy overlap-add) and the CUDA
+  overlap-add to `np_stft.overlap_add` in numpy. Two consumers:
+  `_RoformerFoldInverse` (the ANE won't run the index-heavy overlap-add) and the CUDA
   hop-agnostic fold (`_RoformerFoldFrames`, when hop doesn't divide n_fft so the
   full GPU overlap-add can't reshape frames into hop-blocks).
 
@@ -205,8 +205,8 @@ def build_forward(n_fft, hop, n_freq, n_frames, channels, window):
 def build_inverse_frames(n_fft, n_freq, n_frames, n_stems, channels, window):
     """(stft_repr [1,fs,T,2], mask [1,n,fs,T,2]) -> windowed time-frames
     [n*s, T, n_fft] (complex mask multiply + iRFFT-as-matmul). The overlap-add is
-    left to numpy (np_stft.overlap_add). Two consumers: the Mac fold (the ANE runs
-    the matmuls but not the index-heavy overlap-add) and the CUDA hop-agnostic fold
+    left to numpy (np_stft.overlap_add). Two consumers: `_RoformerFoldInverse` (the ANE
+    runs the matmuls but not the index-heavy overlap-add) and the CUDA hop-agnostic fold
     (hop doesn't divide n_fft). Uses Slice (not Gather) for the re/im split so
     nothing forces it off the ANE. fs = n_freq*s."""
     s, n, t = channels, n_stems, n_frames

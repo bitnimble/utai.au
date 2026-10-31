@@ -1,7 +1,7 @@
 """Make onnxruntime's CUDA provider find its runtime libs in a torch-free process.
 
 The transcriber ships torch-free, so nothing pulls torch's bundled CUDA runtime
-(`libcublasLt.so.12` / `cublasLt64_12.dll`, cuDNN, ...) into the process.
+(`libcublasLt.so.12`, cuDNN, ...) into the process.
 onnxruntime-gpu then can't load its CUDA provider (`libcublasLt.so.12: cannot open
 shared object file`) and silently falls back to the CPU EP -- fatal for the fp16
 GRU models (onset heads / ADTOF), which the CPU EP can't run, and ~7x slower for
@@ -12,11 +12,8 @@ The libs ARE present in the venv, just not on the loader path:
   - Linux: torch's `nvidia-*` wheels under `site-packages/nvidia/*/lib/*.so`. We
     preload them with `RTLD_GLOBAL` so the provider's `dlopen` resolves against
     the loaded copies.
-  - Windows: torch bundles the CUDA DLLs in `site-packages/torch/lib` (and/or the
-    `nvidia-*` wheels' `bin` dirs). We add those to the DLL search path via
-    `os.add_dll_directory` (what torch itself does on import).
-  - macOS: no CUDA (uses the CoreML EP), and CPU-only installs have no `nvidia/`
-    dir -- both are a no-op here.
+  - macOS (CoreML EP), Windows (DirectML EP) and CPU-only installs have no `nvidia/`
+    dir -- all a no-op here.
 
 Idempotent + best-effort. Call `preload_cuda_libs()` before creating any
 onnxruntime session with a GPU EP (done in `Provisioner.start`).
@@ -36,9 +33,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+TRT_RTX_EP = "NvTensorRTRTXExecutionProvider"
+
 _done = False
-# Keeps the os.add_dll_directory handles alive (closing them drops the dir).
-_dll_dirs: list = []
+_trt_rtx_loaded: bool | None = None
 
 _CUDA_OPTIONS = {
     # default kNextPowerOfTwo reserves up to ~2x the real activation peak
@@ -63,11 +61,21 @@ def default_providers() -> list[str | tuple[str, dict[str, str]]]:
     # CoreML only for separation, whose graph is rewritten to run whole on it
     # (`_separation_providers`): other models split into many CPU<->CoreML
     # partitions and run slower than on the CPU alone.
-    skip = {"TensorrtExecutionProvider", "CoreMLExecutionProvider"}
+    skip = {"TensorrtExecutionProvider", TRT_RTX_EP, "CoreMLExecutionProvider"}
     avail = [p for p in ort.get_available_providers() if p not in skip]
     # CUDA to the front, CPU to the back.
     avail.sort(key=lambda p: (p != "CUDAExecutionProvider", p == "CPUExecutionProvider"))
     return [(p, dict(_CUDA_OPTIONS)) if p == "CUDAExecutionProvider" else p for p in avail]
+
+
+def gpu_session_options() -> ort.SessionOptions:
+    """SessionOptions for any session a GPU EP may bind."""
+    import onnxruntime as ort
+
+    so = ort.SessionOptions()
+    # Fused DML graphs miscompute the vocals body (corr 0.69 vs CUDA) and can hang the GPU (887A0006).
+    so.add_session_config_entry("ep.dml.disable_graph_fusion", "1")
+    return so
 
 
 def release_arena_run_options(session) -> ort.RunOptions:
@@ -76,10 +84,14 @@ def release_arena_run_options(session) -> ort.RunOptions:
     worst-case activations reserved for the process lifetime."""
     import onnxruntime as ort
 
-    devices = ["cpu:0"]
-    if "CUDAExecutionProvider" in session.get_providers():
-        devices.append("gpu:0")
+    providers = session.get_providers()
     opts = ort.RunOptions()
+    # a shrink spec ORT rejects fails the run; untested on these
+    if {"DmlExecutionProvider", TRT_RTX_EP} & set(providers):
+        return opts
+    devices = ["cpu:0"]
+    if "CUDAExecutionProvider" in providers:
+        devices.append("gpu:0")
     opts.add_run_config_entry("memory.enable_memory_arena_shrinkage", ";".join(devices))
     return opts
 
@@ -92,6 +104,27 @@ def log_bound_ep(session, onnx_path) -> None:
         log.info("ONNX %s -> %s", os.path.basename(str(onnx_path)), session.get_providers())
 
 
+def trt_rtx_devices() -> list:
+    """The devices the TensorRT-RTX EP can bind, registering it on first call: none off
+    Windows, or on a GPU or driver it doesn't support. Idempotent; never raises."""
+    global _trt_rtx_loaded
+    if _trt_rtx_loaded is False:
+        return []
+    try:
+        import onnxruntime as ort
+
+        if _trt_rtx_loaded is None:
+            import onnxruntime_ep_nv_tensorrt_rtx as trt_rtx
+
+            ort.register_execution_provider_library(trt_rtx.get_ep_name(), trt_rtx.get_library_path())
+            _trt_rtx_loaded = True
+        return [d for d in ort.get_ep_devices() if d.ep_name == TRT_RTX_EP]
+    except Exception as exc:
+        _trt_rtx_loaded = False
+        log.info("TensorRT-RTX EP unavailable: %s", exc)
+        return []
+
+
 def preload_cuda_libs() -> None:
     """Make the venv's CUDA runtime libs findable by onnxruntime-gpu. Idempotent;
     no-op on a box with no CUDA libs (CPU-only, or macOS/CoreML)."""
@@ -100,32 +133,7 @@ def preload_cuda_libs() -> None:
         return
     _done = True
 
-    purelib = sysconfig.get_paths()["purelib"]
-    if os.name == "nt":
-        _add_windows_dll_dirs(purelib)
-    else:
-        _preload_unix(os.path.join(purelib, "nvidia"))
-
-
-def _add_windows_dll_dirs(purelib: str) -> None:
-    # torch/lib carries the CUDA DLLs on Windows (torch bundles them); the
-    # nvidia-*-cu12 wheels, if present, put theirs under nvidia/<pkg>/bin.
-    dirs = [os.path.join(purelib, "torch", "lib")]
-    dirs += glob.glob(os.path.join(purelib, "nvidia", "*", "bin"))
-    dirs = [d for d in dirs if os.path.isdir(d)]
-    for d in dirs:
-        with contextlib.suppress(OSError):
-            _dll_dirs.append(os.add_dll_directory(d))  # type: ignore[attr-defined]  # win-only
-    # add_dll_directory alone does NOT fix onnxruntime-gpu: it loads its provider
-    # (onnxruntime_providers_cuda.dll) with LOAD_WITH_ALTERED_SEARCH_PATH, which
-    # ignores add_dll_directory dirs when resolving THAT dll's own deps
-    # (cublasLt64_12.dll, cuDNN, ...). That search still honours PATH, so without
-    # this prepend the CUDA EP fails to load and silently runs on the CPU EP --
-    # fatal for the fp16 GRU models, and ~7x slower for the rest. add_dll_directory
-    # stays for torch/ctypes consumers that DO honour it.
-    if dirs:
-        os.environ["PATH"] = os.pathsep.join([*dirs, os.environ.get("PATH", "")])
-    log.info("preload_cuda_libs: added %d CUDA DLL dir(s) (+PATH)", len(dirs))
+    _preload_unix(os.path.join(sysconfig.get_paths()["purelib"], "nvidia"))
 
 
 def _try_load(path: str) -> bool:

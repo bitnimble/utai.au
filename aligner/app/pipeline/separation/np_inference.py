@@ -44,6 +44,8 @@ log = logging.getLogger(__name__)
 
 # Bump when session options change the compiled graph: onnxruntime's cache key wouldn't notice.
 _COREML_COMPILE_REVISION = 2
+# Bump when `_trt_rtx_body` changes: its cached file wouldn't notice.
+_TRT_RTX_BODY_REVISION = 1
 
 
 def _prepare_mix(audio: str | Path | np.ndarray) -> np.ndarray:
@@ -108,14 +110,30 @@ def _profiling() -> bool:
     return os.environ.get("UTAI_COREML_PROFILE", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _dml_body(onnx_path) -> bytes:
+    """The body with its add-scatter as Gather + Add: DML's kernel rejects any reduction, and
+    the CPU EP that would inherit the node has no fp16 add."""
+    import onnx
+
+    from app.pipeline.separation.coreml_optimize import (
+        drop_unused_initializers,
+        rewrite_scatter_add_as_gather,
+    )
+
+    model = onnx.load(str(onnx_path))
+    rewrite_scatter_add_as_gather(model.graph)
+    drop_unused_initializers(model.graph)
+    return model.SerializeToString()
+
+
 def _ort_session(onnx_path, providers):
     import onnxruntime as ort
 
-    from app.pipeline.onnx_cuda import default_providers, log_bound_ep
+    from app.pipeline.onnx_cuda import default_providers, gpu_session_options, log_bound_ep
 
     if providers is None:
         providers = default_providers()
-    so = ort.SessionOptions()
+    so = gpu_session_options()
     # ORT's memory *planner* over-reserves for the roformer graph: it pre-allocates
     # a worst-case attention arena that can exceed the true peak and force WDDM
     # paging on a tight GPU. Off, the BFC arena grows to the real peak instead;
@@ -123,42 +141,111 @@ def _ort_session(onnx_path, providers):
     so.enable_mem_pattern = False
     if _profiling():
         so.log_severity_level = 0  # VERBOSE
-    coreml = any((p if isinstance(p, str) else p[0]) == "CoreMLExecutionProvider" for p in providers)
+    names = [p if isinstance(p, str) else p[0] for p in providers]
     # The CoreML EP writes a Gemm's weights into model.mil as text, a MatMul's to weight.bin.
     # Fused, the Roformer's model.mil is 2.7 GB, which CoreML re-parses on every load.
-    disabled_optimizers = ["MatMulAddFusion"] if coreml else None
+    disabled_optimizers = ["MatMulAddFusion"] if "CoreMLExecutionProvider" in names else None
+    model = _dml_body(onnx_path) if "DmlExecutionProvider" in names else str(onnx_path)
     try:
         sess = ort.InferenceSession(
-            str(onnx_path), sess_options=so, providers=providers, disabled_optimizers=disabled_optimizers
+            model, sess_options=so, providers=providers, disabled_optimizers=disabled_optimizers
         )
-        log_bound_ep(sess, onnx_path)
-        return sess
     except Exception as e:
         # fp16 separation graphs weren't validated on the CPU EP; a silent fallback
         # would run unvalidated numerics (or crash), so fail loud. fp32 runs on CPU.
         if ".fp16." in str(onnx_path):
             raise RuntimeError(
                 f"ONNX session create failed for fp16 model {onnx_path} on {providers}; "
-                "refusing a silent CPU-EP fallback (unvalidated fp16 numerics). Use a GPU EP "
-                "or provision the fp32 body."
+                f"refusing a silent CPU-EP fallback (unvalidated fp16 numerics). Cause: {e}"
             ) from e
         sess = ort.InferenceSession(str(onnx_path), sess_options=so, providers=["CPUExecutionProvider"])
-        log_bound_ep(sess, onnx_path)
-        return sess
+    log_bound_ep(sess, onnx_path)
+    # ORT doesn't raise when a GPU EP fails to load, it drops to CPU, where the body's fp16
+    # add-ScatterElements has no kernel and every job dies mid-run with an opaque error.
+    if ".fp16." in str(onnx_path) and sess.get_providers() == ["CPUExecutionProvider"]:
+        raise RuntimeError(
+            f"Stem separation needs a GPU, but no GPU execution provider loaded (requested {names}); "
+            "the onnxruntime error in the log says why."
+        )
+    return sess
+
+
+def _trt_rtx_body(onnx_path, cache: Path) -> Path:
+    """The body for the TensorRT-RTX EP, in `cache` if it's already been written."""
+    import onnx
+
+    from app.pipeline.separation.coreml_optimize import (
+        decode_weights_once,
+        drop_unused_initializers,
+        rewrite_scatter_add_as_gather,
+    )
+
+    body = cache / "body.onnx"
+    if body.is_file():
+        return body
+    model = onnx.load(str(onnx_path))
+    rewrite_scatter_add_as_gather(model.graph)
+    decode_weights_once(model.graph)
+    drop_unused_initializers(model.graph)
+    del model.graph.value_info[:]
+    part = cache / "body.onnx.part"
+    onnx.save(model, str(part))
+    os.replace(part, body)
+    return body
+
+
+def _trt_rtx_session(onnx_path):
+    """The body on the TensorRT-RTX EP, or None where DirectML runs it instead: no device
+    the EP supports, or its engine build failed."""
+    import onnxruntime as ort
+
+    from app.pipeline.onnx_cuda import (
+        TRT_RTX_EP,
+        gpu_session_options,
+        log_bound_ep,
+        trt_rtx_devices,
+    )
+
+    if _trt_opted_out():
+        return None
+    devices = trt_rtx_devices()
+    if not devices:
+        return None
+    cache = _versioned_cache_dir("tensorrt_rtx", _TRT_RTX_BODY_REVISION, onnx_path)
+    if cache is None:
+        return None
+    try:
+        runtime_cache = Path(cache) / "runtime_cache"
+        runtime_cache.mkdir(exist_ok=True)
+        so = gpu_session_options()
+        so.add_provider_for_devices(devices, {"nv_runtime_cache_path": str(runtime_cache)})
+        sess = ort.InferenceSession(str(_trt_rtx_body(onnx_path, Path(cache))), sess_options=so)
+    except Exception:
+        log.warning("TensorRT-RTX session failed; falling back", exc_info=True)
+        # A truncated cached body would otherwise fail the same way every launch.
+        shutil.rmtree(cache, ignore_errors=True)
+        return None
+    log_bound_ep(sess, onnx_path)
+    return sess if TRT_RTX_EP in sess.get_providers() else None
 
 
 def _coreml_cache_dir(onnx_path) -> str | None:
     """Persistent dir for CoreML's compiled `.mlmodelc`, so an 8k-node graph isn't
-    recompiled every launch: one per version of the model file, dropping older
-    versions' compiles. Under the redirected cache root; None if it can't be
-    created (CoreML then compiles each launch)."""
+    recompiled every launch. None if it can't be created (CoreML then compiles each
+    launch)."""
+    return _versioned_cache_dir("coreml", _COREML_COMPILE_REVISION, onnx_path)
+
+
+def _versioned_cache_dir(kind: str, revision: int, onnx_path) -> str | None:
+    """A persistent dir per version of the model file, dropping older versions' contents.
+    Under the redirected cache root; None if it can't be created."""
     try:
         from app.config import settings
 
         model = Path(onnx_path)
         st = model.stat()
-        version = f"{_COREML_COMPILE_REVISION}-{st.st_size}-{st.st_mtime_ns}"
-        root = Path(settings.cache_dir) / "coreml" / model.name
+        version = f"{revision}-{st.st_size}-{st.st_mtime_ns}"
+        root = Path(settings.cache_dir) / kind / model.name
         if root.is_dir():
             for old in root.iterdir():
                 if old.name != version:
@@ -180,7 +267,7 @@ def _separation_providers(onnx_path):
     -- the CPU EP can't run the fp16 bodies (it silently mis-runs / falls over),
     so on macOS it's CoreML or nothing (matching `_ort_session`'s refuse-silent-
     CPU-fallback stance). Off macOS the CoreML EP is absent, so this returns the
-    shared default (CUDA->CPU on Linux/Windows). fp16 accumulation on the GPU is
+    shared default (CUDA->CPU on Linux, DirectML->CPU on Windows). fp16 accumulation on the GPU is
     left off -- separation output quality is ear-checked."""
     import onnxruntime as ort
 
@@ -204,6 +291,10 @@ def _separation_providers(onnx_path):
     return [("CoreMLExecutionProvider", opts), "CPUExecutionProvider"]
 
 
+def _trt_opted_out() -> bool:
+    return os.environ.get("UTAI_SEP_TRT", "").strip().lower() in ("0", "false", "no", "off")
+
+
 def _with_tensorrt(providers):
     """Prepend the TensorRT EP for the heavy model body. `default_providers` drops TRT
     because *variable-length* audio would rebuild an engine per shape; separation runs a
@@ -214,7 +305,7 @@ def _with_tensorrt(providers):
     them. CUDA stays behind TRT for the ops TRT can't take (e.g. the mel-overlap scatter)."""
     import onnxruntime as ort
 
-    if os.environ.get("UTAI_SEP_TRT", "").strip().lower() in ("0", "false", "no", "off"):
+    if _trt_opted_out():
         return providers
     names = {p if isinstance(p, str) else p[0] for p in providers}
     if "CUDAExecutionProvider" not in names or "TensorrtExecutionProvider" in names:
@@ -253,10 +344,10 @@ def _fold_stft_enabled(default: bool) -> bool:
     """Whether to run the Roformer STFT/iSTFT on the accelerator (onnx_stft
     graphs chained around the model) instead of numpy. `UTAI_SEP_FOLD_STFT`
     overrides; unset falls to the platform `default`. CUDA defaults ON (measured
-    ~2x, the numpy pre/post is ~half a chunk); CoreML defaults OFF (the ANE runs
-    the mask+iDFT matmuls but the placement / net win isn't yet validated, so it's
-    opt-in). Either way a first-chunk parity self-check reverts to numpy on any
-    divergence."""
+    ~2x, the numpy pre/post is ~half a chunk); CoreML and DirectML default OFF (the
+    ANE runs the mask+iDFT matmuls but the placement / net win isn't yet validated,
+    and the same plain-`run` fold measured slower than numpy on CUDA, so it's opt-in).
+    Either way a first-chunk parity self-check reverts to numpy on any divergence."""
     v = os.environ.get("UTAI_SEP_FOLD_STFT", "").strip().lower()
     if v in ("1", "true", "yes", "on"):
         return True
@@ -396,22 +487,25 @@ class _RoformerFoldFrames:
         return stems[0] if self._n == 1 else stems
 
 
-class _RoformerFoldMac:
-    """Mac fold: the complex mask multiply + iRFFT run on the ANE (an onnx_stft
-    matmul graph), while framing (bs_pack) and the index-heavy overlap-add stay in
-    numpy -- the split the ANE actually accelerates (it runs matmuls, not the
+class _RoformerFoldInverse:
+    """CoreML + DirectML fold: the complex mask multiply + iRFFT run on the accelerator
+    (an onnx_stft matmul graph), while framing (bs_pack) and the index-heavy overlap-add
+    stay in numpy -- the split the ANE actually accelerates (it runs matmuls, not the
     gather/scatter/overlap-add index ops, which every attempt confirmed fall off
     the ANE). Uses Slice (not Gather) for the re/im split so the graph stays on the
-    ANE."""
+    ANE. Plain `run`s, no IOBinding, so no EP-specific device binding."""
 
     def __init__(self, model_session, model_in, providers, n_fft, hop, n_freq,
                  n_frames, n_stems, channels, window) -> None:
         import onnxruntime as ort
 
+        from app.pipeline.onnx_cuda import gpu_session_options
         from app.pipeline.separation import onnx_stft
 
         inv = onnx_stft.build_inverse_frames(n_fft, n_freq, n_frames, n_stems, channels, window)
-        self._inv = ort.InferenceSession(inv.SerializeToString(), providers=_no_tf32(providers))
+        self._inv = ort.InferenceSession(
+            inv.SerializeToString(), sess_options=gpu_session_options(), providers=_no_tf32(providers)
+        )
         self._model = model_session
         self._model_in = model_in
         self._n_fft, self._hop, self._window = n_fft, hop, window
@@ -445,7 +539,8 @@ class NumpySeparator:
         self._onnx_path = str(onnx_path)
         self._providers = list(providers) if providers is not None else _separation_providers(onnx_path)
         self._providers = _with_tensorrt(self._providers)
-        self.session = _ort_session(onnx_path, self._providers)
+        trt_rtx = _trt_rtx_session(onnx_path) if providers is None else None
+        self.session = trt_rtx if trt_rtx is not None else _ort_session(onnx_path, self._providers)
         self._in = self.session.get_inputs()[0].name
         # Cached across separate() calls: the STFT-fold ORT sessions (~1.5s to
         # build) + its one-time parity verification (~0.9s). Rebuilding + re-
@@ -465,7 +560,8 @@ class NumpySeparator:
 
     def _build_fold(self, n_fft, hop, n_frames, n_stems, channels, window):
         """Pick the folded pre/post runner for the bound EP (CUDA: full or hop-agnostic
-        fold; CoreML: mask+iDFT on the ANE, framing/overlap-add in numpy), or None."""
+        fold; CoreML, DirectML: mask+iDFT on the accelerator, framing/overlap-add in
+        numpy), or None."""
         provs = self.session.get_providers()
         n_freq = n_fft // 2 + 1
         # The tiny STFT graphs run on CUDA (fp32/no-TF32 parity with numpy); TensorRT is
@@ -478,8 +574,8 @@ class NumpySeparator:
             if "CUDAExecutionProvider" in provs and _fold_stft_enabled(default=True):
                 # hop | n_fft -> GPU overlap-add (full fold); else emit frames + numpy overlap-add.
                 return (_RoformerFold if n_fft % hop == 0 else _RoformerFoldFrames)(*args)
-            if "CoreMLExecutionProvider" in provs and _fold_stft_enabled(default=False):
-                return _RoformerFoldMac(*args)
+            if {"CoreMLExecutionProvider", "DmlExecutionProvider"} & set(provs) and _fold_stft_enabled(default=False):
+                return _RoformerFoldInverse(*args)
         except Exception:
             log.exception("could not build the folded STFT path; using numpy")
         return None
