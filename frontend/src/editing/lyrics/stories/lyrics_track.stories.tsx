@@ -37,7 +37,7 @@ const meta: Meta<DemoArgs> = {
       control: { type: 'range', min: 40, max: 260, step: 5 },
     },
   },
-  // Default wider than the app's ~80 so held notes leave visible sustain slack.
+  // Wide enough that held notes leave visible sustain slack.
   args: { pitch: true, vibrato: true, pxPerBeat: 130 },
 };
 export default meta;

@@ -1077,8 +1077,8 @@ const TracksViewSections = observer(function TracksViewSections() {
       <DropdownSection label="Zoom">
         <div className={styles.menuControlRow}>
           <Slider
-            min={8}
-            max={600}
+            min={MIN_PX_PER_SECOND}
+            max={MAX_PX_PER_SECOND}
             step={1}
             value={viewport.pxPerBeat}
             onChange={(v) => presenter.setZoom(v)}

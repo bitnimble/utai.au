@@ -2,8 +2,7 @@ import { makeAutoObservable } from 'mobx';
 
 export const MIN_PX_PER_SECOND = 8;
 export const MAX_PX_PER_SECOND = 600;
-/** Default horizontal scale: pixels per second of audio at zoom 1. */
-export const DEFAULT_PX_PER_SECOND = 80;
+const DEFAULT_PX_PER_SECOND = (MIN_PX_PER_SECOND + MAX_PX_PER_SECOND) / 2;
 
 /**
  * Score viewport state: virtual horizontal scroll offset, cached viewport

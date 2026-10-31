@@ -5,6 +5,7 @@ import { makeWav } from 'src/testing/wav';
 type Utai = {
   lyricsStore: { add: (l: unknown[], o: unknown) => string };
   playbackEngine: { seek: (n: number) => void };
+  presenter: { setZoom: (px: number) => void };
 };
 
 type Seg = { base: string; reading?: string };
@@ -106,6 +107,8 @@ async function loadJapaneseSong(page: Page): Promise<void> {
   });
   await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
   await pausePlayback(page);
+  // Zoomed out so the score's windowing renders every line of the song.
+  await page.evaluate(() => (window as unknown as { utai: Utai }).utai.presenter.setZoom(80));
   await page.evaluate(() =>
     (window as unknown as { utai: Utai }).utai.lyricsStore.add(
       [

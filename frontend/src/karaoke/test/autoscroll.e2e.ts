@@ -74,7 +74,8 @@ test('autoscroll: center pins the playhead near the viewport centre; off leaves 
 }) => {
   await loadTrackAndZoom(page);
 
-  // Off (default): playing does not scroll the score.
+  // Off: playing does not scroll the score.
+  await setFollowMode(page, 'off');
   await page.getByTestId('transport-play').click();
   await page.waitForTimeout(1500);
   expect((await scoreState(page)).scrollLeft).toBeLessThan(5);
@@ -134,9 +135,8 @@ test('autoscroll: line centres the current lyric line and fits its zoom', async 
   expect(Math.abs(centreScreenX - (GUTTER_PX + s.clientWidth) / 2)).toBeLessThan(6);
 });
 
-test('autoscroll: page keeps the playhead within the bars viewport', async ({ page }) => {
+test('autoscroll: page (default) keeps the playhead within the bars viewport', async ({ page }) => {
   await loadTrackAndZoom(page);
-  await setFollowMode(page, 'page');
   await page.getByTestId('transport-play').click();
 
   // Once the playhead has advanced past a page, the score must have turned.

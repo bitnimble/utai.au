@@ -60,9 +60,8 @@ export class AppSettingsStore {
   showLyricsPitch: boolean = true;
   showLyricsVibrato: boolean = true;
 
-  /** Follow-playhead scroll behaviour during playback. Defaults off so the
-   *  current free-scroll behaviour is unchanged until the user opts in. */
-  autoscrollMode: AutoscrollMode = 'off';
+  /** Follow-playhead scroll behaviour during playback. */
+  autoscrollMode: AutoscrollMode = 'page';
 
   /** Lyrics-chip font size (px), applied to every lyrics row and stepped from
    *  the View menu. */
