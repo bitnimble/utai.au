@@ -46,7 +46,7 @@ _KEY_SAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 # Bump when the aligner models or alignment logic change so stale
 # entries miss instead of serving a result the current code wouldn't
 # produce (the analogue of `_vocals_model_id()` for the result cache).
-_ALIGN_CACHE_VERSION = "wav2vec2robust+mms300m+swiftf0-v3"
+_ALIGN_CACHE_VERSION = "wav2vec2robust+mms300m+swiftf0-v4"
 
 
 @router.post("/music/align")

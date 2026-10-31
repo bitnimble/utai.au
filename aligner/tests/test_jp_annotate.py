@@ -116,6 +116,34 @@ def test_a_heard_reading_wins_over_the_dictionary():
     assert shown[0] == ([("上", "あ"), ("がっ", None)], "agat")
 
 
+def test_katakana_okurigana_reads_as_the_word_it_spells():
+    assert _shown("回レ回レ") == [([("回", "まわ"), ("レ", None), ("回", "まわ"), ("レ", None)], "maware maware")]
+    assert _shown("美シイ")[0] == ([("美", "うつく"), ("シイ", None)], "utsukushii")
+    assert _shown("愛シテル")[0] == ([("愛", "あい"), ("シテル", None)], "aishiteru")
+    assert _shown("泣カナイデ")[0] == ([("泣", "な"), ("カナイデ", None)], "nakanaide")
+
+
+def test_a_word_split_off_its_katakana_okurigana_keeps_the_reading():
+    assert _shown("回", "レ", "!") == [([("回", "まわ")], "mawa"), ([("レ", None)], "re"), ([("!", None)], "")]
+
+
+def test_a_heard_reading_fits_over_katakana_okurigana():
+    assert _shown(("回レ", "まわれ"))[0] == ([("回", "まわ"), ("レ", None)], "maware")
+
+
+def test_katakana_particles_read_as_particles():
+    assert _shown("僕ハ君ヲ")[0] == ([("僕", "ぼく"), ("ハ", None), ("君", "きみ"), ("ヲ", None)], "boku wa kimi o")
+
+
+def test_a_katakana_loanword_after_kanji_stays_itself():
+    assert _shown("東京タワー")[0] == ([("東京", "とうきょう"), ("タワー", None)], "toukyou tawaa")
+    assert _shown("英語テスト")[0] == ([("英語", "えいご"), ("テスト", None)], "eigo tesuto")
+    assert _shown("白ワイン")[0] == ([("白", "しろ"), ("ワイン", None)], "shiro wain")
+    assert _shown("金メダル")[0][1] == "kin medaru"
+    assert _shown("白シャツ")[0] == ([("白", "しろ"), ("シャツ", None)], "shiro shatsu")
+    assert _shown("恋ハナ")[0] == ([("恋", "こい"), ("ハナ", None)], "koi hana")
+
+
 def test_latin_and_punctuation_stay_bare_and_unromanized():
     assert _shown("愛 don't KNOW 上に") == [
         ([("愛", "あい"), (" don't KNOW ", None), ("上", "うえ"), ("に", None)], "ai ue ni")

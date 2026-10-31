@@ -13,7 +13,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.pipeline import jp_romaji
-from app.pipeline.jp_romaji import Morpheme, geminate, is_han, is_kana, kana_romaji, morpheme_romaji
+from app.pipeline.jp_romaji import (
+    Morpheme,
+    geminate,
+    hiragana,
+    is_han,
+    is_kana,
+    kana_romaji,
+    morpheme_romaji,
+)
 
 _CONTENT_POS1 = frozenset(
     {"名詞", "代名詞", "動詞", "形容詞", "形状詞", "副詞", "連体詞", "接続詞", "感動詞", "接頭辞"}
@@ -93,7 +101,7 @@ def fit_furigana(surface: str, reading: str) -> list[Segment]:
     ri = 0
     for i, (text, kanji) in enumerate(runs):
         if not kanji:
-            if reading[ri : ri + len(text)] != text:
+            if reading[ri : ri + len(text)] != hiragana(text):
                 return bare
             segments.append(Segment(text))
             ri += len(text)
@@ -103,7 +111,7 @@ def fit_furigana(surface: str, reading: str) -> list[Segment]:
         else:
             # A kanji run reads at least one kana; searching from `ri` would
             # anchor 笑わ / わらわ's okurigana on the reading's first わ.
-            at = reading.find(runs[i + 1][0], ri + 1)
+            at = reading.find(hiragana(runs[i + 1][0]), ri + 1)
             if at < 0:
                 return bare
             piece, ri = reading[ri:at], at

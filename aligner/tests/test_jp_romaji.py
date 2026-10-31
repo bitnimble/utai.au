@@ -173,6 +173,12 @@ def test_tokenize_pronounces_the_wo_particle():
     assert [t.romaji for t in tokenize("君を", treat_kanji_as_japanese=True)] == ["kimi", "o"]
 
 
+def test_tokenize_reads_katakana_okurigana_as_the_word_it_spells():
+    toks = tokenize("回レ回レ", treat_kanji_as_japanese=True)
+    assert [(t.surface, t.kana, t.romaji) for t in toks] == [("回レ", "まわれ", "maware")] * 2
+    assert ("ずくめ", "zukume") in _readings("尽クメ")["尽クメ"]
+
+
 def test_tokenize_offers_no_name_readings():
     assert ("かずと", "kazuto") not in _readings("一人で")["一人"]
 

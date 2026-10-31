@@ -73,7 +73,9 @@ Two wrinkles:
   (`tokenize`) and the display (`jp_annotate.py`, `POST /lyrics/japanese`)
   take their readings from it. `_kana` corrects unidic-lite where its
   in-context reading is wrong for lyrics (私 → わたし, 何 → なに / なん by
-  the sound after it, 行った → いった).
+  the sound after it, 行った → いった). Stylized katakana okurigana and
+  particles (回レ → まわれ, 僕ハ → ぼくは) are parsed as hiragana, while a
+  loanword after a kanji (東京タワー) stays katakana.
 - **Furigana + romaji display (`jp_annotate.py`).** The frontend sends each
   line as its display words to `POST /lyrics/japanese` and renders what
   comes back: per word, ruby segments (the reading fitted over its kanji,

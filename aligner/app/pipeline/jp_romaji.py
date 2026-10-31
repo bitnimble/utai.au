@@ -17,6 +17,7 @@ The module is two layers:
 from __future__ import annotations
 
 import functools
+import re
 import threading
 import unicodedata
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ _LYRIC_READINGS = {"私": "わたし", "明日": "あした", "正気": "しょ�
 # The pronoun 何 reads なん before a t / d / n sound (何で, 何の, 何だ), なに
 # elsewhere (何を, 何か, 何に); unidic-lite reads it なん everywhere.
 _NAN_BEFORE = frozenset("たちつてとだぢづでどなぬねの")
+_KATAKANA_RUN = re.compile("[ァ-ヶー]+")
 
 
 def _normalize(text: str) -> str:
@@ -147,7 +149,7 @@ def morphemes(text: str) -> list[Morpheme]:
     """Every morpheme of `text` (symbols and Latin included), in order."""
     out: list[Morpheme] = []
     with _tagger_lock:
-        nodes = _cutlet().tagger(text)
+        nodes = _cutlet().tagger(_fold_katakana_okurigana(text))
         # Only for the spacing: each token's romaji comes from `_kana` instead.
         spacing = _cutlet().romaji_tokens(nodes, capitalize=False)
         cursor = 0
@@ -158,7 +160,7 @@ def morphemes(text: str) -> list[Morpheme]:
             f = node.feature
             out.append(
                 Morpheme(
-                    surface=node.surface,
+                    surface=text[start:cursor],
                     start=start,
                     kana=kana,
                     romaji=morpheme_romaji(kana, f.pos1, f.pron),
@@ -172,6 +174,61 @@ def morphemes(text: str) -> list[Morpheme]:
     return out
 
 
+def _fold_katakana_okurigana(text: str) -> str:
+    """`text`, the same length, with stylized katakana okurigana and particles
+    in hiragana, the only way the dictionary knows them (回レ -> 回れ, 僕ハ ->
+    僕は). A run after a kanji folds only when the dictionary then reads it
+    into that kanji's word (inflections included) or as a particle, so 東京タワー
+    keeps its loanword. Parses, so the caller must hold `_tagger_lock`."""
+    spans = [
+        m.span()
+        for m in _KATAKANA_RUN.finditer(text)
+        if m.start() > 0 and is_han(ord(text[m.start() - 1])) and "ー" not in m.group()
+    ]
+    if not spans:
+        return text
+    candidate = text
+    for s, e in spans:
+        candidate = candidate[:s] + hiragana(text[s:e]) + candidate[e:]
+    parsed = _parse_spans(candidate)
+    known_nouns = {(start, end) for start, end, pos1, is_unk in _parse_spans(text) if pos1 == "名詞" and not is_unk}
+    folded = text
+    for s, e in spans:
+        overlapping = [m for m in parsed if m[0] < e and m[1] > s]
+        if _reads_as_okurigana(s, overlapping, (s, e) in known_nouns):
+            folded = folded[:s] + candidate[s:e] + folded[e:]
+    return folded
+
+
+def _parse_spans(text: str) -> list[tuple[int, int, str | None, bool]]:
+    """`(start, end, pos1, is_unk)` of each morpheme, copied out of the lattice
+    the next parse overwrites."""
+    spans: list[tuple[int, int, str | None, bool]] = []
+    cursor = 0
+    for node in _cutlet().tagger(text):
+        start = cursor + len(node.white_space)
+        cursor = start + len(node.surface)
+        spans.append((start, cursor, node.feature.pos1, node.is_unk))
+    return spans
+
+
+def _reads_as_okurigana(
+    run_start: int,
+    overlapping: list[tuple[int, int, str | None, bool]],
+    run_is_known_noun: bool,
+) -> bool:
+    (start, _, pos1, _), *rest = overlapping
+    if start == run_start:
+        # Not several particles: 恋ハナ would read as は + な.
+        return not rest and pos1 == "助詞"
+    if not rest:
+        return True
+    # 白シャツ would otherwise read as the archaic 白しゃ + つ.
+    if run_is_known_noun:
+        return False
+    return pos1 in ("動詞", "形容詞") and all(m[2] in ("助動詞", "助詞") for m in rest)
+
+
 def geminate_all(ms: list[Morpheme]) -> None:
     """Resolve each romaji ending in っ against the morpheme after it."""
     for i, m in enumerate(ms):
@@ -182,7 +239,7 @@ def kana_romaji(kana: str) -> str:
     """Hepburn romaji for kana; kanji are dropped, anything else that isn't
     kana passes through."""
     out = ""
-    for run, kana_run in _kana_runs(_hiragana(kana)):
+    for run, kana_run in _kana_runs(hiragana(kana)):
         if kana_run:
             try:
                 out += _cutlet().map_kana(run)
@@ -239,11 +296,11 @@ def _kana(nodes: list[Any], i: int) -> str | None:
     kana = node.feature.kana
     if not kana:
         if node.is_unk and any(is_kana(ord(c)) for c in surface):
-            return _hiragana(surface)
+            return hiragana(surface)
         return _unread_kanji_reading(surface, nodes[i + 1].surface if i + 1 < len(nodes) else "")
-    kana = _hiragana(kana)
+    kana = hiragana(kana)
     if surface == "何" and node.feature.pos1 == "代名詞":
-        following = _hiragana(nodes[i + 1].feature.kana or "") if i + 1 < len(nodes) else ""
+        following = hiragana(nodes[i + 1].feature.kana or "") if i + 1 < len(nodes) else ""
         return "なん" if following[:1] in _NAN_BEFORE and following else "なに"
     # 行っ is the shared stem of 行く and 行う (行った); unidic picks 行う, lyrics mean 行く.
     if node.feature.lemma == "行う" and surface.startswith("行っ"):
@@ -307,6 +364,7 @@ def _readings(surface: str, kana: str | None, romaji: str, following: str) -> li
     resolved against `following`, the romaji after it."""
     if not kana or not any(is_han(ord(c)) for c in surface):
         return []
+    surface = hiragana(surface)
     readings = [Reading(kana=kana, romaji=romaji)]
     for alt in [*_homographs(surface), *_okurigana_readings(surface)]:
         try:
@@ -323,7 +381,7 @@ def _homographs(surface: str) -> list[str]:
     せい, しょう, ...), names (一人 as かずと) aside."""
     with _tagger_lock:
         return [
-            _hiragana(parse[0].feature.kana)
+            hiragana(parse[0].feature.kana)
             for parse in _cutlet().tagger.nbestToNodeList(surface, _READING_PARSES)
             if len(parse) == 1 and parse[0].feature.kana and parse[0].feature.pos2 != "固有名詞"
         ]
@@ -350,7 +408,7 @@ def _kanji_readings() -> dict[str, list[str]]:
     return table
 
 
-def _hiragana(kana: str) -> str:
+def hiragana(kana: str) -> str:
     return "".join(chr(ord(c) - 0x60) if 0x30A1 <= ord(c) <= 0x30F6 else c for c in kana)
 
 
