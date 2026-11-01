@@ -2,10 +2,9 @@ import { Volume2, VolumeX } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { KaraokePresenterContext } from 'src/karaoke/karaoke_contexts';
-import { AudioTrack } from 'src/editing/playback/audio_tracks';
+import { AudioTrack, stemLabel } from 'src/editing/playback/audio_tracks';
 import { playbackEngine } from 'src/editing/playback/player';
 import { LabelledVolume } from 'src/ui/labelled_volume/labelled_volume';
-import { audioTrackLabel } from './audio_track_view';
 import styles from './stem_mix_controls.module.css';
 
 /** Per-track mute + volume for the loaded stems, for when the track rows are hidden. */
@@ -36,16 +35,3 @@ const StemControl = observer(function StemControl({ track }: { track: AudioTrack
     />
   );
 });
-
-function stemLabel(track: AudioTrack): string {
-  switch (track.role) {
-    case 'backing':
-      return 'Instrumental';
-    case 'vocals':
-      return 'Vocals';
-    case 'full-mix':
-      return 'Mix';
-    case 'unknown':
-      return audioTrackLabel(track.filename);
-  }
-}

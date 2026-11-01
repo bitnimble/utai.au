@@ -2,10 +2,9 @@ import classNames from 'classnames';
 import {
   ArrowDown,
   ArrowUp,
+  Gauge,
   ListPlus,
   ListStart,
-  MicOff,
-  MicVocal,
   Music,
   Pause,
   Play,
@@ -14,12 +13,15 @@ import {
   SkipForward,
   Trash2,
   Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
+import { MAX_SPEED, MIN_SPEED, SPEED_STEP } from 'src/editing/playback/playback_engine';
 import { formatDuration, ResultSummary } from 'src/music_source/music_search_panel';
 import { statusLabel } from 'src/queue/queue_view';
 import { ThemeToggle } from 'src/settings/theme_toggle';
+import { Checkbox } from 'src/ui/checkbox/checkbox';
 import { Modal, ModalBody, ModalHeader } from 'src/ui/modal/modal';
 import { Slider } from 'src/ui/slider/slider';
 import { Spinner } from 'src/ui/spinner/spinner';
@@ -27,7 +29,7 @@ import { Tabs, type TabOption } from 'src/ui/tabs/tabs';
 import { ToastContainer } from 'src/ui/toasts/toast_container';
 import { JoinDetails, joinStyles } from '../join_details';
 import { RemotePresenter } from './remote_presenter';
-import { RemoteStore, type RemoteTab } from './remote_store';
+import { RemoteStore, type RemoteTab, trackDrag } from './remote_store';
 import styles from './remote_page.module.css';
 
 type Props = { store: RemoteStore; presenter: RemotePresenter };
@@ -85,8 +87,9 @@ export const RemotePage = observer(function RemotePage({ sessionId, apiBase }: {
 
 const TABS: ReadonlyArray<TabOption<RemoteTab>> = [
   { value: 'queue', label: 'Queue', testId: 'remote-tab-queue' },
-  { value: 'search', label: 'Add songs', testId: 'remote-tab-search' },
+  { value: 'search', label: 'Search', testId: 'remote-tab-search' },
   { value: 'history', label: 'History', testId: 'remote-tab-history' },
+  { value: 'audio', label: 'Audio', testId: 'remote-tab-audio' },
 ];
 
 const ShareModal = observer(function ShareModal({ store, presenter }: Props) {
@@ -109,6 +112,8 @@ const RemoteTabPanel = observer(function RemoteTabPanel({ store, presenter }: Pr
       return <RemoteSearch store={store} presenter={presenter} />;
     case 'history':
       return <RemoteHistory store={store} presenter={presenter} />;
+    case 'audio':
+      return <RemoteAudio store={store} presenter={presenter} />;
   }
 });
 
@@ -156,7 +161,7 @@ const NowPlaying = observer(function NowPlaying({ store, presenter }: Props) {
         </span>
       </div>
       <div className={styles.seekRow}>
-        <span className={styles.time}>{formatDuration(store.positionSec)}</span>
+        <span className={styles.readout}>{formatDuration(store.positionSec)}</span>
         <Slider
           className={styles.seek}
           value={store.positionSec}
@@ -168,7 +173,7 @@ const NowPlaying = observer(function NowPlaying({ store, presenter }: Props) {
           ariaLabel="Seek"
           testId="remote-seek"
         />
-        <span className={styles.time}>{formatDuration(durationSec)}</span>
+        <span className={styles.readout}>{formatDuration(durationSec)}</span>
       </div>
       <div className={styles.controls}>
         <button
@@ -192,56 +197,153 @@ const NowPlaying = observer(function NowPlaying({ store, presenter }: Props) {
           <SkipForward size={28} aria-hidden="true" />
         </button>
       </div>
-      <div className={styles.volumeRow}>
-        <Volume2 size={18} aria-hidden="true" />
-        <Slider
-          className={styles.seek}
-          value={Math.round(store.outputVolume * 100)}
-          max={100}
-          step={1}
-          disabled={!store.connected}
-          onChange={(v) => presenter.setVolume(v / 100)}
-          onCommit={() => presenter.release('setVolume')}
-          ariaLabel="Volume"
-          testId="remote-volume"
-        />
-      </div>
-      {host?.vocals != null && (
-        <div className={styles.volumeRow}>
-          <button
-            type="button"
-            className={styles.iconButton}
-            disabled={!store.connected}
-            onClick={() => presenter.toggleVocals()}
-            aria-pressed={!host.vocals.muted}
-            aria-label={host.vocals.muted ? 'Turn the vocals on' : 'Turn the vocals off'}
-            data-testid="remote-vocals-toggle"
-          >
-            {host.vocals.muted ? <MicOff size={18} aria-hidden="true" /> : <MicVocal size={18} aria-hidden="true" />}
-          </button>
-          <Slider
-            className={styles.seek}
-            value={Math.round(store.vocalVolume * 100)}
-            max={100}
-            step={1}
-            disabled={!store.connected}
-            onChange={(v) => presenter.setVocalVolume(v / 100)}
-            onCommit={() => presenter.release('setVocalVolume')}
-            ariaLabel="Vocal volume"
-            testId="remote-vocal-volume"
-          />
-        </div>
-      )}
     </section>
   );
 });
+
+const RemoteAudio = observer(function RemoteAudio({ store, presenter }: Props) {
+  const disabled = !store.connected;
+  const tracks = store.host?.tracks ?? [];
+  return (
+    <div className={styles.audio} data-testid="remote-audio">
+      <section className={styles.audioSection}>
+        <Fader
+          leading={<Volume2 className={styles.faderIcon} size={18} aria-hidden="true" />}
+          label="Master"
+          readout={percent(store.outputVolume)}
+          value={Math.round(store.outputVolume * 100)}
+          max={100}
+          step={1}
+          disabled={disabled}
+          onChange={(v) => presenter.setVolume(v / 100)}
+          onCommit={() => presenter.release('volume')}
+          testId="remote-volume"
+        />
+        {tracks.map((track) => {
+          const volume = store.trackVolume(track);
+          return (
+            <Fader
+              key={track.id}
+              leading={
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  disabled={disabled}
+                  onClick={() => presenter.setTrackMuted(track.id, !track.muted)}
+                  aria-pressed={track.muted}
+                  aria-label={track.muted ? `Unmute ${track.label}` : `Mute ${track.label}`}
+                  data-testid={`remote-track-mute-${track.id}`}
+                >
+                  {track.muted ? <VolumeX size={18} aria-hidden="true" /> : <Volume2 size={18} aria-hidden="true" />}
+                </button>
+              }
+              label={track.label}
+              muted={track.muted}
+              readout={track.muted ? 'Muted' : percent(volume)}
+              value={Math.round(volume * 100)}
+              max={100}
+              step={1}
+              disabled={disabled}
+              onChange={(v) => presenter.setTrackVolume(track.id, v / 100)}
+              onCommit={() => presenter.release(trackDrag(track.id))}
+              testId={`remote-track-volume-${track.id}`}
+            />
+          );
+        })}
+      </section>
+      <section className={styles.audioSection}>
+        <Fader
+          leading={<Gauge className={styles.faderIcon} size={18} aria-hidden="true" />}
+          label="Speed"
+          ariaLabel="Playback speed"
+          readout={`${store.speed.toFixed(2)}×`}
+          value={store.speed}
+          min={MIN_SPEED}
+          max={MAX_SPEED}
+          step={SPEED_STEP}
+          disabled={disabled || store.host?.nowPlaying == null}
+          onChange={(v) => presenter.setSpeed(v)}
+          onCommit={() => presenter.release('speed')}
+          testId="remote-speed"
+        />
+      </section>
+      <section className={styles.audioSection}>
+        <label className={styles.toggleRow}>
+          <span className={styles.controlLabel}>Vocal surround reverb</span>
+          <Checkbox
+            checked={store.host?.surroundReverb ?? false}
+            disabled={disabled}
+            onChange={(e) => presenter.setSurroundReverb(e.target.checked)}
+            data-testid="remote-surround-reverb"
+          />
+        </label>
+      </section>
+    </div>
+  );
+});
+
+function percent(volume: number): string {
+  return `${Math.round(volume * 100)}%`;
+}
+
+const Fader = ({
+  leading,
+  label,
+  muted = false,
+  ariaLabel,
+  readout,
+  value,
+  min,
+  max,
+  step,
+  disabled,
+  onChange,
+  onCommit,
+  testId,
+}: {
+  leading: React.ReactNode;
+  label: string;
+  muted?: boolean;
+  ariaLabel?: string;
+  readout: string;
+  value: number;
+  min?: number;
+  max: number;
+  step: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+  onCommit: () => void;
+  testId: string;
+}): React.ReactElement => (
+  <div className={styles.fader}>
+    {leading}
+    <div className={styles.faderBody}>
+      <div className={styles.faderCaption}>
+        <span className={styles.controlLabel}>{label}</span>
+        <span className={styles.readout}>{readout}</span>
+      </div>
+      <Slider
+        className={classNames(styles.faderSlider, muted && styles.faderSliderMuted)}
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        disabled={disabled}
+        onChange={onChange}
+        onCommit={onCommit}
+        ariaLabel={ariaLabel ?? `${label} volume`}
+        testId={testId}
+      />
+    </div>
+  </div>
+);
 
 const RemoteQueue = observer(function RemoteQueue({ store, presenter }: Props) {
   const queue = store.host?.queue ?? [];
   if (queue.length === 0) {
     return (
       <p className={styles.empty} data-testid="remote-queue-empty">
-        Nothing queued. Add songs from the Add songs tab.
+        Nothing queued. Find songs in the Search tab.
       </p>
     );
   }

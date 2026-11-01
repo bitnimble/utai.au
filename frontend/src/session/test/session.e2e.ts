@@ -176,17 +176,32 @@ test('remote: searches through the host, queues, removes, drives playback, and s
   await expect.poll(() => hostQueueLength(page)).toBe(1);
 });
 
-type TrackMix = { role: string; volume: number; muted: boolean };
-type MixWindow = { utai?: { playbackEngine?: { audioTracks?: Map<string, TrackMix> } } };
+type TrackMix = { id: string; role: string; volume: number; muted: boolean; effects: string[] };
+type MixWindow = {
+  utai?: {
+    playbackEngine?: { speed?: number; audioTracks?: Map<string, TrackMix> };
+    presenter?: { setTrackVolume: (id: string, volume: number) => void; setSpeed: (speed: number) => void };
+    audioDevice?: { outputVolume: number };
+    audioDevicePresenter?: { setOutputVolume: (volume: number) => void };
+  };
+};
 
-const hostVocals = (page: Page): Promise<{ volume: number; muted: boolean } | null> =>
-  page.evaluate(() => {
+const hostTrack = (page: Page, role: string): Promise<TrackMix | null> =>
+  page.evaluate((role) => {
     const tracks = (window as unknown as MixWindow).utai?.playbackEngine?.audioTracks?.values() ?? [];
-    const vocals = [...tracks].find((t) => t.role === 'vocals');
-    return vocals ? { volume: vocals.volume, muted: vocals.muted } : null;
-  });
+    const track = [...tracks].find((t) => t.role === role);
+    return track
+      ? { id: track.id, role: track.role, volume: track.volume, muted: track.muted, effects: [...track.effects] }
+      : null;
+  }, role);
 
-test('remote: turns the vocals on and off and sets their level', async ({ page, context }) => {
+const hostSpeed = (page: Page): Promise<number | undefined> =>
+  page.evaluate(() => (window as unknown as MixWindow).utai?.playbackEngine?.speed);
+
+const hostOutputVolume = (page: Page): Promise<number | undefined> =>
+  page.evaluate(() => (window as unknown as MixWindow).utai?.audioDevice?.outputVolume);
+
+test('remote: mixes each track, sets the speed, and toggles the vocal effect', async ({ page, context }) => {
   const relay = new FakeRelay();
   await relay.attach(page);
   await page.goto(HOST_PATH);
@@ -196,27 +211,68 @@ test('remote: turns the vocals on and off and sets their level', async ({ page, 
   await relay.attach(remote);
   await remote.goto(REMOTE_PATH);
   await expect(remote.getByTestId('remote-connection')).toHaveText('Connected');
-  await expect(remote.getByTestId('remote-vocals-toggle')).toHaveCount(0);
+  await remote.getByTestId('remote-tab-audio').click();
+  await expect(remote.getByTestId('remote-speed')).toBeDisabled();
 
   await page.locator('input[type="file"][accept=".zip,application/zip"]').setInputFiles({
     name: 'Imported.utai.zip',
     mimeType: 'application/zip',
     buffer: makeSongBundle(30, { vocals: true }),
   });
-  const toggle = remote.getByTestId('remote-vocals-toggle');
-  await expect(toggle).toBeVisible({ timeout: 15_000 });
-  const before = await hostVocals(page);
-  if (before == null) throw new Error('the host has no vocal track');
-  await expect(toggle).toHaveAttribute('aria-pressed', String(!before.muted));
+  await expect(remote.getByTestId('remote-speed')).toBeEnabled({ timeout: 15_000 });
+  await expect.poll(() => hostTrack(page, 'vocals')).not.toBeNull();
+  await expect.poll(() => hostTrack(page, 'backing')).not.toBeNull();
+  const vocals = await hostTrack(page, 'vocals');
+  const backing = await hostTrack(page, 'backing');
+  if (vocals == null || backing == null) throw new Error('the host is missing a stem');
 
-  await toggle.click();
-  await expect.poll(() => hostVocals(page)).toEqual({ volume: before.volume, muted: !before.muted });
-  await expect(toggle).toHaveAttribute('aria-pressed', String(before.muted));
+  const vocalMute = remote.getByRole('button', { name: /mute vocals/i });
+  await expect(vocalMute).toHaveAttribute('aria-pressed', String(vocals.muted));
+  await vocalMute.click();
+  await expect.poll(async () => (await hostTrack(page, 'vocals'))?.muted).toBe(!vocals.muted);
+  await expect(vocalMute).toHaveAttribute('aria-pressed', String(!vocals.muted));
 
-  await remote.getByTestId('remote-vocal-volume').fill('40');
-  await remote.getByTestId('remote-vocal-volume').blur();
-  await expect.poll(() => hostVocals(page)).toEqual({ volume: 0.4, muted: !before.muted });
-  await expect(remote.getByTestId('remote-vocal-volume')).toHaveValue('40');
+  const vocalVolume = remote.getByTestId(`remote-track-volume-${vocals.id}`);
+  await vocalVolume.fill('40');
+  await vocalVolume.blur();
+  await expect.poll(async () => (await hostTrack(page, 'vocals'))?.volume).toBe(0.4);
+  await expect(vocalVolume).toHaveValue('40');
+
+  const backingVolume = remote.getByTestId(`remote-track-volume-${backing.id}`);
+  await backingVolume.fill('10');
+  await backingVolume.fill('70');
+  await backingVolume.blur();
+  await expect.poll(async () => (await hostTrack(page, 'backing'))?.volume).toBe(0.7);
+  await expect(backingVolume).toHaveValue('70');
+  await remote.getByRole('button', { name: 'Mute Instrumental' }).click();
+  await expect.poll(async () => (await hostTrack(page, 'backing'))?.muted).toBe(true);
+  await expect(remote.getByRole('button', { name: 'Unmute Instrumental' })).toHaveAttribute('aria-pressed', 'true');
+  expect((await hostTrack(page, 'vocals'))?.volume).toBe(0.4);
+
+  await remote.getByTestId('remote-speed').fill('0.75');
+  await remote.getByTestId('remote-speed').blur();
+  await expect.poll(() => hostSpeed(page)).toBe(0.75);
+  await expect(remote.getByTestId('remote-speed')).toHaveValue('0.75');
+
+  await remote.getByTestId('remote-volume').fill('50');
+  await remote.getByTestId('remote-volume').blur();
+  await expect.poll(() => hostOutputVolume(page)).toBe(0.5);
+
+  await page.evaluate((id) => {
+    const utai = (window as unknown as MixWindow).utai;
+    utai?.presenter?.setTrackVolume(id, 0.2);
+    utai?.presenter?.setSpeed(1.25);
+    utai?.audioDevicePresenter?.setOutputVolume(0.3);
+  }, vocals.id);
+  await expect(vocalVolume).toHaveValue('20');
+  await expect(remote.getByTestId('remote-speed')).toHaveValue('1.25');
+  await expect(remote.getByTestId('remote-volume')).toHaveValue('30');
+
+  await remote.getByTestId('remote-surround-reverb').click();
+  await expect.poll(async () => (await hostTrack(page, 'vocals'))?.effects).toEqual(['surround-reverb']);
+  await expect(remote.getByTestId('remote-surround-reverb')).toBeChecked();
+  await remote.getByTestId('remote-surround-reverb').click();
+  await expect.poll(async () => (await hostTrack(page, 'vocals'))?.effects).toEqual([]);
 });
 
 test('host: another device can take over hosting, and this one can take it back',async ({ page, context }) => {

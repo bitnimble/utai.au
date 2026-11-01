@@ -57,8 +57,11 @@ export const hostStateSchema = z.object({
   positionSec: z.number(),
   speed: z.number().default(1),
   outputVolume: z.number(),
-  /** The current song's vocal stem; null until it's separated. */
-  vocals: z.object({ volume: z.number(), muted: z.boolean() }).nullable().default(null),
+  /** The current song's audio tracks, as the host's mixer shows them. */
+  tracks: z
+    .array(z.object({ id: z.string(), label: z.string(), volume: z.number(), muted: z.boolean() }))
+    .default([]),
+  surroundReverb: z.boolean().default(false),
   queue: z.array(remoteQueueItemSchema),
   history: z.array(remotePlayedSongSchema).default([]),
   waitingForId: z.string().optional(),
@@ -72,8 +75,10 @@ export const remoteCommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('seek'), sec: z.number() }),
   z.object({ kind: z.literal('skip') }),
   z.object({ kind: z.literal('setVolume'), volume: z.number() }),
-  z.object({ kind: z.literal('setVocalVolume'), volume: z.number() }),
-  z.object({ kind: z.literal('setVocalMuted'), muted: z.boolean() }),
+  z.object({ kind: z.literal('setTrackVolume'), id: z.string(), volume: z.number() }),
+  z.object({ kind: z.literal('setTrackMuted'), id: z.string(), muted: z.boolean() }),
+  z.object({ kind: z.literal('setSpeed'), speed: z.number() }),
+  z.object({ kind: z.literal('setSurroundReverb'), on: z.boolean() }),
   z.object({ kind: z.literal('add'), track: trackResultSchema }),
   z.object({ kind: z.literal('remove'), id: z.string() }),
   z.object({ kind: z.literal('move'), id: z.string(), toIndex: z.number().int() }),

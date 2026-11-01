@@ -19,6 +19,7 @@ const PLAYBACK_TAIL_SECONDS = 0.5;
 export const MAX_AUDIO_OFFSET_SEC = 1;
 export const MIN_SPEED = 0.5;
 export const MAX_SPEED = 1.5;
+export const SPEED_STEP = 0.05;
 
 /** The Web Audio graph (web, Android) or the Rust/cpal engine (desktop). */
 export interface AudioOutput {
