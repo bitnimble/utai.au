@@ -59,6 +59,80 @@ test('tv remote: OK ticks a checkbox, and a text field opens its keyboard only o
   await expect(page.getByTestId('tv-field')).toHaveValue('abc');
 });
 
+test('tv remote: left and right pass over a slider until OK enters it', async ({ page }) => {
+  await page.goto(HOST_PATH);
+  const mic = page.getByTestId('audio-mic-volume-home');
+  await expect(mic).toBeVisible();
+  const volume = async (): Promise<number> => Number(await mic.inputValue());
+  const start = await volume();
+
+  await mic.focus();
+  await page.keyboard.press('ArrowRight');
+  expect(await focusedTestId(page)).toBe('audio-output-mute-home');
+  await page.keyboard.press('ArrowRight');
+  expect(await focusedTestId(page)).toBe('audio-output-volume-home');
+  await page.keyboard.press('ArrowRight');
+  expect(await focusedTestId(page)).toBe('fullscreen-toggle');
+  expect(await volume()).toBe(start);
+
+  await mic.focus();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('ArrowLeft');
+  expect(await focusedTestId(page)).toBe('audio-mic-volume-home');
+  expect(await volume()).toBeLessThan(start);
+
+  const adjusted = await volume();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('ArrowRight');
+  expect(await focusedTestId(page)).toBe('audio-output-mute-home');
+  expect(await volume()).toBe(adjusted);
+
+  await mic.focus();
+  await page.keyboard.press('Enter');
+  expect(await page.evaluate(() => window.utaiBack?.())).toBe(true);
+  expect(await focusedTestId(page)).toBe('audio-mic-volume-home');
+  await page.keyboard.press('ArrowRight');
+  expect(await focusedTestId(page)).toBe('audio-output-mute-home');
+  expect(await volume()).toBe(adjusted);
+
+  await mic.focus();
+  await page.keyboard.press('Enter');
+  await mic.blur();
+  await mic.focus();
+  await page.keyboard.press('ArrowRight');
+  expect(await focusedTestId(page)).toBe('audio-output-mute-home');
+  expect(await volume()).toBe(adjusted);
+});
+
+test('tv remote: a slider in a menu is reached with up and down, and entered with OK', async ({ page }) => {
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(20),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId('view-mode-tracks').click();
+
+  const zoom = page.getByRole('slider', { name: 'Horizontal zoom (pixels per second)' });
+  await expect(zoom).toBeVisible();
+  await page.getByTestId('toggle-audio-tracks').focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(zoom).toBeFocused();
+
+  const start = await zoom.inputValue();
+  await page.keyboard.press('ArrowLeft');
+  await expect(zoom).toBeFocused();
+  expect(await zoom.inputValue()).toBe(start);
+
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('ArrowLeft');
+  expect(await zoom.inputValue()).not.toBe(start);
+  await page.keyboard.press('ArrowUp');
+  await expect(page.getByTestId('toggle-audio-tracks')).toBeFocused();
+});
+
 type UtaiWindow = { utai?: { playbackEngine?: { currentTime?: number; state?: string } } };
 
 test('tv remote: the media buttons play, pause, seek and restart', async ({ page }) => {

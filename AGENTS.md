@@ -114,7 +114,8 @@ header `backendFetch` attaches.
   (banner, touchscreen optional, a `MainActivity` adding `UtaiTV` to the user
   agent, routing Back to `window.utaiBack` and media buttons to `window.utaiKey`)
   on every `tauri-build.ts android …` run. On a TV the page's `followRemote()`
-  (`frontend/src/tv_remote/`) moves focus geometrically with the D-pad; Back sends
+  (`frontend/src/tv_remote/`) moves focus geometrically with the D-pad, passing over
+  sliders until OK enters them; Back leaves an entered slider, else sends
   Escape, so anything closable on Escape closes on Back; media buttons arrive as
   their standard `Media*` keydowns, which the player maps to transport (as it does
   a keyboard's media keys).

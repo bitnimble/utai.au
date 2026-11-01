@@ -3,8 +3,8 @@ import React from 'react';
 /**
  * Shared WAI-ARIA `menu` roving-focus keyboard behaviour for the floating
  * panels rendered by `DropdownButton` and `ContextMenu`. Their rows (plain
- * `<button>`s, `ActionMenuItem` / `ToggleMenuItem`, submenu triggers) were only
- * reachable by Tab; this adds the arrow-key contract a `role="menu"` advertises:
+ * `<button>`s, `ActionMenuItem` / `ToggleMenuItem`, submenu triggers, sliders)
+ * follow the arrow-key contract a `role="menu"` advertises:
  *   - ArrowDown / ArrowUp move focus between the panel's rows (wrapping),
  *   - Home / End jump to the first / last row.
  *
@@ -20,7 +20,9 @@ import React from 'react';
  */
 function menuRowsOf(panel: HTMLElement): HTMLElement[] {
   const rows = Array.from(
-    panel.querySelectorAll<HTMLElement>('button:not([disabled]), [role^="menuitem"]:not([disabled])')
+    panel.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [role^="menuitem"]:not([disabled]), input[type="range"]:not([disabled])'
+    )
   );
   return rows.filter((row) => {
     if (row.getAttribute('aria-disabled') === 'true') return false;
