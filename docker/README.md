@@ -23,11 +23,11 @@ echo "REPO_PATH=$(pwd)" >> .env   # or the daemon-visible path
 docker compose -f docker-compose.dev.yml up --build
 ```
 
-Then open <https://localhost:5175> and refresh to pick up code changes (HTTPS
-with a self-signed cert; click through the warning; it's required so audio
-playback / AudioWorklet works when you reach the app over a LAN IP rather than
-localhost). Backend Python edits hot-reload (uvicorn `--reload`); frontend edits
-are picked up on a browser refresh (Vite over a repo bind-mount).
+Then open <http://localhost:5175> and refresh to pick up code changes. Plain HTTP
+is only a secure context on localhost, so over a LAN IP browsers disable
+AudioWorklet and audio playback breaks. Apply backend Python edits with
+`docker compose -f docker-compose.dev.yml restart backend`; frontend edits are
+picked up on a browser refresh (Vite over a repo bind-mount).
 
 ## Services
 

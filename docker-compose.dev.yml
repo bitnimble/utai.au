@@ -14,8 +14,8 @@
 #                 :5176 -> onthespot
 #
 # Run:   docker compose -f docker-compose.dev.yml up --build
-# Then:  open https://localhost:5175  (self-signed; refresh to pick up changes).
-#        HTTPS is required so AudioWorklet (audio playback) works off localhost.
+# Then:  open http://localhost:5175  (refresh to pick up changes).
+#        Off localhost, plain HTTP isn't a secure context: no AudioWorklet (audio playback).
 #
 # First run is heavy: the backend builds `docker/backend.Dockerfile`, a CUDA image
 # carrying the aligner's torch-free onnxruntime stack (no torch, unlike the
@@ -91,7 +91,7 @@ services:
       ONTHESPOT_CONFIG_PATH: /config/otsconfig.json
       MUSIC_CONFIG_PATH: /config/music_config.json
       # Origin phones open to join a session as a remote (the join QR), e.g.
-      # https://karaoke.lan:5175. Unset = the host's own page origin.
+      # http://karaoke.lan:5175. Unset = the host's own page origin.
       PUBLIC_URL: ${PUBLIC_URL:-}
     # GPU for separation + CTC (modern Compose; older Compose uses
     # deploy.resources.reservations.devices with the nvidia driver).

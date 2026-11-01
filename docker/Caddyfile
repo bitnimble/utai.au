@@ -3,17 +3,10 @@
 # same-origin (no CORS). OnTheSpot's own web UI gets a SEPARATE origin on :5176
 # (see below).
 #
-# HTTPS with a self-signed cert (baked in by docker/caddy.Dockerfile): a LAN IP
-# over plain HTTP is NOT a secure context, so browsers disable AudioWorklet and
-# audio playback breaks. Serving over HTTPS makes it secure (click through the
-# self-signed warning once). `tls` on a bare-port site makes it HTTPS-only.
-#
 # Why Caddy and not Vite's own proxy: the music fetch streams chunked NDJSON, and
 # Vite-under-Bun can't relay that (it hangs). Caddy streams it fine
 # (`flush_interval -1`).
-:5175 {
-	tls /etc/caddy/selfsigned-cert.pem /etc/caddy/selfsigned-key.pem
-
+http://:5175 {
 	# Aligner backend (music facade + lyrics). `handle_path` strips the /api
 	# prefix, so /api/music/search -> backend /music/search.
 	handle_path /api/* {
@@ -47,8 +40,7 @@
 # :5175: OnTheSpot's Flask UI generates root-absolute URLs and its `/` -> `/login`
 # redirect is root-relative, so under a prefix-stripping proxy the browser lands
 # back on the SPA. A dedicated port keeps every OnTheSpot URL resolving against
-# OnTheSpot. HTTPS too, so the app (HTTPS) opening it isn't a protocol mismatch.
-:5176 {
-	tls /etc/caddy/selfsigned-cert.pem /etc/caddy/selfsigned-key.pem
+# OnTheSpot.
+http://:5176 {
 	reverse_proxy onthespot:5000
 }
