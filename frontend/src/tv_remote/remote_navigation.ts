@@ -12,8 +12,7 @@ const DIRECTIONS: Partial<Record<string, Direction>> = {
 };
 
 const FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex]';
-const OWNS_HORIZONTAL =
-  'input:not([type="checkbox"]), textarea, [role="slider"], [role="tablist"], [role="radiogroup"]';
+const OWNS_HORIZONTAL = 'input:not([type="checkbox"]), textarea, [role="tablist"], [role="radiogroup"]';
 // No listbox in either: the only one, the colour picker's swatches, has no arrow handling and
 // sits inside its dialog, so the D-pad has to move through it and out to the dialog's controls.
 const OWNS_ALL = 'select, [role="menu"]';
@@ -23,14 +22,16 @@ const DIALOG = '[role="dialog"], [role="alertdialog"]';
 const TOGGLES = new Set(['checkbox', 'radio']);
 const UNTYPED = new Set([...TOGGLES, 'range', 'button', 'submit', 'reset', 'color', 'file', 'image']);
 const LOCKED = 'data-remote-locked';
+const ADJUSTING = 'data-remote-adjusting';
 
 const OVERLAP = 2;
 const ACROSS_WEIGHT = 2;
 
 /**
  * Moves the focus with a TV remote's D-pad, which the WebView delivers as arrow keys: to the
- * nearest control that way. Controls that move through themselves (menus, sliders, tabs) keep
- * their arrows. Also installs the page's half of the Back and media buttons.
+ * nearest control that way. Controls that move through themselves (menus, tabs) keep their
+ * arrows, and a slider keeps left and right once OK has entered it. Also installs the page's
+ * half of the Back and media buttons.
  */
 export function followRemote(): () => void {
   const onKey = (e: KeyboardEvent): void => {
@@ -40,6 +41,12 @@ export function followRemote(): () => void {
     if (e.key === 'Enter' && active instanceof HTMLInputElement && TOGGLES.has(active.type)) {
       // Held, the button repeats, which would flip the box back.
       if (!e.repeat) active.click();
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (e.key === 'Enter' && isSlider(active)) {
+      if (!e.repeat) toggleAdjusting(active);
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -64,9 +71,7 @@ export function followRemote(): () => void {
       if (first == null) return;
       focusFromRemote(first);
     } else {
-      const horizontal = direction === 'left' || direction === 'right';
-      if (active.closest(OWNS_ALL) != null) return;
-      if (horizontal && active.closest(OWNS_HORIZONTAL) != null && !active.hasAttribute(LOCKED)) return;
+      if (keepsArrow(active, direction === 'left' || direction === 'right')) return;
       focusToward(active, direction);
     }
     // Spent even where nothing lies that way, so a page-level arrow handler can't act on it.
@@ -81,6 +86,25 @@ export function followRemote(): () => void {
     delete window[TV_BACK];
     delete window[TV_KEY];
   };
+}
+
+function keepsArrow(element: HTMLElement, horizontal: boolean): boolean {
+  if (horizontal && isSlider(element)) return element.hasAttribute(ADJUSTING);
+  if (element.closest(OWNS_ALL) != null) return true;
+  return horizontal && element.closest(OWNS_HORIZONTAL) != null && !element.hasAttribute(LOCKED);
+}
+
+function isSlider(element: Element | null): element is HTMLInputElement {
+  return element instanceof HTMLInputElement && element.type === 'range';
+}
+
+function toggleAdjusting(slider: HTMLInputElement): void {
+  if (slider.hasAttribute(ADJUSTING)) {
+    slider.removeAttribute(ADJUSTING);
+    return;
+  }
+  slider.setAttribute(ADJUSTING, '');
+  slider.addEventListener('blur', () => slider.removeAttribute(ADJUSTING), { once: true });
 }
 
 function pressKey(key: string, repeat: boolean): void {
@@ -140,6 +164,10 @@ export function isTyped(element: Element | null): element is HTMLInputElement | 
 /** The remote's Back: whatever is open closes on it. False when nothing used it, which leaves the app. */
 function goBack(): boolean {
   const active = document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
+  if (active.hasAttribute(ADJUSTING)) {
+    active.removeAttribute(ADJUSTING);
+    return true;
+  }
   const inLayer =
     active.closest(`${LAYER}, [aria-haspopup][aria-expanded="true"]`) != null || hasOpenLayer();
   const escape = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true });

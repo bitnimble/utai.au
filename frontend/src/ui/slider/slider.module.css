@@ -13,8 +13,16 @@
     cursor: pointer;
 }
 
-.range:focus {
-    outline: none;
+.range:focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-md);
+}
+
+/* Entered with a TV remote's OK button: left and right now move the value. */
+.range[data-remote-adjusting]::-webkit-slider-thumb {
+    background: var(--color-focus-ring);
+    transform: scale(1.5);
 }
 
 .range:disabled {
