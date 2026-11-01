@@ -52,7 +52,7 @@ jobs:
           # `name` is what `only` matches; `platform` names the release files.
           DESKTOP: |
             [
-              {"name": "macos", "platform": "macos-arm64", "runs-on": "macos-14", "bundles": "app,dmg"},
+              {"name": "macos", "platform": "macos-arm64", "runs-on": "macos-latest", "bundles": "app,dmg"},
               {"name": "windows", "platform": "windows-x86_64", "runs-on": "windows-latest", "bundles": "nsis"}
             ]
         run: |
@@ -209,7 +209,7 @@ jobs:
     needs: [plan, desktop]
     # `always()`: a failed Windows leg fails `desktop` as a whole.
     if: ${{ always() && contains(needs.plan.outputs.desktop, '"macos"') && needs.desktop.result != 'skipped' && needs.desktop.result != 'cancelled' }}
-    runs-on: macos-14
+    runs-on: macos-latest
     environment: macos-signing
     steps:
       - uses: actions/checkout@v5
