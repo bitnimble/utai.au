@@ -4,7 +4,7 @@ import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { KaraokePresenterContext } from 'src/karaoke/karaoke_contexts';
 import type { StructuralPresenter } from 'src/editing/structure/structural_presenter';
-import { AudioTrack, AudioTrackId } from 'src/editing/playback/audio_tracks';
+import { AudioTrack, AudioTrackId, audioTrackLabel } from 'src/editing/playback/audio_tracks';
 import { waveformWorker, BarSlice } from 'src/editing/playback/waveform_worker_client';
 import { WAVEFORM_PAINT_COLOR } from 'src/editing/utils/waveform_color';
 import { Slider } from 'src/ui/slider/slider';
@@ -54,11 +54,6 @@ function attachWaveformChunk(
       if (pendingChunkReleases.delete(chunkKey)) waveformWorker.releaseChunk(chunkKey);
     });
   };
-}
-
-/** Display name: filename with its extension stripped. */
-export function audioTrackLabel(filename: string): string {
-  return filename.replace(/\.[^./\\]+$/, '') || filename;
 }
 
 /**

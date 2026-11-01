@@ -4,7 +4,7 @@ import { observer } from 'mobx-react-lite';
 import { autorun } from 'mobx';
 import { ChevronDown, Maximize, Minimize, Pause, Play, Settings, Square } from 'lucide-react';
 import React from 'react';
-import { MAX_SPEED, MIN_SPEED } from 'src/editing/playback/playback_engine';
+import { MAX_SPEED, MIN_SPEED, SPEED_STEP } from 'src/editing/playback/playback_engine';
 import { nativeAudioOutput, playbackEngine } from 'src/editing/playback/player';
 import { lyricsStore } from 'src/lyrics/store';
 import { activeLineIndexAt, lineSpanSec } from 'src/lyrics/lrc';
@@ -223,6 +223,8 @@ function buildSessionHost(hostSession: HostSession, session: Session): SessionHo
     transport: playbackEngine,
     audioDevice: session.audioDevice,
     audioDevicePresenter: session.audioDevicePresenter,
+    appSettings: appSettingsStore,
+    appSettingsPresenter,
     searchTracks,
   });
   return { sessionHost, sessionHostPresenter };
@@ -1001,8 +1003,6 @@ const AudioMenu = observer(function AudioMenu() {
     </DropdownButton>
   );
 });
-
-const SPEED_STEP = 0.05;
 
 const SpeedControl = observer(function SpeedControl() {
   const presenter = React.useContext(KaraokePresenterContext)!;

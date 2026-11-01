@@ -66,6 +66,24 @@ export class AudioTrack {
   }
 }
 
+/** Display name: filename with its extension stripped. */
+export function audioTrackLabel(filename: string): string {
+  return filename.replace(/\.[^./\\]+$/, '') || filename;
+}
+
+export function stemLabel(track: AudioTrack): string {
+  switch (track.role) {
+    case 'backing':
+      return 'Instrumental';
+    case 'vocals':
+      return 'Vocals';
+    case 'full-mix':
+      return 'Mix';
+    case 'unknown':
+      return audioTrackLabel(track.filename);
+  }
+}
+
 /**
  * Decode an audio file's bytes into an {@link AudioBuffer}, returning the
  * original Blob so the alignment upload path can re-submit the source

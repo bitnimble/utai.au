@@ -30,7 +30,7 @@ export const Slider = ({
 }: {
   value: number;
   onChange: (value: number) => void;
-  /** The user let go: pointer up, key up, or blur. */
+  /** The user let go: pointer up or cancel, key up, or blur. */
   onCommit?: () => void;
   min?: number;
   max?: number;
@@ -59,6 +59,7 @@ export const Slider = ({
       onMouseDown={stop}
       onMouseUp={stop}
       onPointerUp={onCommit}
+      onPointerCancel={onCommit}
       onKeyUp={onCommit}
       onBlur={onCommit}
       aria-label={ariaLabel}

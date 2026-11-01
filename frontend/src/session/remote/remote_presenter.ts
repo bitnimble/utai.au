@@ -9,21 +9,18 @@ import {
   type RelayFrame,
   type RemoteCommand,
 } from '../session_protocol';
-import type { RemoteStore, RemoteTab } from './remote_store';
+import { type DragKey, type RemoteStore, type RemoteTab, trackDrag } from './remote_store';
 
 const SEARCH_TIMEOUT_MS = 30_000;
 const OFFLINE_TOAST_TEST_ID = 'remote-offline';
 const DRAG_SEND_INTERVAL_MS = 150;
 
-const DRAG_KINDS = ['seek', 'setVolume', 'setVocalVolume'] as const;
-type DragKind = (typeof DRAG_KINDS)[number];
-
 export class RemotePresenter {
   private socket: SessionSocket | undefined;
   private searchRequestId = 0;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly dragSends = new Map<DragKind, ThrottledSend>();
-  private readonly releasedDrags = new Set<DragKind>();
+  private readonly dragSends = new Map<DragKey, ThrottledSend>();
+  private readonly releasedDrags = new Set<DragKey>();
 
   constructor(
     private readonly store: RemoteStore,
@@ -67,29 +64,33 @@ export class RemotePresenter {
   }
 
   seek(sec: number): void {
-    this.store.seekDraftSec = sec;
-    this.throttled('seek', { kind: 'seek', sec });
+    this.drag('seek', sec, { kind: 'seek', sec });
   }
 
   setVolume(volume: number): void {
-    this.store.volumeDraft = volume;
-    this.throttled('setVolume', { kind: 'setVolume', volume });
+    this.drag('volume', volume, { kind: 'setVolume', volume });
   }
 
-  setVocalVolume(volume: number): void {
-    this.store.vocalVolumeDraft = volume;
-    this.throttled('setVocalVolume', { kind: 'setVocalVolume', volume });
+  setSpeed(speed: number): void {
+    this.drag('speed', speed, { kind: 'setSpeed', speed });
   }
 
-  toggleVocals(): void {
-    const vocals = this.store.host?.vocals;
-    if (vocals != null) this.send({ kind: 'setVocalMuted', muted: !vocals.muted });
+  setTrackVolume(id: string, volume: number): void {
+    this.drag(trackDrag(id), volume, { kind: 'setTrackVolume', id, volume });
+  }
+
+  setTrackMuted(id: string, muted: boolean): void {
+    this.send({ kind: 'setTrackMuted', id, muted });
+  }
+
+  setSurroundReverb(on: boolean): void {
+    this.send({ kind: 'setSurroundReverb', on });
   }
 
   /** The drag ended: send its last value now, and drop the draft once the host's next state lands. */
-  release(kind: DragKind): void {
-    this.dragSends.get(kind)?.flush();
-    this.releasedDrags.add(kind);
+  release(key: DragKey): void {
+    this.dragSends.get(key)?.flush();
+    this.releasedDrags.add(key);
   }
 
   remove(id: string): void {
@@ -111,6 +112,8 @@ export class RemotePresenter {
   }
 
   setTab(tab: RemoteTab): void {
+    // The Audio tab's sliders unmount with it, so a drag cut short by that never releases.
+    for (const key of this.store.drafts.keys()) this.release(key);
     this.store.tab = tab;
   }
 
@@ -149,33 +152,33 @@ export class RemotePresenter {
     return sent;
   }
 
-  private throttled(kind: DragKind, command: RemoteCommand): void {
-    this.releasedDrags.delete(kind);
-    let send = this.dragSends.get(kind);
+  private drag(key: DragKey, value: number, command: RemoteCommand): void {
+    this.store.drafts.set(key, value);
+    this.releasedDrags.delete(key);
+    let send = this.dragSends.get(key);
     if (send == null) {
       send = new ThrottledSend(DRAG_SEND_INTERVAL_MS, (latest) => this.send(latest));
-      this.dragSends.set(kind, send);
+      this.dragSends.set(key, send);
     }
     send.push(command);
   }
 
   private setStatus(status: SocketStatus): void {
     this.store.status = status;
-    if (status === 'open') return;
-    for (const kind of DRAG_KINDS) this.clearDraft(kind);
+    if (status !== 'open') this.store.drafts.clear();
   }
 
   private onFrame(frame: RelayFrame): void {
     switch (frame.type) {
       case 'hello':
-        this.store.hostConnected = frame.hostConnected;
+        this.setHostConnected(frame.hostConnected);
         this.setHostState(frame.state);
         return;
       case 'state':
         this.setHostState(frame.state);
         return;
       case 'host':
-        this.store.hostConnected = frame.connected;
+        this.setHostConnected(frame.connected);
         return;
       case 'reply': {
         const reply = hostReplySchema.safeParse(frame.reply);
@@ -185,27 +188,23 @@ export class RemotePresenter {
     }
   }
 
+  private setHostConnected(connected: boolean): void {
+    this.store.hostConnected = connected;
+    // The sliders disable with the host gone, and a disabled input never reports the drag's end.
+    if (!connected) this.store.drafts.clear();
+  }
+
   private setHostState(raw: unknown): void {
     const parsed = hostStateSchema.safeParse(raw);
     if (!parsed.success) return;
     this.store.host = parsed.data;
     this.store.hostReceivedAtMs = Date.now();
-    for (const kind of DRAG_KINDS) if (this.releasedDrags.delete(kind)) this.clearDraft(kind);
-    // The slider unmounts with the vocals, so a drag cut short by that never releases.
-    if (parsed.data.vocals == null) this.clearDraft('setVocalVolume');
-  }
-
-  private clearDraft(kind: DragKind): void {
-    switch (kind) {
-      case 'seek':
-        this.store.seekDraftSec = undefined;
-        return;
-      case 'setVolume':
-        this.store.volumeDraft = undefined;
-        return;
-      case 'setVocalVolume':
-        this.store.vocalVolumeDraft = undefined;
-        return;
+    for (const key of this.releasedDrags) this.store.drafts.delete(key);
+    this.releasedDrags.clear();
+    // A track's slider unmounts with it, so a drag cut short by that never releases.
+    const liveTracks = new Set(parsed.data.tracks.map((track) => trackDrag(track.id)));
+    for (const key of Array.from(this.store.drafts.keys())) {
+      if (key.startsWith('track:') && !liveTracks.has(key)) this.store.drafts.delete(key);
     }
   }
 

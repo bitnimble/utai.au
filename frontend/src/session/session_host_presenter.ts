@@ -1,7 +1,7 @@
 import { comparer, makeAutoObservable, reaction } from 'mobx';
 import type { AudioDevicePresenter } from 'src/audio_devices/audio_device_presenter';
 import type { AudioDeviceStore } from 'src/audio_devices/audio_device_store';
-import type { AudioTrack } from 'src/editing/playback/audio_tracks';
+import { stemLabel } from 'src/editing/playback/audio_tracks';
 import type { PlaybackEngine } from 'src/editing/playback/playback_engine';
 import type { KaraokePresenter } from 'src/karaoke/karaoke_presenter';
 import type { SongStore } from 'src/karaoke/song_store';
@@ -9,6 +9,8 @@ import { sessionLane } from 'src/net/backend_fetch';
 import type { TrackResult } from 'src/net/music_source_client';
 import type { QueuePresenter } from 'src/queue/queue_presenter';
 import type { PlayedSong, QueueItem, QueueStore } from 'src/queue/queue_store';
+import type { AppSettingsPresenter } from 'src/settings/app_settings_presenter';
+import type { AppSettingsStore } from 'src/settings/app_settings_store';
 import { toastStore } from 'src/ui/toasts/toasts';
 import { hostPath } from './app_route';
 import { createSession, type HostSession, SessionSocket, type SocketStatus } from './session_client';
@@ -32,10 +34,12 @@ export type SessionHostDeps = {
   queue: QueueStore;
   queuePresenter: Pick<QueuePresenter, 'add' | 'remove' | 'move' | 'playNext' | 'skip' | 'restoreHistory'>;
   song: SongStore;
-  karaoke: Pick<KaraokePresenter, 'play' | 'pause' | 'seek' | 'setTrackVolume' | 'setTrackMuted'>;
+  karaoke: Pick<KaraokePresenter, 'play' | 'pause' | 'seek' | 'setTrackVolume' | 'setTrackMuted' | 'setSpeed'>;
   transport: Transport;
   audioDevice: AudioDeviceStore;
   audioDevicePresenter: Pick<AudioDevicePresenter, 'setOutputVolume'>;
+  appSettings: Pick<AppSettingsStore, 'vocalSurroundReverb'>;
+  appSettingsPresenter: Pick<AppSettingsPresenter, 'setVocalSurroundReverb'>;
   searchTracks: SearchTracks;
 };
 
@@ -216,16 +220,18 @@ export class SessionHostPresenter {
       case 'setVolume':
         this.deps.audioDevicePresenter.setOutputVolume(command.volume);
         return;
-      case 'setVocalVolume': {
-        const vocals = this.vocalTrack();
-        if (vocals) karaoke.setTrackVolume(vocals.id, command.volume);
+      case 'setTrackVolume':
+        karaoke.setTrackVolume(command.id, command.volume);
         return;
-      }
-      case 'setVocalMuted': {
-        const vocals = this.vocalTrack();
-        if (vocals) karaoke.setTrackMuted(vocals.id, command.muted);
+      case 'setTrackMuted':
+        karaoke.setTrackMuted(command.id, command.muted);
         return;
-      }
+      case 'setSpeed':
+        karaoke.setSpeed(command.speed);
+        return;
+      case 'setSurroundReverb':
+        this.deps.appSettingsPresenter.setVocalSurroundReverb(command.on);
+        return;
       case 'add': {
         const track = this.offered.get(command.track.sourceUrl) ?? this.playedTrack(command.track.sourceUrl);
         if (track == null || this.deps.queue.items.length >= MAX_REMOTE_QUEUE_LENGTH) return;
@@ -245,11 +251,6 @@ export class SessionHostPresenter {
         void this.search(command.query, command.requestId, from);
         return;
     }
-  }
-
-  private vocalTrack(): AudioTrack | undefined {
-    for (const track of this.deps.transport.audioTracks.values()) if (track.role === 'vocals') return track;
-    return undefined;
   }
 
   private async search(query: string, requestId: number, to: string): Promise<void> {
@@ -299,8 +300,7 @@ export class SessionHostPresenter {
   }
 
   private stateWithoutPosition(): Omit<HostState, 'positionSec'> {
-    const { queue, song, transport, audioDevice } = this.deps;
-    const vocals = this.vocalTrack();
+    const { queue, song, transport, audioDevice, appSettings } = this.deps;
     return {
       nowPlaying:
         song.durationSec > 0
@@ -314,7 +314,13 @@ export class SessionHostPresenter {
       playback: transport.state === 'playing' || transport.state === 'paused' ? transport.state : 'idle',
       speed: transport.speed,
       outputVolume: audioDevice.outputVolume,
-      vocals: vocals ? { volume: vocals.volume, muted: vocals.muted } : null,
+      tracks: Array.from(transport.audioTracks.values(), (track) => ({
+        id: track.id,
+        label: stemLabel(track),
+        volume: track.volume,
+        muted: track.muted,
+      })),
+      surroundReverb: appSettings.vocalSurroundReverb,
       queue: queue.items.map(toRemoteItem),
       history: queue.history.map(toRemotePlayed),
       waitingForId: queue.waitingFor?.id,

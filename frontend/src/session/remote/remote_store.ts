@@ -6,7 +6,11 @@ import { remotePath } from '../app_route';
 import type { SocketStatus } from '../session_client';
 import type { HostState } from '../session_protocol';
 
-export type RemoteTab = 'queue' | 'search' | 'history';
+export type RemoteTab = 'queue' | 'search' | 'history' | 'audio';
+
+export type DragKey = 'seek' | 'volume' | 'speed' | `track:${string}`;
+
+export const trackDrag = (id: string): DragKey => `track:${id}`;
 
 const POSITION_TICK_MS = 250;
 
@@ -16,9 +20,7 @@ export class RemoteStore {
   host: HostState | undefined = undefined;
   hostReceivedAtMs = 0;
   /** Slider values mid-drag, shown until the host's state catches up. */
-  seekDraftSec: number | undefined = undefined;
-  volumeDraft: number | undefined = undefined;
-  vocalVolumeDraft: number | undefined = undefined;
+  drafts = new Map<DragKey, number>();
   tab: RemoteTab = 'queue';
   searchQuery = '';
   searchPhase: SearchPhase = { kind: 'idle' };
@@ -46,7 +48,8 @@ export class RemoteStore {
   }
 
   get positionSec(): number {
-    if (this.seekDraftSec != null) return this.seekDraftSec;
+    const draft = this.drafts.get('seek');
+    if (draft != null) return draft;
     const host = this.host;
     if (host == null) return 0;
     if (host.playback !== 'playing' || !this.connected) return host.positionSec;
@@ -56,10 +59,14 @@ export class RemoteStore {
   }
 
   get outputVolume(): number {
-    return this.volumeDraft ?? this.host?.outputVolume ?? 1;
+    return this.drafts.get('volume') ?? this.host?.outputVolume ?? 1;
   }
 
-  get vocalVolume(): number {
-    return this.vocalVolumeDraft ?? this.host?.vocals?.volume ?? 1;
+  get speed(): number {
+    return this.drafts.get('speed') ?? this.host?.speed ?? 1;
+  }
+
+  trackVolume(track: HostState['tracks'][number]): number {
+    return this.drafts.get(trackDrag(track.id)) ?? track.volume;
   }
 }
