@@ -102,6 +102,7 @@ import { SessionHostButton, SessionJoinModal } from 'src/session/session_host_vi
 import { FullscreenStore } from 'src/fullscreen/fullscreen_store';
 import { FullscreenPresenter } from 'src/fullscreen/fullscreen_presenter';
 import { fullscreenDriver } from 'src/fullscreen/fullscreen_driver';
+import { focusInHiddenChrome } from 'src/tv_remote/remote_navigation';
 import { FullscreenPresenterContext, FullscreenStoreContext } from 'src/fullscreen/fullscreen_contexts';
 import { KaraokePresenter } from './karaoke_presenter';
 import {
@@ -289,6 +290,17 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
   }, [fullscreenPresenter]);
 
   React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (!fullscreenPresenter.revealChromeOnKey(e.key, focusInHiddenChrome())) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [fullscreenPresenter]);
+
+  React.useEffect(() => {
     queuePresenter.init();
     return () => queuePresenter.dispose();
   }, [queuePresenter]);
@@ -428,7 +440,10 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
                     <BackendStartingScreen />
                   ) : (
                     <>
-                      <div className={classNames(styles.chrome, styles.topChrome)}>
+                      <div
+                        className={classNames(styles.chrome, styles.topChrome)}
+                        data-chrome-idle={fullscreen.chromeIdle ? '' : undefined}
+                      >
                         <Toolbar />
                       </div>
                       <div className={styles.body}>
@@ -443,7 +458,10 @@ export const KaraokePage = observer(function KaraokePage({ hostSession }: { host
                         </div>
                         <QueueSidebar />
                       </div>
-                      <div className={classNames(styles.chrome, styles.bottomChrome)}>
+                      <div
+                        className={classNames(styles.chrome, styles.bottomChrome)}
+                        data-chrome-idle={fullscreen.chromeIdle ? '' : undefined}
+                      >
                         {karaokeView && <SeekBar />}
                         <TransportBar />
                       </div>

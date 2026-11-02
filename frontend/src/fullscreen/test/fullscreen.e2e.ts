@@ -60,3 +60,30 @@ test('fullscreen: leaving it outside the app returns to the saved view mode', as
   await expect(page.getByTestId('score-area')).toBeVisible();
   await expect(page.getByTestId('fullscreen-toggle')).toHaveAttribute('aria-label', 'Fullscreen');
 });
+
+test('fullscreen: without browser support the page still switches, and leaves on the button or Escape', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Element.prototype.requestFullscreen = () => Promise.reject(new TypeError('Fullscreen is not supported'));
+  });
+  await page.goto(HOST_PATH);
+  await showTracksView(page);
+  const toggle = page.getByTestId('fullscreen-toggle');
+
+  await toggle.click();
+  await expect(page.getByTestId('score-area')).toHaveCount(0);
+  await expect(toggle).toHaveAttribute('aria-label', 'Exit fullscreen');
+  expect(await stageBackground(page)).toBe('rgb(0, 0, 0)');
+  await expect(page.getByText('Could not toggle fullscreen', { exact: false })).toHaveCount(0);
+
+  await toggle.click();
+  await expect(page.getByTestId('score-area')).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-label', 'Fullscreen');
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-label', 'Exit fullscreen');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('score-area')).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-label', 'Fullscreen');
+});

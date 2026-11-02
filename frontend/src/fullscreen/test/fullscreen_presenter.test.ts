@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test';
 import { observable } from 'mobx';
 import type { ViewMode } from 'src/settings/app_settings_store';
 import { toastStore } from 'src/ui/toasts/toasts';
@@ -78,6 +78,67 @@ describe('FullscreenPresenter', () => {
 
     expect(store.active).toBe(false);
     expect(toastStore.toasts.map((t) => t.message)).toContain('Could not toggle fullscreen: denied');
+  });
+
+  describe('idle chrome', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    test('hides after three seconds without a key, and an arrow or OK only brings it back', () => {
+      const { presenter, store } = setup('tracks');
+      presenter.toggle();
+
+      jest.advanceTimersByTime(2999);
+      expect(store.chromeIdle).toBe(false);
+      jest.advanceTimersByTime(1);
+      expect(store.chromeIdle).toBe(true);
+
+      expect(presenter.revealChromeOnKey('ArrowLeft', true)).toBe(true);
+      expect(store.chromeIdle).toBe(false);
+
+      jest.advanceTimersByTime(3000);
+      expect(presenter.revealChromeOnKey('Enter', true)).toBe(true);
+      expect(store.chromeIdle).toBe(false);
+
+      jest.advanceTimersByTime(3000);
+      expect(presenter.revealChromeOnKey('ArrowLeft', false)).toBe(false);
+      expect(store.chromeIdle).toBe(false);
+    });
+
+    test('a key restarts the wait, and acts normally once the chrome is showing', () => {
+      const { presenter, store } = setup('tracks');
+      presenter.toggle();
+
+      jest.advanceTimersByTime(2000);
+      expect(presenter.revealChromeOnKey('ArrowLeft', false)).toBe(false);
+      jest.advanceTimersByTime(2999);
+      expect(store.chromeIdle).toBe(false);
+      jest.advanceTimersByTime(1);
+      expect(store.chromeIdle).toBe(true);
+    });
+
+    test('transport keys and Escape leave hidden chrome hidden and still act', () => {
+      const { presenter, store } = setup('tracks');
+      presenter.toggle();
+      jest.advanceTimersByTime(3000);
+
+      for (const key of ['MediaPlayPause', ' ', 'Escape']) {
+        expect(presenter.revealChromeOnKey(key, true)).toBe(false);
+        expect(store.chromeIdle).toBe(true);
+      }
+    });
+
+    test('leaving fullscreen clears it and stops the wait', () => {
+      const { presenter, store } = setup('tracks');
+      presenter.toggle();
+      jest.advanceTimersByTime(3000);
+
+      presenter.toggle();
+      expect(store.chromeIdle).toBe(false);
+      jest.advanceTimersByTime(3000);
+      expect(store.chromeIdle).toBe(false);
+      expect(presenter.revealChromeOnKey('Enter', false)).toBe(false);
+    });
   });
 
   test('disposing while fullscreen exits it', () => {

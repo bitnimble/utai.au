@@ -1,6 +1,7 @@
 import classNames from 'classnames';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
+import { ClearButton } from 'src/ui/icon_button/icon_button';
 import styles from './toasts.module.css';
 import { toastStore } from './toasts';
 
@@ -10,12 +11,13 @@ import { toastStore } from './toasts';
 const MAX_VISIBLE_TOASTS = 3;
 
 /**
- * Bottom-right toast stack. Mount once at the top level of the app;
+ * Top-centre toast stack. Mount once at the top level of the app;
  * reads `toastStore` directly so dispatchers don't have to thread props
  * down through the toolbar / mixer / score subtrees.
  *
- * Click anywhere on a toast to dismiss. Success toasts also auto-dismiss
- * via a timer in the store (see `toasts.ts`); errors are sticky.
+ * Click anywhere on a toast to dismiss; its button is the way there for a
+ * keyboard or TV remote. Success toasts also auto-dismiss via a timer in the
+ * store (see `toasts.ts`); errors are sticky.
  */
 export const ToastContainer = observer(() => {
   const visible = toastStore.toasts.slice(0, MAX_VISIBLE_TOASTS);
@@ -38,11 +40,12 @@ export const ToastContainer = observer(() => {
           onClick={(e) => {
             // A link or button inside the toast does its own thing; dismissing on the
             // same click would e.g. hide a prompt before its button's action shows.
-            if ((e.target as HTMLElement | null)?.closest('a, button')) return;
+            if (e.target instanceof Element && e.target.closest('a, button')) return;
             toastStore.dismiss(toast.id);
           }}
         >
-          {toast.message}
+          <div className={styles.toastMessage}>{toast.message}</div>
+          <ClearButton onClear={() => toastStore.dismiss(toast.id)} label="Dismiss" />
         </div>
       ))}
     </div>

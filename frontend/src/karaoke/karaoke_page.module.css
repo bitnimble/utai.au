@@ -45,7 +45,8 @@
 
 /* Menus are portaled out of the chrome; aria-expanded keeps an open one's trigger shown.
    Not visibility:hidden: the TV remote's D-pad must still be able to focus into it. */
-.fullscreen .chrome:not(:hover, :has(:focus-visible, [aria-expanded='true'])) > * {
+.fullscreen .chrome:not(:hover, :has(:focus-visible, [aria-expanded='true'])) > *,
+.fullscreen .chrome[data-chrome-idle]:not(:hover, :has([aria-expanded='true'])) > * {
     opacity: 0;
     pointer-events: none;
 }
