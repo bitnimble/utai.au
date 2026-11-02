@@ -161,7 +161,7 @@ function buildSession(): Session {
   const lyricsPresenter = new LyricsPresenter(lyricsAlign, skipSegments, (meta) => presenter.captureSongMeta(meta));
   const videoStore = new VideoStore(song);
   const videoPresenter = new VideoPresenter(videoStore);
-  const skipSegmentsPresenter = new SkipSegmentsPresenter(skipSegments, videoStore, playbackEngine);
+  const skipSegmentsPresenter = new SkipSegmentsPresenter(skipSegments, videoStore, playbackEngine, appSettingsStore);
   const songIo = new SongIoPresenter(song, presenter, lyricsPresenter, beats, videoPresenter, skipSegmentsPresenter);
   const queue = new QueueStore();
   const queuePresenter = new QueuePresenter(queue, songIo, playbackEngine, prepareSong, identifyTrack, downloadTrack);
@@ -1011,6 +1011,7 @@ const AudioMenu = observer(function AudioMenu() {
         <>
           <NormalizeVolumeItem />
           <SubmenuItem label="Vocal track effects">{() => <VocalEffectItems />}</SubmenuItem>
+          <AutoSkipNonMusicItem />
           <DropdownSection label="Audio timing (ms)">
             <AudioTimingControl />
           </DropdownSection>
@@ -1031,6 +1032,18 @@ const NormalizeVolumeItem = observer(function NormalizeVolumeItem() {
       onToggle={() => appSettingsPresenter.setNormalizeVolume(!appSettingsStore.normalizeVolume)}
       title="Play every song at the same loudness"
       testId="normalize-volume"
+    />
+  );
+});
+
+const AutoSkipNonMusicItem = observer(function AutoSkipNonMusicItem() {
+  return (
+    <ToggleMenuItem
+      label="Auto-skip non-music sections"
+      active={appSettingsStore.autoSkipNonMusic}
+      onToggle={() => appSettingsPresenter.setAutoSkipNonMusic(!appSettingsStore.autoSkipNonMusic)}
+      title="Jump past non-music sections SponsorBlock marks at the start and end of a song"
+      testId="auto-skip-non-music"
     />
   );
 });

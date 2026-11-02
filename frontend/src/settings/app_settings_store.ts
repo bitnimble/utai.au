@@ -91,6 +91,9 @@ export class AppSettingsStore {
   /** Play every song at the same loudness. */
   normalizeVolume: boolean = true;
 
+  /** Jump past a SponsorBlock non-music section at a song's start or end. */
+  autoSkipNonMusic: boolean = true;
+
   constructor() {
     makeAutoObservable(this);
   }

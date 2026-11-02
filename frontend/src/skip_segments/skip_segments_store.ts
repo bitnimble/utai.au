@@ -1,7 +1,14 @@
 import { makeAutoObservable, observable } from 'mobx';
 import type { PlaybackEngine } from 'src/editing/playback/playback_engine';
 import type { SongStore } from 'src/karaoke/song_store';
-import { alignmentStartSec, applicableSegments, musicDurationSec, type SkipSegment } from './sponsorblock';
+import {
+  alignmentStartSec,
+  applicableSegments,
+  edgeNonMusicSpans,
+  musicDurationSec,
+  type SkipSegment,
+  type TimeSpan,
+} from './sponsorblock';
 
 /**
  * Data-only store for the current video's SponsorBlock skip segments. The
@@ -38,5 +45,15 @@ export class SkipSegmentsStore {
       if (t >= s.startSec && t < s.endSec && (active == null || s.endSec > active.endSec)) active = s;
     }
     return active;
+  }
+
+  /** Where the non-music section under the playhead ends, if it's at the song's start or end. */
+  get edgeNonMusicEndSec(): number | undefined {
+    const t = this.clock.currentTime;
+    return this.edgeNonMusicSpans.find((s) => t >= s.startSec && t < s.endSec)?.endSec;
+  }
+
+  private get edgeNonMusicSpans(): TimeSpan[] {
+    return edgeNonMusicSpans(this.segments, this.song.durationSec);
   }
 }

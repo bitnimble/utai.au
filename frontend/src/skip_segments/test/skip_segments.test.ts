@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { observable, runInAction } from 'mobx';
+import type { PlayerState } from 'src/editing/playback/playback_engine';
 import { SkipSegmentsPresenter } from '../skip_segments_presenter';
 import { SkipSegmentsStore } from '../skip_segments_store';
 import {
@@ -225,6 +226,8 @@ describe('SkipSegmentsPresenter', () => {
     store: SkipSegmentsStore;
     video: { videoId: string | undefined };
     clock: { currentTime: number };
+    engine: { state: PlayerState };
+    settings: { autoSkipNonMusic: boolean };
     seeks: number[];
     presenter: SkipSegmentsPresenter;
   } {
@@ -232,11 +235,142 @@ describe('SkipSegmentsPresenter', () => {
     const store = new SkipSegmentsStore({ durationSec: 100 }, clock);
     const video = observable({ videoId });
     const seeks: number[] = [];
-    const presenter = new SkipSegmentsPresenter(store, video, {
-      seek: (s) => seeks.push(s),
-    });
-    return { store, video, clock, seeks, presenter };
+    const engine = observable({ state: 'idle' as PlayerState });
+    const settings = observable({ autoSkipNonMusic: true });
+    const presenter = new SkipSegmentsPresenter(
+      store,
+      video,
+      {
+        get state() {
+          return engine.state;
+        },
+        seek: (s) => {
+          seeks.push(s);
+          runInAction(() => {
+            clock.currentTime = s;
+          });
+        },
+      },
+      settings,
+    );
+    return { store, video, clock, engine, settings, seeks, presenter };
   }
+
+  describe('auto-skip', () => {
+    const offtopic = (startSec: number, endSec: number): SkipSegment => ({
+      category: 'music_offtopic',
+      startSec,
+      endSec,
+      videoDurationSec: 0,
+    });
+
+    function setupPlaying(segments: SkipSegment[]): ReturnType<typeof setup> {
+      const ctx = setup(undefined);
+      ctx.presenter.start();
+      runInAction(() => {
+        ctx.store.segments = segments;
+        ctx.engine.state = 'playing';
+      });
+      return ctx;
+    }
+
+    function moveTo(clock: { currentTime: number }, sec: number): void {
+      runInAction(() => {
+        clock.currentTime = sec;
+      });
+    }
+
+    test('jumps past a non-music section at the start as playback starts', () => {
+      const { seeks, presenter } = setupPlaying([offtopic(0, 10)]);
+      expect(seeks).toEqual([10]);
+      presenter.dispose();
+    });
+
+    test('a section starting just after 0 counts as the start, once the playhead reaches it', () => {
+      const { seeks, clock, presenter } = setupPlaying([offtopic(0.4, 10)]);
+      expect(seeks).toEqual([]);
+      moveTo(clock, 0.4);
+      expect(seeks).toEqual([10]);
+      presenter.dispose();
+    });
+
+    test('jumps to the end of a section merged across overlapping submissions', () => {
+      const { seeks, presenter } = setupPlaying([offtopic(0, 10), offtopic(8, 15)]);
+      expect(seeks).toEqual([15]);
+      presenter.dispose();
+    });
+
+    test('jumps past a non-music section at the end, clamped to the song', () => {
+      const { seeks, clock, presenter } = setupPlaying([offtopic(90, 120)]);
+      moveTo(clock, 89.9);
+      expect(seeks).toEqual([]);
+      moveTo(clock, 90);
+      expect(seeks).toEqual([100]);
+      presenter.dispose();
+    });
+
+    test('leaves a non-music section in the middle of the song alone', () => {
+      const { seeks, clock, presenter } = setupPlaying([offtopic(0.6, 10), offtopic(40, 50), offtopic(90, 99.4)]);
+      moveTo(clock, 5);
+      moveTo(clock, 45);
+      moveTo(clock, 95);
+      expect(seeks).toEqual([]);
+      presenter.dispose();
+    });
+
+    test('other categories at the start are not auto-skipped', () => {
+      const { seeks, presenter } = setupPlaying([{ ...offtopic(0, 10), category: 'intro' }]);
+      expect(seeks).toEqual([]);
+      presenter.dispose();
+    });
+
+    test('waits for playback: seeking while paused stays put until it resumes', () => {
+      const { seeks, clock, engine, presenter } = setupPlaying([offtopic(0, 10)]);
+      expect(seeks).toEqual([10]);
+      runInAction(() => {
+        engine.state = 'paused';
+      });
+      moveTo(clock, 5);
+      expect(seeks).toEqual([10]);
+      runInAction(() => {
+        engine.state = 'playing';
+      });
+      expect(seeks).toEqual([10, 10]);
+      presenter.dispose();
+    });
+
+    test('only segments matching this audio skip', () => {
+      const other = setupPlaying([{ ...offtopic(0, 10), videoDurationSec: 300 }]);
+      expect(other.seeks).toEqual([]);
+      other.presenter.dispose();
+
+      const same = setupPlaying([{ ...offtopic(0, 10), videoDurationSec: 100 }]);
+      expect(same.seeks).toEqual([10]);
+      same.presenter.dispose();
+    });
+
+    test('segments arriving mid-section still skip it', () => {
+      const { seeks, clock, store, presenter } = setupPlaying([]);
+      moveTo(clock, 3);
+      runInAction(() => {
+        store.segments = [offtopic(0, 10)];
+      });
+      expect(seeks).toEqual([10]);
+      presenter.dispose();
+    });
+
+    test('turned off, nothing skips', () => {
+      const ctx = setup(undefined);
+      ctx.presenter.start();
+      runInAction(() => {
+        ctx.settings.autoSkipNonMusic = false;
+        ctx.store.segments = [offtopic(0, 10)];
+        ctx.engine.state = 'playing';
+      });
+      expect(ctx.seeks).toEqual([]);
+      ctx.presenter.dispose();
+    });
+  });
 
   test('loads segments for the current video and skipActive seeks to the end', async () => {
     const net = stubFetch();

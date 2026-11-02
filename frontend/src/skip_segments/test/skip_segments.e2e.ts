@@ -6,7 +6,7 @@ import { makeWav } from 'src/testing/wav';
 type UtaiWindow = {
   utai?: {
     presenter?: { updateSongMeta(patch: { sourceUrl: string }): void };
-    playbackEngine?: { currentTime?: number; state?: string };
+    playbackEngine?: { currentTime?: number; state?: string; ended?: boolean; seek(sec: number): void };
     queuePresenter?: { add(source: unknown): void };
     lyricsStore?: {
       firstTrack?: { offsetSec: number; lines: { startSec: number }[] };
@@ -89,7 +89,10 @@ test('skip segments: a queued track looks its segments up once and aligns its ly
   await expect
     .poll(() => page.evaluate(() => (window as unknown as UtaiWindow).utai?.playbackEngine?.state), { timeout: 15_000 })
     .toBe('playing');
-  await expect(page.getByTestId('skip-segment')).toHaveText('Skip non-music');
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as UtaiWindow).utai?.playbackEngine?.currentTime))
+    .toBeGreaterThanOrEqual(7);
+  await expect(page.getByTestId('skip-segment')).toBeHidden();
   expect(lookups).toBe(1);
   expect(alignForm).toMatch(/name="audioStartSec"\r\n\r\n3\r\n/);
   const track = await page.evaluate(() => (window as unknown as UtaiWindow).utai?.lyricsStore?.firstTrack);
@@ -121,7 +124,7 @@ test('skip segments: aligning a loaded track to vocals starts from the music', a
   await page.evaluate(() =>
     (window as unknown as UtaiWindow).utai?.presenter?.updateSongMeta({ sourceUrl: 'https://youtu.be/R03cqGg40GU' }),
   );
-  await expect(page.getByTestId('skip-segment')).toHaveText('Skip non-music');
+  await expect(page.getByTestId('transport-time')).toHaveText(/ \/ 0:10\.00 \(0:03\.00\)$/);
 
   const audioStartSec = await page.evaluate(
     () =>
@@ -156,6 +159,9 @@ test('skip segments: offers to skip a SponsorBlock non-music section and seeks p
   await page.route('**/video/R03cqGg40GU', (route) => route.abort());
   await page.route('https://www.youtube.com/**', (route) => route.abort());
   await page.goto(HOST_PATH);
+  await page.getByTestId('audio-menu').click();
+  await page.getByTestId('auto-skip-non-music').click();
+  await page.keyboard.press('Escape');
 
   await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
     name: 'silence.wav',
@@ -178,4 +184,61 @@ test('skip segments: offers to skip a SponsorBlock non-music section and seeks p
   const t = await page.evaluate(() => (window as unknown as UtaiWindow).utai?.playbackEngine?.currentTime);
   expect(t).toBeGreaterThanOrEqual(3);
   expect(t).toBeLessThan(3.5);
+});
+
+test('skip segments: auto-skips non-music at the start and end of a song, not the middle, until turned off', async ({
+  page,
+}) => {
+  await page.route('https://sponsor.ajay.app/**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify([
+        { category: 'music_offtopic', actionType: 'skip', segment: [0, 15], videoDuration: 60 },
+        { category: 'music_offtopic', actionType: 'skip', segment: [18, 22], videoDuration: 60 },
+        { category: 'music_offtopic', actionType: 'skip', segment: [30, 60], videoDuration: 60 },
+      ]),
+    }),
+  );
+  await page.route('**/video/R03cqGg40GU', (route) => route.abort());
+  await page.route('https://www.youtube.com/**', (route) => route.abort());
+  await page.goto(HOST_PATH);
+  await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+    name: 'silence.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWav(60),
+  });
+  await expect(page.getByTestId('transport-play')).toBeEnabled({ timeout: 15_000 });
+  await page.evaluate(() =>
+    (window as unknown as UtaiWindow).utai?.presenter?.updateSongMeta({ sourceUrl: 'https://youtu.be/R03cqGg40GU' }),
+  );
+  const skip = page.getByTestId('skip-segment');
+  const currentTime = () => page.evaluate(() => (window as unknown as UtaiWindow).utai?.playbackEngine?.currentTime);
+  const seek = (sec: number) =>
+    page.evaluate((s) => (window as unknown as UtaiWindow).utai?.playbackEngine?.seek(s), sec);
+
+  await expect.poll(currentTime).toBeGreaterThanOrEqual(15);
+  await expect(skip).toBeHidden();
+
+  await seek(18);
+  await expect(skip).toHaveText('Skip non-music');
+  await expect.poll(currentTime).toBeGreaterThan(18.2);
+  expect(await currentTime()).toBeLessThan(22);
+
+  await seek(30);
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as UtaiWindow).utai?.playbackEngine?.ended))
+    .toBe(true);
+
+  await page.getByTestId('audio-menu').click();
+  const toggle = page.getByTestId('auto-skip-non-music');
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await page.keyboard.press('Escape');
+
+  await page.getByTestId('transport-play').click();
+  await expect.poll(currentTime).toBeGreaterThan(0.2);
+  expect(await currentTime()).toBeLessThan(15);
+  await expect(skip).toHaveText('Skip non-music');
 });

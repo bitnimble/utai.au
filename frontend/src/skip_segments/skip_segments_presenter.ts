@@ -1,30 +1,41 @@
 import { reaction, runInAction, type IReactionDisposer } from 'mobx';
 import type { PlaybackEngine } from 'src/editing/playback/playback_engine';
+import type { AppSettingsStore } from 'src/settings/app_settings_store';
 import type { VideoStore } from 'src/video/video_store';
 import { SkipSegmentsStore } from './skip_segments_store';
 import { fetchSkipSegments, type SkipSegment } from './sponsorblock';
 
 /** Holds the current video's SponsorBlock segments, looking them up unless they
- *  came with the song, and seeks past one on request. */
+ *  came with the song, and seeks past one on request, or by itself for a
+ *  non-music section at the song's start or end. */
 export class SkipSegmentsPresenter {
-  private disposer: IReactionDisposer | undefined;
+  private disposers: IReactionDisposer[] = [];
   private controller: AbortController | undefined;
   private known: { videoId: string; segments: SkipSegment[] } | undefined;
 
   constructor(
     private readonly store: SkipSegmentsStore,
     private readonly video: Pick<VideoStore, 'videoId'>,
-    private readonly engine: Pick<PlaybackEngine, 'seek'>,
+    private readonly engine: Pick<PlaybackEngine, 'seek' | 'state'>,
+    private readonly settings: Pick<AppSettingsStore, 'autoSkipNonMusic'>,
   ) {}
 
   start(): void {
     this.dispose();
-    this.disposer = reaction(() => this.video.videoId, (id) => void this.load(id), { fireImmediately: true });
+    this.disposers = [
+      reaction(() => this.video.videoId, (id) => void this.load(id), { fireImmediately: true }),
+      reaction(
+        () => (this.settings.autoSkipNonMusic && this.engine.state === 'playing' ? this.store.edgeNonMusicEndSec : undefined),
+        (endSec) => {
+          if (endSec != null) this.engine.seek(endSec);
+        },
+      ),
+    ];
   }
 
   dispose(): void {
-    this.disposer?.();
-    this.disposer = undefined;
+    for (const dispose of this.disposers) dispose();
+    this.disposers = [];
     this.controller?.abort();
     this.controller = undefined;
   }

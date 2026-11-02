@@ -66,12 +66,21 @@ export function alignmentStartSec(segments: readonly SkipSegment[], durationSec:
   return Math.max(0, musicStartSec(segments, durationSec) - CUT_EDGE_SLACK_SEC);
 }
 
+/** The non-music spans at the song's very start or end; one between them is part of the song. */
+export function edgeNonMusicSpans(segments: readonly SkipSegment[], durationSec: number): TimeSpan[] {
+  return nonMusicSpans(segments, durationSec).filter(
+    (s) => s.startSec <= VIDEO_EDGE_SLACK_SEC || s.endSec >= durationSec - VIDEO_EDGE_SLACK_SEC,
+  );
+}
+
 const VIDEO_EDGE_SLACK_SEC = 0.5;
 const CUT_EDGE_SLACK_SEC = 4;
 
+export type TimeSpan = { startSec: number; endSec: number };
+
 /** The `music_offtopic` segments merged into disjoint spans, in time order. */
-function nonMusicSpans(segments: readonly SkipSegment[], durationSec: number): { startSec: number; endSec: number }[] {
-  const spans: { startSec: number; endSec: number }[] = [];
+function nonMusicSpans(segments: readonly SkipSegment[], durationSec: number): TimeSpan[] {
+  const spans: TimeSpan[] = [];
   for (const s of applicableSegments(segments, durationSec).sort((a, b) => a.startSec - b.startSec)) {
     if (s.category !== 'music_offtopic') continue;
     const endSec = Math.min(s.endSec, durationSec);

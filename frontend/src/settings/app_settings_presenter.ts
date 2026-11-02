@@ -41,6 +41,7 @@ export class AppSettingsPresenter {
         showRomaji: this.settings.showRomaji,
         vocalSurroundReverb: this.settings.vocalSurroundReverb,
         normalizeVolume: this.settings.normalizeVolume,
+        autoSkipNonMusic: this.settings.autoSkipNonMusic,
       });
       try {
         localStorage.setItem(STORAGE_KEY, snapshot);
@@ -121,6 +122,10 @@ export class AppSettingsPresenter {
     this.settings.normalizeVolume = on;
   }
 
+  setAutoSkipNonMusic(on: boolean): void {
+    this.settings.autoSkipNonMusic = on;
+  }
+
   setLyricsFontSize(px: number): void {
     this.settings.lyricsFontSizePx = Math.max(
       MIN_LYRIC_FONT_SIZE_PX,
@@ -189,6 +194,9 @@ export class AppSettingsPresenter {
       }
       if (typeof obj.normalizeVolume === 'boolean') {
         this.settings.normalizeVolume = obj.normalizeVolume;
+      }
+      if (typeof obj.autoSkipNonMusic === 'boolean') {
+        this.settings.autoSkipNonMusic = obj.autoSkipNonMusic;
       }
     } catch {
       // corrupt JSON; keep defaults
