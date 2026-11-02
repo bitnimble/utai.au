@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { needsWordSpace } from 'src/editing/lyrics/lyrics_measure';
 import type { LyricLine } from 'src/lyrics/lrc';
 import {
   countInLeadInSec,
@@ -36,6 +37,17 @@ describe('lineSegments', () => {
       { text: 'の', wordIdx: 1 },
       { text: '名は', wordIdx: 2 },
     ]);
+  });
+
+  test('a hyphenated word shows unspaced, its hyphen highlighted with the first part', () => {
+    const line = { startSec: 0, text: 'the take-off', words: [word('the'), word('take-'), word('off')] };
+    expect(lineSegments(line)).toEqual([
+      { text: 'the', wordIdx: 0 },
+      { text: ' ', wordIdx: 0 },
+      { text: 'take-', wordIdx: 1 },
+      { text: 'off', wordIdx: 2 },
+    ]);
+    expect(needsWordSpace('take-', 'off')).toBe(false);
   });
 
   test('repeated words each claim their own occurrence', () => {
@@ -94,6 +106,12 @@ describe('splitLongLines', () => {
       'we were dancing in the',
       'moonlight all night',
     ]);
+  });
+
+  test('breaks at a space past a hyphenated word, though breaking inside it would fit', () => {
+    const words = timedWords(['aaaaaaaa-', 'bbbbbbbb', 'cc', 'dd']);
+    const line = { startSec: 9, text: 'aaaaaaaa-bbbbbbbb cc dd', words };
+    expect(texts(splitLongLines([line], { splitAboveEm: 10, maxPartEm: 8 }, noPhrases))).toEqual(['aaaaaaaa-bbbbbbbb', 'cc dd']);
   });
 
   test('splits a very long line into the fewest parts that fit', () => {

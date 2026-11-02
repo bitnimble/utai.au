@@ -140,6 +140,9 @@ timestamps non-negative.
 
 ## [4] Post-processing
 
+- **Hyphenated words** align as separate words, the dash on the first
+  (`take-off` -> `take-` · `off`, `jp_romaji.tokenize`), so each part highlights
+  when it's sung. Line text keeps its spacing, so they show as one unspaced word.
 - **Low-confidence repair** (`_repair_low_score_words`): words whose
   Viterbi score is poor get a second, localized re-alignment pass.
 - **Line partition/stitch**: word timings are grouped back into the

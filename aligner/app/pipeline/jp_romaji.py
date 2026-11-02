@@ -40,6 +40,14 @@ _LYRIC_READINGS = {"私": "わたし", "明日": "あした", "正気": "しょ�
 # elsewhere (何を, 何か, 何に); unidic-lite reads it なん everywhere.
 _NAN_BEFORE = frozenset("たちつてとだぢづでどなぬねの")
 _KATAKANA_RUN = re.compile("[ァ-ヶー]+")
+_DASH = "[-\N{HYPHEN}\N{EN DASH}\N{EM DASH}]"
+_APOSTROPHE = "['\N{RIGHT SINGLE QUOTATION MARK}]"
+_LETTER = r"[^\W\d_]"
+# Letters on both sides: a digit-only part has no CTC tokens, so it would align
+# as an empty word stretched over the gap before the next (1-800-FLOWERS, 24-7).
+_AFTER_JOINING_DASH = re.compile(
+    rf"(?:(?<={_LETTER}{_DASH})|(?<={_LETTER}{_DASH}{_DASH}))(?={_APOSTROPHE}?{_LETTER})"
+)
 
 
 def _normalize(text: str) -> str:
@@ -256,8 +264,9 @@ def tokenize(text: str, *, treat_kanji_as_japanese: bool) -> list[JpToken]:
     Japanese runs (per {@link _split_runs}) are segmented into morphemes;
     each keeps its original surface for display and carries its in-context
     reading as `romaji`. Punctuation-only morphemes are dropped. Non-Japanese
-    runs are whitespace-split and passed through verbatim (`romaji ==
-    surface`), so English is left for the existing aligner path untouched.
+    runs are split at whitespace and after a dash joining two words (take-off
+    -> `take-` · `off`), then passed through verbatim (`romaji == surface`), so
+    English is left for the existing aligner path untouched.
     """
     tokens: list[JpToken] = []
     for run_text, is_japanese in _split_runs(
@@ -277,13 +286,14 @@ def tokenize(text: str, *, treat_kanji_as_japanese: bool) -> list[JpToken]:
                     )
                 )
         else:
-            for word in run_text.split():
-                # Drop punctuation-only splits (e.g. a stray 、 or "-"
-                # that fell into a non-Japanese run); the existing
-                # English path strips these too via preprocess_text.
-                if not any(c.isalnum() for c in word):
-                    continue
-                tokens.append(JpToken(surface=word, romaji=word, is_japanese=False))
+            for spaced in run_text.split():
+                for word in _AFTER_JOINING_DASH.split(spaced):
+                    # Drop punctuation-only splits (e.g. a stray 、 or "-"
+                    # that fell into a non-Japanese run); the existing
+                    # English path strips these too via preprocess_text.
+                    if not any(c.isalnum() for c in word):
+                        continue
+                    tokens.append(JpToken(surface=word, romaji=word, is_japanese=False))
     return tokens
 
 
