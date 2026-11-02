@@ -353,12 +353,17 @@ impl AudioEngine {
         }
         publish(&self.shared, &sources);
     }
-    pub fn seek_secs(&self, secs: f64) {
+    /// `id` reads back from [`Self::seek_id`] once [`Self::position_secs`] reflects this seek.
+    pub fn seek_secs(&self, secs: f64, id: u64) {
         self.shared.transport.seek_secs(secs, self.rate());
         self.shared.clear_track_delay.store(true, Ordering::Relaxed);
         for s in self.shared.sources.lock().unwrap().iter() {
             s.stream.wake();
         }
+        self.shared.transport.set_seek_id(id);
+    }
+    pub fn seek_id(&self) -> u64 {
+        self.shared.transport.seek_id()
     }
     pub fn position_secs(&self) -> f64 {
         self.shared.transport.position_secs(self.rate())
@@ -838,7 +843,7 @@ mod preload_tests {
         engine.add_preloaded_track("a");
         engine.set_track_effects("a", 1);
         let effects_before = engine.shared.tracks.load()[0].effects.clone().unwrap();
-        engine.seek_secs(10.0);
+        engine.seek_secs(10.0, 1);
 
         retune(&engine.shared, RATE * 2);
 

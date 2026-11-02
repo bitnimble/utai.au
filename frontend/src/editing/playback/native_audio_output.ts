@@ -11,7 +11,14 @@ const NO_OUTPUT_SAMPLE_RATE = 48_000;
 const TEMP_WRITE_SLICE_BYTES = 1 << 22;
 
 /** Streamed ~33 Hz. `outputRate` is 0 while there's no output. */
-type Telemetry = { playSec: number; playing: boolean; level: number; latencyMs: number; outputRate: number };
+type Telemetry = {
+  playSec: number;
+  playing: boolean;
+  seekId: number;
+  level: number;
+  latencyMs: number;
+  outputRate: number;
+};
 
 /** One mic pitch reading from the sidecar's RMVPE, streamed while a scoring session runs. */
 export type PitchTelemetry = { hz: number; confidence: number };
@@ -30,6 +37,7 @@ export class NativeAudioOutput implements AudioOutput {
   private channel: Channel<Telemetry> | undefined;
   private anchor: Anchor = { playSec: 0, atMs: 0, playing: false };
   private playing = false;
+  private seekId = 0;
   private speed = 1;
   private outputRate = 0;
   private readonly transport = new CommandQueue();
@@ -47,6 +55,7 @@ export class NativeAudioOutput implements AudioOutput {
       | 'channel'
       | 'anchor'
       | 'playing'
+      | 'seekId'
       | 'speed'
       | 'outputRate'
       | 'transport'
@@ -61,6 +70,7 @@ export class NativeAudioOutput implements AudioOutput {
       channel: false,
       anchor: false,
       playing: false,
+      seekId: false,
       speed: false,
       outputRate: false,
       transport: false,
@@ -125,7 +135,7 @@ export class NativeAudioOutput implements AudioOutput {
   async start(fromSec: number): Promise<void> {
     this.playing = true;
     this.anchor = { playSec: fromSec, atMs: performance.now(), playing: false };
-    await this.transport.send('audio_seek', { secs: fromSec });
+    await this.sendSeek(fromSec);
     await this.transport.send('audio_play');
   }
 
@@ -141,7 +151,7 @@ export class NativeAudioOutput implements AudioOutput {
   }
 
   seek(sec: number): void {
-    void this.transport.send('audio_seek', { secs: sec });
+    void this.sendSeek(sec);
     this.anchor = { playSec: sec, atMs: performance.now(), playing: this.anchor.playing };
   }
 
@@ -237,12 +247,17 @@ export class NativeAudioOutput implements AudioOutput {
     });
   }
 
+  private sendSeek(sec: number): Promise<unknown> {
+    this.seekId++;
+    return this.transport.send('audio_seek', { secs: sec, seekId: this.seekId });
+  }
+
   private onTelemetry(msg: Telemetry): void {
     this.outputRate = msg.outputRate;
     if (Math.abs(msg.level - this.micLevel) >= 0.01) this.micLevel = msg.level;
     if (Math.abs(msg.latencyMs - this.latencyMs) >= 0.1) this.latencyMs = msg.latencyMs;
-    // sampled before our last play/pause landed
-    if (msg.playing !== this.playing) return;
+    // sampled before our last play/pause/seek landed
+    if (msg.playing !== this.playing || msg.seekId !== this.seekId) return;
     this.anchor = { playSec: msg.playSec, atMs: performance.now(), playing: msg.playing };
   }
 }

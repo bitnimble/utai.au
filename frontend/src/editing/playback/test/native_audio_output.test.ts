@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, expect, mock, test } from 'bun:test';
 
-type Telemetry = { playSec: number; playing: boolean; level: number; latencyMs: number };
+type Telemetry = { playSec: number; playing: boolean; seekId: number; level: number; latencyMs: number };
 
 let telemetry: ((msg: Telemetry) => void) | undefined;
 const commands: [string, unknown][] = [];
@@ -33,7 +33,13 @@ afterAll(() => {
 const { NativeAudioOutput } = await import('../native_audio_output');
 const { NONE_DEVICE_ID } = await import('src/audio_devices/audio_io_backend');
 
-const frame = (playSec: number, playing: boolean): Telemetry => ({ playSec, playing, level: 0, latencyMs: 0 });
+const frame = (playSec: number, playing: boolean, seekId = 1): Telemetry => ({
+  playSec,
+  playing,
+  seekId,
+  level: 0,
+  latencyMs: 0,
+});
 
 function initedOutput(): InstanceType<typeof NativeAudioOutput> {
   const output = new NativeAudioOutput();
@@ -54,7 +60,7 @@ test('start seeks then plays, in order', async () => {
   await output.start(42);
   expect(transportCommands()).toEqual([
     ['audio_stop', undefined],
-    ['audio_seek', { secs: 42 }],
+    ['audio_seek', { secs: 42, seekId: 1 }],
     ['audio_play', undefined],
   ]);
 });
@@ -152,7 +158,27 @@ test('a seek while playing moves Rust and keeps the position running from there'
   commands.length = 0;
   output.seek(30);
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(transportCommands()).toEqual([['audio_seek', { secs: 30 }]]);
+  expect(transportCommands()).toEqual([['audio_seek', { secs: 30, seekId: 2 }]]);
   nowMs += 500;
   expect(output.positionSec()).toBeCloseTo(30.5, 5);
+});
+
+test('frames sampled before a seek landed leave the position alone, later ones follow Rust again', async () => {
+  const output = initedOutput();
+  await output.start(0);
+  telemetry?.(frame(0, true));
+  output.seek(30);
+
+  telemetry?.(frame(0.1, true, 1));
+  expect(output.positionSec()).toBe(30);
+
+  telemetry?.(frame(30.4, true, 2));
+  expect(output.positionSec()).toBe(30.4);
+});
+
+test('a frame from before the seek still reports the input level', async () => {
+  const output = initedOutput();
+  await output.start(0);
+  telemetry?.({ ...frame(0, true, 0), level: 0.5 });
+  expect(output.micLevel).toBe(0.5);
 });

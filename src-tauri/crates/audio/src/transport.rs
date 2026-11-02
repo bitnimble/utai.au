@@ -13,6 +13,8 @@ pub struct Transport {
     speed: AtomicU64,
     /// Bumped whenever the playhead stops following on from the last block.
     discontinuity: AtomicU64,
+    /// The caller's id for its last seek, once the playhead reflects that seek.
+    seek_id: AtomicU64,
 }
 
 impl Default for Transport {
@@ -22,6 +24,7 @@ impl Default for Transport {
             frame: AtomicU64::new(0),
             speed: AtomicU64::new(1f64.to_bits()),
             discontinuity: AtomicU64::new(0),
+            seek_id: AtomicU64::new(0),
         }
     }
 }
@@ -118,6 +121,15 @@ impl Transport {
         let frame = (secs.max(0.0) * sample_rate as f64).round() as u64;
         self.seek_frames(frame);
     }
+
+    /// Acquire: seeing an id guarantees seeing the position its seek set.
+    pub fn seek_id(&self) -> u64 {
+        self.seek_id.load(Ordering::Acquire)
+    }
+
+    pub fn set_seek_id(&self, id: u64) {
+        self.seek_id.store(id, Ordering::Release);
+    }
 }
 
 #[cfg(test)]
@@ -193,6 +205,17 @@ mod tests {
         t.stop();
         assert_eq!(t.discontinuity(), start + 4);
         assert_eq!(t.speed(), 0.5);
+    }
+
+    #[test]
+    fn seek_id_starts_at_zero_and_only_changes_when_set() {
+        let t = Transport::new();
+        assert_eq!(t.seek_id(), 0);
+        t.seek_secs(1.0, 48_000);
+        assert_eq!(t.seek_id(), 0);
+        t.set_seek_id(5);
+        t.seek_frames(10);
+        assert_eq!(t.seek_id(), 5);
     }
 
     #[test]

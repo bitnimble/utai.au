@@ -41,6 +41,8 @@ pub struct DeviceList {
 pub struct Telemetry {
     play_sec: f64,
     playing: bool,
+    /// The id of the last `audio_seek` that `play_sec` reflects.
+    seek_id: u64,
     level: f32,
     /// Measured round-trip monitor latency in ms (0 until streams report it).
     latency_ms: f32,
@@ -202,8 +204,8 @@ pub fn audio_stop(state: State<'_, AudioState>) {
 }
 
 #[tauri::command]
-pub fn audio_seek(secs: f64, state: State<'_, AudioState>) {
-    state.0.seek_secs(secs);
+pub fn audio_seek(secs: f64, seek_id: u64, state: State<'_, AudioState>) {
+    state.0.seek_secs(secs, seek_id);
 }
 
 #[tauri::command]
@@ -244,9 +246,13 @@ pub fn audio_subscribe(channel: Channel<Telemetry>, state: State<'_, AudioState>
     let engine = state.0.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(30));
+        // Before the position: read after it, a seek landing between the two would label the
+        // old position with the new id.
+        let seek_id = engine.seek_id();
         let msg = Telemetry {
             play_sec: engine.position_secs(),
             playing: engine.is_playing(),
+            seek_id,
             level: engine.level(),
             latency_ms: engine.latency_ms(),
             output_rate: engine.output_rate(),
