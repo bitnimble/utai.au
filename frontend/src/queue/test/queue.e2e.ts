@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Page, type Worker } from '@playwright/test';
 import { strToU8, zipSync } from 'fflate';
 import { HOST_PATH, showTracksView, test } from 'src/testing/e2e_test';
 import { makeWav } from 'src/testing/wav';
@@ -10,6 +10,11 @@ type UtaiWindow = {
     playbackEngine?: { state?: string; audioTracks?: Map<string, Mix & { id: string; role: string }> };
     presenter?: { setTrackVolume: (id: string, v: number) => void; setTrackMuted: (id: string, m: boolean) => void };
   };
+};
+
+type DecodeWindow = {
+  decodes: number;
+  utai: { playbackEngine: { onEnded: (cb: () => void) => void; durationSec: number; seek: (sec: number) => void } };
 };
 
 /** A saved-song bundle: already prepared, so it's ready the moment it's queued
@@ -109,6 +114,108 @@ test('queue: the sidebar docks beside the stage, and covers it when too narrow t
   await page.setViewportSize({ width: 600, height: 720 });
   await expect.poll(async () => (await stage.boundingBox())!.width).toBeGreaterThan(590);
   await expect(page.getByTestId('queue-sidebar')).toBeVisible();
+});
+
+test('queue: a ready next song follows the end of the current one with nothing left to decode', async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as DecodeWindow;
+    w.decodes = 0;
+    const decode = BaseAudioContext.prototype.decodeAudioData;
+    BaseAudioContext.prototype.decodeAudioData = function (this: BaseAudioContext, bytes: ArrayBuffer) {
+      w.decodes++;
+      return decode.call(this, bytes);
+    } as typeof decode;
+  });
+  await page.goto(HOST_PATH);
+  await queueBundles(page, bundle('Short'), bundle('Next', 30, ['backing', 'vocals']));
+  await expectPlaying(page, 'Short');
+  await expect.poll(() => page.evaluate(() => (window as unknown as DecodeWindow).decodes)).toBe(3);
+
+  const decodesAtEnd = await page.evaluate(
+    () =>
+      new Promise<number>((resolve) => {
+        const w = window as unknown as DecodeWindow;
+        w.utai.playbackEngine.onEnded(() => resolve(w.decodes));
+        w.utai.playbackEngine.seek(w.utai.playbackEngine.durationSec - 0.2);
+      }),
+  );
+  await expectPlaying(page, 'Next');
+  expect(decodesAtEnd).toBe(3);
+  expect(await page.evaluate(() => (window as unknown as DecodeWindow).decodes)).toBe(3);
+  expect(Object.keys(await mixByRole(page)).sort()).toEqual(['backing', 'vocals']);
+});
+
+test('queue: a song that has been seeked and left holds no audio or stream', async ({ page }) => {
+  const songWorkers = new Set<Worker>();
+  page.on('worker', (worker) => {
+    if (!worker.url().includes('song_pcm_worker')) return;
+    songWorkers.add(worker);
+    worker.on('close', () => songWorkers.delete(worker));
+  });
+  const liveAudioBuffers = async (): Promise<number> => {
+    const cdp = await page.context().newCDPSession(page);
+    const { result: proto } = (await cdp.send('Runtime.evaluate', { expression: 'AudioBuffer.prototype' })) as {
+      result: { objectId: string };
+    };
+    // queryObjects collects garbage first, so what it returns is what's really retained.
+    const { objects } = (await cdp.send('Runtime.queryObjects', { prototypeObjectId: proto.objectId })) as {
+      objects: { objectId: string };
+    };
+    const { result } = (await cdp.send('Runtime.callFunctionOn', {
+      objectId: objects.objectId,
+      functionDeclaration: 'function () { return this.length; }',
+      returnByValue: true,
+    })) as { result: { value: number } };
+    await cdp.detach();
+    return result.value;
+  };
+  const seek = (fromEnd: number): Promise<void> =>
+    page.evaluate((sec) => {
+      const engine = (window as unknown as { utai: { playbackEngine: { durationSec: number; seek: (s: number) => void } } })
+        .utai.playbackEngine;
+      engine.seek(engine.durationSec - sec);
+    }, fromEnd);
+
+  await page.goto(HOST_PATH);
+  await queueBundles(page, bundle('Alpha'), bundle('Bravo'), bundle('Charlie'));
+  await expectPlaying(page, 'Alpha');
+  await seek(10);
+  await seek(0.2);
+  await expectPlaying(page, 'Bravo');
+
+  await expect.poll(liveAudioBuffers).toBe(0);
+  // Bravo's, and Charlie's as it waits its turn.
+  await expect.poll(() => songWorkers.size).toBe(2);
+});
+
+test('queue: a song only pays for its waveform once the tracks view shows it', async ({ page }) => {
+  const waveformWorkers: string[] = [];
+  page.on('worker', (worker) => {
+    if (worker.url().includes('waveform_worker')) waveformWorkers.push(worker.url());
+  });
+  await page.goto(HOST_PATH);
+  await queueBundles(page, bundle('Alpha', 30, ['backing', 'vocals']));
+  await expectPlaying(page, 'Alpha');
+  expect(waveformWorkers).toEqual([]);
+
+  await showTracksView(page);
+  await expect.poll(() => waveformWorkers.length).toBe(2);
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const tile = document.querySelector<HTMLCanvasElement>('canvas[class*="musicTrackWaveformChunk"]');
+        if (tile == null || tile.width === 0) return 0;
+        const bitmap = await createImageBitmap(tile);
+        const copy = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d');
+        if (copy == null) return 0;
+        copy.drawImage(bitmap, 0, 0);
+        const { data } = copy.getImageData(0, 0, bitmap.width, bitmap.height);
+        let painted = 0;
+        for (let i = 3; i < data.length; i += 4) if (data[i] > 0) painted++;
+        return painted;
+      }),
+    )
+    .toBeGreaterThan(0);
 });
 
 test('queue: the next song plays when the current one ends', async ({ page }) => {

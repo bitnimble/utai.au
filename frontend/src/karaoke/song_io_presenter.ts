@@ -14,6 +14,7 @@ import { BeatStore } from 'src/editing/beats/beat_store';
 import { LyricsPresenter } from 'src/editing/lyrics/lyrics_presenter';
 import { AudioTrack } from 'src/editing/playback/audio_tracks';
 import { playbackEngine } from 'src/editing/playback/player';
+import { encodedAudio } from 'src/editing/playback/song_pcm';
 import { lyricsStore } from 'src/lyrics/store';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import type { SkipSegmentsPresenter } from 'src/skip_segments/skip_segments_presenter';
@@ -21,27 +22,32 @@ import { toastStore } from 'src/ui/toasts/toasts';
 import { downloadBlob } from 'src/utils/download';
 import type { VideoPresenter } from 'src/video/video_presenter';
 import { songVideoId } from 'src/video/youtube';
-import { KaraokePresenter } from './karaoke_presenter';
+import { KaraokePresenter, type PreloadedSongAudio } from './karaoke_presenter';
 import { BundleLyricsInput, BundleStemInput, packSongBundle, PreparedSong } from './song_bundle';
 import { SongStore } from './song_store';
 
 /** Coarse stage for the busy indicator; `undefined` when idle. */
 export type SongIoPhase = 'packing' | undefined;
 
+type Preload = { song: PreparedSong; audio: Promise<PreloadedSongAudio> };
+
 export class SongIoPresenter {
   busy = false;
   phase: SongIoPhase = undefined;
   detailsOpen = false;
+
+  private preloaded: Preload | undefined;
 
   constructor(
     private readonly song: SongStore,
     private readonly karaoke: KaraokePresenter,
     private readonly lyrics: LyricsPresenter,
     private readonly beats: BeatStore,
-    private readonly video: Pick<VideoPresenter, 'waitForFirstFrame'>,
+    private readonly video: Pick<VideoPresenter, 'preload' | 'waitForFirstFrame'>,
     private readonly skipSegments: Pick<SkipSegmentsPresenter, 'provide'>,
   ) {
-    makeAutoObservable<this, 'song' | 'karaoke' | 'lyrics' | 'beats' | 'video' | 'skipSegments'>(this, {
+    makeAutoObservable<this, 'preloaded' | 'song' | 'karaoke' | 'lyrics' | 'beats' | 'video' | 'skipSegments'>(this, {
+      preloaded: false,
       song: false,
       karaoke: false,
       lyrics: false,
@@ -66,21 +72,32 @@ export class SongIoPresenter {
 
   // --- load ---
 
+  /** Readies the song that plays next, so {@link loadPreparedSong} has nothing left to wait for.
+   *  Replaces any earlier preload; undefined when no song is known to be next. */
+  preload(song: PreparedSong | undefined): void {
+    if (song != null && this.preloaded?.song === song) return;
+    this.discardPreload();
+    if (song == null) {
+      this.video.preload(undefined);
+      return;
+    }
+    this.preloaded = this.startPreload(song);
+  }
+
   /** Replace the session's song with a prepared one, ready to play: stems in the
    *  audio output and the video paused on its first frame. */
   async loadPreparedSong(prepared: PreparedSong): Promise<void> {
-    this.clearSong();
     runInAction(() => {
       this.busy = true;
     });
     try {
+      const preloaded = this.takePreload(prepared);
+      let audio = await preloaded.audio;
+      if (audio.failures.length > 0) audio = await this.retryWithoutCurrentSong(prepared, audio);
+      this.clearSong();
       // before the stems: karaoke view flags "No lyrics loaded" for audio without lyrics
       for (const track of prepared.lyrics) this.lyrics.loadLyricsTrack(track);
-      for (const stem of prepared.stems) {
-        const id = await this.karaoke.loadAudioFile(stem.file, stem.role);
-        if (id == null) continue;
-        if (stem.pitchContour) this.karaoke.setTrackPitchContour(id, stem.pitchContour);
-      }
+      this.karaoke.installSongAudio(audio);
       const videoId = songVideoId(prepared.meta);
       // before the meta: its video id starts a lookup of any segments not known by then
       if (videoId != null && prepared.skipSegments != null) this.skipSegments.provide(videoId, prepared.skipSegments);
@@ -105,6 +122,34 @@ export class SongIoPresenter {
     });
   }
 
+  /** The memory the current song holds may be why a stem failed on a low-RAM device. */
+  private async retryWithoutCurrentSong(song: PreparedSong, failed: PreloadedSongAudio): Promise<PreloadedSongAudio> {
+    this.karaoke.discardSongAudio(failed);
+    this.clearSong();
+    const audio = await this.karaoke.preloadSongAudio(song.stems);
+    for (const failure of audio.failures) toastStore.showError(failure);
+    return audio;
+  }
+
+  private takePreload(song: PreparedSong): Preload {
+    const preloaded = this.preloaded?.song === song ? this.preloaded : this.startPreload(song);
+    if (preloaded !== this.preloaded) this.discardPreload();
+    this.preloaded = undefined;
+    return preloaded;
+  }
+
+  private startPreload(song: PreparedSong): Preload {
+    this.video.preload(songVideoId(song.meta));
+    return { song, audio: this.karaoke.preloadSongAudio(song.stems) };
+  }
+
+  private discardPreload(): void {
+    this.preloaded?.audio
+      .then((audio) => this.karaoke.discardSongAudio(audio))
+      .catch((err: unknown) => console.warn('[song-io] discarded preload had failed:', err));
+    this.preloaded = undefined;
+  }
+
   // --- save ---
 
   /** Bundle the current song (stems + lyrics + metadata) to a `.zip` and
@@ -120,13 +165,13 @@ export class SongIoPresenter {
       this.phase = 'packing';
     });
     try {
-      const blob = await packSongBundle({
-        meta: this.song.meta,
-        durationSec: this.song.durationSec > 0 ? this.song.durationSec : undefined,
-        stems: this.gatherStems(),
-        lyrics: this.gatherLyrics(),
-      });
-      downloadBlob(`${this.filenameBase()}.utai.zip`, blob);
+      // Read up front: the next song may well have started by the time the stems have downloaded.
+      const meta = this.song.meta;
+      const durationSec = this.song.durationSec > 0 ? this.song.durationSec : undefined;
+      const lyrics = this.gatherLyrics();
+      const filename = `${this.filenameBase()}.utai.zip`;
+      const blob = await packSongBundle({ meta, durationSec, stems: await this.gatherStems(), lyrics });
+      downloadBlob(filename, blob);
       toastStore.showSuccess('Song saved.', { testId: 'song-saved' });
     } catch (err) {
       if (!isBackendUnreachable(err)) toastStore.showError(`Could not save song: ${message(err)}`);
@@ -140,15 +185,12 @@ export class SongIoPresenter {
 
   /** When both stems are present the mix is redundant (`vocals + backing ==
    *  mix`) and dropped, so a reload doesn't double the audio. */
-  private gatherStems(): BundleStemInput[] {
-    const tracks = Array.from(playbackEngine.audioTracks.values());
-    const stems = tracks.map(toStemInput);
-    const haveVocals = tracks.some((t) => t.role === 'vocals');
-    const haveBacking = tracks.some((t) => t.role === 'backing');
-    if (haveVocals && haveBacking) {
-      return stems.filter((s) => s.role === 'vocals' || s.role === 'backing');
-    }
-    return stems;
+  private async gatherStems(): Promise<BundleStemInput[]> {
+    const all = Array.from(playbackEngine.audioTracks.values());
+    const haveVocals = all.some((t) => t.role === 'vocals');
+    const haveBacking = all.some((t) => t.role === 'backing');
+    const tracks = haveVocals && haveBacking ? all.filter((t) => t.role === 'vocals' || t.role === 'backing') : all;
+    return Promise.all(tracks.map(toStemInput));
   }
 
   private gatherLyrics(): BundleLyricsInput[] {
@@ -174,8 +216,8 @@ export class SongIoPresenter {
   }
 }
 
-function toStemInput(t: AudioTrack): BundleStemInput {
-  return { role: t.role, filename: t.filename, blob: t.sourceBlob, durationSec: t.durationSec };
+async function toStemInput(t: AudioTrack): Promise<BundleStemInput> {
+  return { role: t.role, filename: t.filename, blob: await encodedAudio(t.audio), durationSec: t.durationSec };
 }
 
 function message(err: unknown): string {

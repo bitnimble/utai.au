@@ -182,18 +182,26 @@ describe('downloadTrack', () => {
     };
   }
 
-  test('polls progress then downloads the finished audio into a File', async () => {
+  test('polls progress, and leaves the finished audio on the backend that holds it', async () => {
     const progress: number[] = [];
     serveJob({ frac: 0.5 }, { frac: 1, audio: AUDIO_REF, videoDone: true });
     const { audio } = downloadTrack(TRACK, { onProgress: (p) => progress.push(p.frac) });
-    const { file, serverPath } = await audio;
-    expect(serverPath).toBe('/root/Music/Get Lucky.mp3');
-    expect(file).toBeInstanceOf(File);
-    expect(file.name).toBe('Get Lucky');
-    expect(file.type).toBe('audio/mpeg');
-    expect(await file.arrayBuffer()).toEqual(new Uint8Array([1, 2, 3]).buffer);
+    expect(await audio).toEqual({
+      filename: 'Get Lucky',
+      serverPath: '/root/Music/Get Lucky.mp3',
+      downloadPath: AUDIO_REF.path,
+    });
     expect(progress[progress.length - 1]).toBe(1);
     expect(progress).toContain(0.5);
+  });
+
+  test('downloads the finished audio into a File when the backend does not say where it holds it', async () => {
+    serveJob({ frac: 1, audio: { path: AUDIO_REF.path, filename: AUDIO_REF.filename }, videoDone: true });
+    const audio = await downloadTrack(TRACK).audio;
+    if (!('file' in audio)) throw new Error('expected a local file');
+    expect(audio.file.name).toBe('Get Lucky');
+    expect(audio.file.type).toBe('audio/mpeg');
+    expect(await audio.file.arrayBuffer()).toEqual(new Uint8Array([1, 2, 3]).buffer);
   });
 
   test('one song polls its job with one loop, and stops reporting progress once the audio is in', async () => {

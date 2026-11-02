@@ -1,8 +1,19 @@
 import { expect, test } from 'bun:test';
-import { integratedLufs, songLoudnessGain } from '../loudness';
-import { measureSongLoudnessGain } from '../loudness_worker_client';
+import { LoudnessMeter } from '../loudness';
 
 const SAMPLE_RATE = 48000;
+
+function meterOver(tracks: readonly Float32Array[][], sampleRate: number): LoudnessMeter {
+  const meter = new LoudnessMeter(sampleRate);
+  meter.add(tracks);
+  return meter;
+}
+
+const integratedLufs = (channels: Float32Array[], sampleRate: number): number =>
+  meterOver([channels], sampleRate).lufs();
+
+const songLoudnessGain = (tracks: readonly Float32Array[][], sampleRate: number): number =>
+  meterOver(tracks, sampleRate).gain();
 
 function sine(amplitude: number, seconds = 5, hz = 997, sampleRate = SAMPLE_RATE): Float32Array {
   const samples = new Float32Array(seconds * sampleRate);
@@ -55,14 +66,18 @@ test('a near-silent recording is boosted by at most the cap', () => {
   expect(songLoudnessGain([[hiss, hiss]], SAMPLE_RATE)).toBe(4);
 });
 
-test('a measurement that cannot run leaves the song at its own level instead of failing the load', async () => {
-  const outOfMemory = {
-    numberOfChannels: 1,
-    getChannelData: () => {
-      throw new RangeError('Array buffer allocation failed');
-    },
-  } as unknown as AudioBuffer;
-  expect(await measureSongLoudnessGain([outOfMemory])).toBe(1);
+test('fed a stretch at a time, the meter reads exactly what it would all at once', () => {
+  const quietThenLoud = new Float32Array(20 * SAMPLE_RATE);
+  quietThenLoud.set(sine(dbfs(-30), 10));
+  quietThenLoud.set(sine(dbfs(-12), 10), 10 * SAMPLE_RATE);
+  const whole = songLoudnessGain([[quietThenLoud, quietThenLoud]], SAMPLE_RATE);
+
+  const meter = new LoudnessMeter(SAMPLE_RATE);
+  for (let start = 0; start < quietThenLoud.length; start += 12_345) {
+    const stretch = quietThenLoud.subarray(start, start + 12_345);
+    meter.add([[stretch, stretch]]);
+  }
+  expect(meter.gain()).toBeCloseTo(whole, 6);
 });
 
 test('silence and clips too short to measure are left alone', () => {

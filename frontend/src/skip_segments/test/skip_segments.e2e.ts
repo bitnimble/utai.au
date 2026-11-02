@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test';
 import { HOST_PATH, test } from 'src/testing/e2e_test';
+import { routeStreamedPcm } from 'src/testing/streamed_pcm';
 import { makeWav } from 'src/testing/wav';
 
 type UtaiWindow = {
@@ -59,9 +60,7 @@ test('skip segments: a queued track looks its segments up once and aligns its ly
       },
     }),
   );
-  await page.route('**/music/test-audio/song.wav', (route) =>
-    route.fulfill({ contentType: 'audio/wav', body: makeWav(20) }),
-  );
+  await routeStreamedPcm(page, 20);
   await page.route('**/music/separate', (route) => route.fulfill({ status: 424, json: { detail: 'no models' } }));
   let alignForm = '';
   await page.route('**/music/align', (route) => {

@@ -1,6 +1,7 @@
 import { toastStore } from 'src/ui/toasts/toasts';
 import type { AudioTrack, AudioTrackId } from './audio_tracks';
 import { MAX_AUDIO_OFFSET_SEC, type AudioOutput } from './playback_engine';
+import { createStemPlayback, loadStemPlayer, type StemPlayback } from './stem_player';
 import { TrackStretchers, type TrackStretcher } from './time_stretch';
 import {
   createTrackEffects,
@@ -34,11 +35,15 @@ export class WebAudioOutput implements AudioOutput {
   private speed = 1;
   private readonly stretchers = new TrackStretchers();
 
-  decodeContext(): AudioContext {
-    return this.getAudioContext();
+  sampleRate(): number {
+    return this.getAudioContext().sampleRate;
   }
 
-  async addTrack(track: AudioTrack): Promise<void> {
+  async preloadTrack(): Promise<void> {
+    await loadStemPlayer(this.getAudioContext());
+  }
+
+  addTrack(track: AudioTrack): void {
     this.tracks.set(track.id, track);
     if (this.playing && this.ctx) {
       this.controller?.scheduleAll([track], this.ctx.currentTime, this.positionSec(), this.speed);
@@ -52,6 +57,10 @@ export class WebAudioOutput implements AudioOutput {
 
   setTrackGain(id: AudioTrackId, gain: number): void {
     this.controller?.setTrackGain(id, gain);
+    const track = this.tracks.get(id);
+    if (track && this.playing && this.ctx && this.speed !== 1) {
+      this.controller?.syncStretchToGain(track, this.ctx.currentTime, this.positionSec(), this.speed);
+    }
   }
 
   setTrackEffects(id: AudioTrackId, effects: readonly TrackEffect[]): void {
@@ -179,24 +188,24 @@ export class WebAudioOutput implements AudioOutput {
 }
 
 /** Live playback slot for one track: reusable input + gain nodes, the effect
- *  chain between them (rebuilt when its mask changes) and the currently playing
- *  source (buffer sources are one-shot, so each start mints a fresh one). */
+ *  chain between them (rebuilt when its mask changes) and the track's player. */
 type ActiveAudioTrack = {
   id: AudioTrackId;
   input: GainNode;
   gainNode: GainNode;
   effectMask: number;
   effects: { node: AudioWorkletNode; mask: number } | undefined;
-  buffer: AudioBuffer;
-  source: AudioBufferSourceNode | undefined;
+  track: AudioTrack;
+  player: StemPlayback;
+  playing: boolean;
   stretcher: TrackStretcher | undefined;
   stretcherLoad: Promise<void> | undefined;
   /** What should be playing once the stretcher has loaded. */
   awaitingStretcher: { audioStartTime: number; mediaSec: number; speed: number } | undefined;
 };
 
-/** One `start()`'s track sources and gain nodes. Seek / pause stop the sources;
- *  a later `scheduleAll` starts fresh ones at the new offset. */
+/** One `start()`'s track players and gain nodes. Pause stops the players;
+ *  a later `scheduleAll` starts them again at the new offset. */
 export class AudioTrackPlaybackController {
   private active: Map<AudioTrackId, ActiveAudioTrack> = new Map();
 
@@ -204,16 +213,28 @@ export class AudioTrackPlaybackController {
     private readonly ctx: BaseAudioContext,
     private readonly destination: AudioNode,
     private readonly stretchers: TrackStretchers = new TrackStretchers(),
+    private readonly createPlayback: (ctx: BaseAudioContext, track: AudioTrack) => StemPlayback = (c, track) =>
+      createStemPlayback(c, track.pcm.attach()),
   ) {}
 
   /** Start every track at `audioStartTime` (ctx time), from song position `mediaSec`. */
   scheduleAll(tracks: Iterable<AudioTrack>, audioStartTime: number, mediaSec: number, speed = 1): void {
-    for (const track of tracks) this.scheduleOne(track, audioStartTime, mediaSec, speed);
+    // Once, not per track: a render quantum ticking over mid-loop would start stems a quantum apart.
+    const when = this.startTimeFrom(audioStartTime);
+    for (const track of tracks) this.scheduleOne(track, when, mediaSec, speed);
   }
 
   setTrackGain(id: AudioTrackId, gain: number): void {
     const slot = this.active.get(id);
     if (slot) slot.gainNode.gain.value = gain;
+  }
+
+  /** Off 1x, starts a stem that has just become audible and stops one that's just been silenced. */
+  syncStretchToGain(track: AudioTrack, audioStartTime: number, mediaSec: number, speed: number): void {
+    const slot = this.active.get(track.id);
+    if (slot == null || this.stretchers.failed) return;
+    const running = slot.playing || slot.stretcher != null || slot.awaitingStretcher != null;
+    if (running !== track.outputGain > 0) this.scheduleOne(track, this.startTimeFrom(audioStartTime), mediaSec, speed);
   }
 
   setTrackEffects(id: AudioTrackId, mask: number): void {
@@ -241,20 +262,29 @@ export class AudioTrackPlaybackController {
     this.active.clear();
   }
 
-  private scheduleOne(track: AudioTrack, audioStartTime: number, mediaSec: number, speed: number): void {
+  private startTimeFrom(audioStartTime: number): number {
+    return Math.max(audioStartTime, this.ctx.currentTime + SCHEDULE_PAD_SEC);
+  }
+
+  private scheduleOne(track: AudioTrack, when: number, mediaSec: number, speed: number): void {
     const slot = this.ensureSlot(track);
     // Re-read the track's gain each schedule so a volume/mute change made
     // while stopped is picked up on the next play/seek.
     slot.gainNode.gain.value = track.outputGain;
     const offset = Math.max(0, mediaSec);
-    if (offset >= slot.buffer.duration) {
+    if (offset >= track.durationSec) {
       this.stopSource(slot);
       this.stopStretcher(slot);
       return;
     }
-    const when = Math.max(audioStartTime, this.ctx.currentTime + SCHEDULE_PAD_SEC);
     if (speed !== 1 && !this.stretchers.failed) {
-      this.scheduleStretched(slot, when, offset, speed);
+      if (track.outputGain > 0) {
+        this.scheduleStretched(slot, when, offset, speed);
+      } else {
+        // A stretcher's FFTs and its own audio stream are too much to spend on silence.
+        this.stopSource(slot);
+        this.releaseStretcher(slot);
+      }
       return;
     }
     this.releaseStretcher(slot);
@@ -262,14 +292,9 @@ export class AudioTrackPlaybackController {
   }
 
   private startSource(slot: ActiveAudioTrack, when: number, offset: number, speed: number): void {
-    this.stopSource(slot);
-    const source = this.ctx.createBufferSource();
-    source.buffer = slot.buffer;
     // Only off 1 when the stretcher failed: the pitch moves, but the clock and lyrics hold.
-    source.playbackRate.value = speed;
-    source.connect(slot.input);
-    source.start(when, offset);
-    slot.source = source;
+    slot.player.play(when, offset, speed);
+    slot.playing = true;
   }
 
   private scheduleStretched(slot: ActiveAudioTrack, when: number, offset: number, speed: number): void {
@@ -280,12 +305,12 @@ export class AudioTrackPlaybackController {
       return;
     }
     this.stopSource(slot);
-    void slot.stretcher.node.schedule({ active: true, input: offset, rate: speed, output: when });
+    slot.stretcher.schedule(when, offset, speed);
   }
 
   private async loadStretcher(slot: ActiveAudioTrack): Promise<void> {
     try {
-      const stretcher = await this.stretchers.acquire(this.ctx, slot.buffer);
+      const stretcher = await this.stretchers.acquire(this.ctx, slot.track.pcm);
       if (this.active.get(slot.id) !== slot) {
         this.stretchers.release(stretcher);
         return;
@@ -307,7 +332,7 @@ export class AudioTrackPlaybackController {
     }
     const when = this.ctx.currentTime + SCHEDULE_PAD_SEC;
     const mediaSec = awaiting.mediaSec + Math.max(0, when - awaiting.audioStartTime) * awaiting.speed;
-    if (mediaSec >= slot.buffer.duration) {
+    if (mediaSec >= slot.track.durationSec) {
       this.stopSource(slot);
       return;
     }
@@ -327,12 +352,14 @@ export class AudioTrackPlaybackController {
       gainNode,
       effectMask: 0,
       effects: undefined,
-      buffer: track.buffer,
-      source: undefined,
+      track,
+      player: this.createPlayback(this.ctx, track),
+      playing: false,
       stretcher: undefined,
       stretcherLoad: undefined,
       awaitingStretcher: undefined,
     };
+    slot.player.node.connect(slot.input);
     this.applyEffects(slot, trackEffectMask(track.effects));
     this.active.set(track.id, slot);
     return slot;
@@ -364,6 +391,7 @@ export class AudioTrackPlaybackController {
 
   private disconnectSlot(slot: ActiveAudioTrack): void {
     this.stopSource(slot);
+    slot.player.dispose();
     this.releaseStretcher(slot);
     slot.input.disconnect();
     this.endEffects(slot);
@@ -384,18 +412,12 @@ export class AudioTrackPlaybackController {
 
   private stopStretcher(slot: ActiveAudioTrack): void {
     slot.awaitingStretcher = undefined;
-    void slot.stretcher?.node.schedule({ active: false });
+    slot.stretcher?.pause();
   }
 
   private stopSource(slot: ActiveAudioTrack): void {
-    const source = slot.source;
-    if (!source) return;
-    slot.source = undefined;
-    try {
-      source.stop();
-      source.disconnect();
-    } catch (err) {
-      console.debug('[audio-tracks] stopSource threw', err);
-    }
+    if (!slot.playing) return;
+    slot.playing = false;
+    slot.player.stop();
   }
 }

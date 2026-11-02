@@ -228,11 +228,10 @@ export class LyricsPresenter {
     }
     const track = playbackEngine.audioTracks.get(pick.id);
     if (!track) return;
-    const file = new File([track.sourceBlob], track.filename, { type: track.sourceBlob.type });
     const offsetSec = lyricsStore.get(targetTrackId)?.offsetSec ?? 0;
     const req: AlignLyricsRequest = {
       kind: pick.kind,
-      audio: { file },
+      audio: track.audio,
       realign: { lines: lines.map((l) => ({ startSec: l.startSec + offsetSec, text: l.text })) },
       audioStartSec: this.skipSegments.alignmentStartSec,
     };

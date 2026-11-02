@@ -12,7 +12,7 @@
 /**
  * One column-strip on the score: where the bar's left edge sits in CSS
  * pixels (`x`), its CSS width, and the absolute jot-time range the
- * bar covers. Used by {@link computeWaveformPeaksFromChannels} to map
+ * bar covers. Used by {@link computeWaveformPeaks} to map
  * each pixel column back to the buffer-sample range it represents.
  *
  * Flattened off the structural layers on the main thread so the worker
@@ -36,67 +36,120 @@ export type BarSlice = {
 };
 
 /**
- * Per-channel PCM + the rate metadata the peak loops need. Channel
- * arrays are *copies* of the original `AudioBuffer.getChannelData(ch)`
- * (the worker holds its own copy so the main-thread `AudioBuffer`
- * stays untouched and usable by the BufferSource playback path).
- */
-export type ChannelData = {
-  channels: Float32Array[];
-  sampleRate: number;
-  length: number;
-};
-
-/**
  * Multi-resolution min/max summary of a track's mono-folded PCM. `levels[0]`
- * holds the [min, max] of every {@link PYRAMID_BASE}-sample block; each higher
+ * holds the [min, max] of every block; each higher
  * level halves the resolution (pairwise-reduced from the one below). A pixel
  * covering S samples reads ~1-2 blocks from the level whose `blockSize <= S`,
  * so a render is O(pixels) regardless of zoom instead of O(samples) -- the raw
  * PCM is scanned exactly ONCE (here, to build this) rather than on every paint.
  *
  * Mono-folded because the waveform displays the channel-averaged envelope, so
- * one pyramid serves any channel count and is a fraction of the raw PCM size
- * (the worker keeps only this and frees the channels after building it).
+ * one pyramid serves any channel count and is a fraction of the raw PCM size.
  */
 type PyramidLevel = { min: Float32Array; max: Float32Array; blockSize: number };
 
 export type WaveformPyramid = {
   levels: PyramidLevel[];
-  length: number;
 };
 
 /** A track's render-ready peaks: the {@link WaveformPyramid} + the rate/length
- *  the per-pixel sample mapping needs. Replaces holding the raw channels. */
+ *  the per-pixel sample mapping needs, + its {@link trackAmpScale}. */
 export type TrackPeaks = {
   pyramid: WaveformPyramid;
   sampleRate: number;
   length: number;
+  ampScale: number;
 };
 
 /**
- * Level-0 block size (samples). 16 keeps the summary accurate well past the
- * app's max zoom (which never shows fewer than ~tens of samples per pixel) and
- * the pyramid at ~1/8 the size of the mono PCM. Powers of two above it form
- * the higher levels.
+ * Smallest level-0 block size (samples). 16 keeps the summary accurate well past
+ * the app's max zoom (which never shows fewer than ~tens of samples per pixel).
+ * Powers of two above it form the higher levels.
  */
 const PYRAMID_BASE = 16;
+/** 8 MB of pyramid per track, reached at about 3 minutes; longer songs get wider blocks. */
+const MAX_LEVEL0_BLOCKS = 1 << 19;
+/** Read at once when building a pyramid: a multiple of any block size in use. */
+export const PEAKS_CHUNK_FRAMES = 1 << 18;
+const AMP_SAMPLES = 10_000;
 
-/** Build a track's {@link TrackPeaks} from decoded channels. One O(samples)
- *  pass (folds to mono + the level-0 blocks), then cheap pairwise reductions. */
-export function buildTrackPeaks(data: ChannelData): TrackPeaks {
-  return { pyramid: buildPyramid(data), sampleRate: data.sampleRate, length: data.length };
+/**
+ * Builds a track's {@link TrackPeaks} from its channels fed a stretch at a time. Every
+ * stretch but the last must be a whole number of blocks, which any multiple of
+ * {@link PEAKS_CHUNK_FRAMES} is. One O(samples) pass (folds to mono + the level-0
+ * blocks), then cheap pairwise reductions. The blocks widen with the song's length,
+ * so the result is the same bounded size however long it is.
+ */
+export class TrackPeaksBuilder {
+  private readonly blockFrames: number;
+  private readonly min0: Float32Array;
+  private readonly max0: Float32Array;
+  private readonly ampStride: number;
+  private readonly mags: number[] = [];
+  private nextBlock = 0;
+  private framesSeen = 0;
+
+  constructor(
+    private readonly sampleRate: number,
+    private readonly length: number,
+  ) {
+    let blockFrames = PYRAMID_BASE;
+    while (length / blockFrames > MAX_LEVEL0_BLOCKS) blockFrames *= 2;
+    this.blockFrames = blockFrames;
+    const n0 = Math.max(1, Math.ceil(length / blockFrames));
+    this.min0 = new Float32Array(n0);
+    this.max0 = new Float32Array(n0);
+    this.ampStride = Math.max(1, Math.floor(length / AMP_SAMPLES));
+  }
+
+  add(channels: readonly Float32Array[], frames: number): void {
+    const blocks = Math.ceil(frames / this.blockFrames);
+    fillBlocks(
+      channels,
+      frames,
+      this.blockFrames,
+      this.min0.subarray(this.nextBlock),
+      this.max0.subarray(this.nextBlock),
+      blocks,
+    );
+    this.nextBlock += blocks;
+    this.collectAmps(channels, frames);
+    this.framesSeen += frames;
+  }
+
+  finish(): TrackPeaks {
+    return {
+      pyramid: { levels: buildLevels(this.min0, this.max0, this.blockFrames) },
+      sampleRate: this.sampleRate,
+      length: this.length,
+      ampScale: trackAmpScale(this.mags),
+    };
+  }
+
+  private collectAmps(channels: readonly Float32Array[], frames: number): void {
+    const inv = 1 / Math.max(1, channels.length);
+    const first = (this.ampStride - (this.framesSeen % this.ampStride)) % this.ampStride;
+    for (let s = first; s < frames; s += this.ampStride) {
+      let v = 0;
+      for (const channel of channels) v += channel[s];
+      const magnitude = Math.abs(v * inv);
+      if (magnitude > SILENCE_FLOOR) this.mags.push(magnitude);
+    }
+  }
 }
 
-function buildPyramid(data: ChannelData): WaveformPyramid {
-  const { channels, length } = data;
+function fillBlocks(
+  channels: readonly Float32Array[],
+  length: number,
+  blockFrames: number,
+  min0: Float32Array,
+  max0: Float32Array,
+  n0: number,
+): void {
   const numChannels = channels.length;
-  const n0 = Math.max(1, Math.ceil(length / PYRAMID_BASE));
-  const min0 = new Float32Array(n0);
-  const max0 = new Float32Array(n0);
   for (let b = 0; b < n0; b++) {
-    const s0 = b * PYRAMID_BASE;
-    const s1 = Math.min(length, s0 + PYRAMID_BASE);
+    const s0 = b * blockFrames;
+    const s1 = Math.min(length, s0 + blockFrames);
     let mn = Infinity;
     let mx = -Infinity;
     if (numChannels === 1) {
@@ -127,7 +180,10 @@ function buildPyramid(data: ChannelData): WaveformPyramid {
     min0[b] = mn === Infinity ? 0 : mn;
     max0[b] = mx === -Infinity ? 0 : mx;
   }
-  const levels = [{ min: min0, max: max0, blockSize: PYRAMID_BASE }];
+}
+
+function buildLevels(min0: Float32Array, max0: Float32Array, blockFrames: number): PyramidLevel[] {
+  const levels = [{ min: min0, max: max0, blockSize: blockFrames }];
   let cur = levels[0];
   while (cur.min.length > 1) {
     const pn = cur.min.length;
@@ -148,7 +204,7 @@ function buildPyramid(data: ChannelData): WaveformPyramid {
     cur = { min, max, blockSize: cur.blockSize * 2 };
     levels.push(cur);
   }
-  return { levels, length };
+  return levels;
 }
 
 /**
@@ -159,8 +215,9 @@ function buildPyramid(data: ChannelData): WaveformPyramid {
  */
 function chooseLevel(pyramid: WaveformPyramid, spp: number): PyramidLevel {
   let level = 0;
-  if (spp > PYRAMID_BASE) {
-    level = Math.floor(Math.log2(spp / PYRAMID_BASE));
+  const base = pyramid.levels[0].blockSize;
+  if (spp > base) {
+    level = Math.floor(Math.log2(spp / base));
     if (level >= pyramid.levels.length) level = pyramid.levels.length - 1;
   }
   return pyramid.levels[level];
@@ -228,73 +285,22 @@ const SILENCE_FLOOR = 0.05;
 const UNIFORM_WAVEFORM_TARGET = 0.24;
 
 /**
- * Per-track amplitude scale for "uniform amplitude" mode. Computed
- * once on track registration against the decoded PCM (NOT against a
- * particular bitmap) so every chunk of a tiled waveform normalises
- * against the SAME number; no visible amplitude seams between
- * neighbouring chunks of the same track, no zoom dependency.
+ * Per-track amplitude scale for "uniform amplitude" mode, from a stride of
+ * the track's mono-folded non-silent magnitudes (NOT from a particular
+ * bitmap) so every chunk of a tiled waveform normalises against the SAME
+ * number; no visible amplitude seams between neighbouring chunks of the
+ * same track, no zoom dependency.
  *
- * Method: stride through the channel data, fold to mono inline, take
- * the median magnitude above {@link SILENCE_FLOOR}, return
- * {@link UNIFORM_WAVEFORM_TARGET} / median so the median sample lands
- * at the target fraction of the row's half height. Returns `1` when
- * the track is entirely silent (nothing to normalise) or has too few
- * samples to take a median.
- *
- * Stride keeps the cost a fixed ~10 k samples regardless of track
- * length; typically ~1 ms on warm engines, called once per track.
+ * Returns {@link UNIFORM_WAVEFORM_TARGET} / median so the median sample
+ * lands at the target fraction of the row's half height, or `1` when the
+ * track is entirely silent (nothing to normalise).
  */
-export function computeTrackAmpScale(data: ChannelData): number {
-  const { channels, length } = data;
-  if (length === 0 || channels.length === 0) return 1;
-  const stride = Math.max(1, Math.floor(length / 10000));
-  const mags: number[] = [];
-  if (channels.length === 1) {
-    const d = channels[0];
-    for (let s = 0; s < length; s += stride) {
-      const v = Math.abs(d[s]);
-      if (v > SILENCE_FLOOR) mags.push(v);
-    }
-  } else if (channels.length === 2) {
-    const c0 = channels[0];
-    const c1 = channels[1];
-    for (let s = 0; s < length; s += stride) {
-      const v = Math.abs((c0[s] + c1[s]) * 0.5);
-      if (v > SILENCE_FLOOR) mags.push(v);
-    }
-  } else {
-    const numChannels = channels.length;
-    const channelScale = 1 / numChannels;
-    for (let s = 0; s < length; s += stride) {
-      let v = 0;
-      for (let ch = 0; ch < numChannels; ch++) v += channels[ch][s];
-      v = Math.abs(v * channelScale);
-      if (v > SILENCE_FLOOR) mags.push(v);
-    }
-  }
+function trackAmpScale(mags: number[]): number {
   if (mags.length === 0) return 1;
   mags.sort((a, b) => a - b);
   const median = mags[Math.floor(mags.length / 2)];
   if (median <= 0) return 1;
   return Math.max(0.25, Math.min(25, UNIFORM_WAVEFORM_TARGET / median));
-}
-
-/**
- * Copy each channel out of an `AudioBuffer` so the result can be
- * shipped to a worker (or held independently of the original buffer).
- * The copy is intentional: the AudioBuffer stays exclusively owned by
- * the main thread for sample-accurate BufferSource playback.
- */
-export function extractChannels(buffer: AudioBuffer): ChannelData {
-  const numChannels = buffer.numberOfChannels;
-  const channels: Float32Array[] = new Array(numChannels);
-  for (let ch = 0; ch < numChannels; ch++) {
-    const src = buffer.getChannelData(ch);
-    // `slice()` produces a brand-new ArrayBuffer-backed Float32Array,
-    // which is what we want when transferring to a worker.
-    channels[ch] = src.slice();
-  }
-  return { channels, sampleRate: buffer.sampleRate, length: buffer.length };
 }
 
 /**
@@ -342,36 +348,6 @@ export function computeWaveformPeaks(
       const s1 = Math.min(length, Math.ceil(tAudio1 * sampleRate));
       queryLevel(lvl, lastBlock, s0, s1, peaks, p * 2);
     }
-  }
-  return peaks;
-}
-
-/**
- * Arbitrary audio-time window peak extraction. Used by the timing-viz
- * snippet next to each note's debug overlay; `startSec` /
- * `durationSec` are in the buffer's own time frame (seconds from
- * t=0). Out-of-buffer pixels write 0/0 so silent edges render flat
- * instead of throwing.
- */
-export function computeWindowPeaks(
-  data: TrackPeaks,
-  startSec: number,
-  durationSec: number,
-  widthPx: number
-): Float32Array {
-  const peaks = new Float32Array(widthPx * 2);
-  if (widthPx <= 0 || durationSec <= 0) return peaks;
-  const { pyramid, sampleRate, length } = data;
-  const secPerPx = durationSec / widthPx;
-  // Uniform samples per pixel across the window: pick the level once.
-  const lvl = chooseLevel(pyramid, Math.max(1, secPerPx * sampleRate));
-  const lastBlock = lvl.min.length - 1;
-  for (let p = 0; p < widthPx; p++) {
-    const t0 = startSec + p * secPerPx;
-    const t1 = startSec + (p + 1) * secPerPx;
-    const s0 = Math.max(0, Math.floor(t0 * sampleRate));
-    const s1 = Math.min(length, Math.ceil(t1 * sampleRate));
-    queryLevel(lvl, lastBlock, s0, s1, peaks, p * 2);
   }
   return peaks;
 }

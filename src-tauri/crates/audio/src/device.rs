@@ -20,6 +20,7 @@ use cpal::{
     Device, FromSample, Host, Sample, SampleFormat, SampleRate, SizedSample, Stream, StreamConfig,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -69,6 +70,13 @@ struct SourceTrack {
     stretch: Option<Arc<Mutex<TrackStretch>>>,
 }
 
+/// A decoded track waiting to join the mix, `resampled` for the output `rate` it was preloaded at.
+struct PreloadedTrack {
+    decoded: Arc<DecodedTrack>,
+    resampled: Arc<Vec<f32>>,
+    rate: u32,
+}
+
 /// State shared with the real-time callbacks. The callbacks touch only the
 /// lock-free fields; `sources` (a Mutex) is control-thread-only.
 pub struct Shared {
@@ -79,6 +87,8 @@ pub struct Shared {
     /// The control-thread-owned source tracks; `tracks` is republished from
     /// these on any change (add / remove / gain / output-rate). Control only.
     sources: Mutex<Vec<SourceTrack>>,
+    /// Tracks ready to join `sources`, by id. Control only.
+    preloaded: Mutex<HashMap<String, PreloadedTrack>>,
     /// The active output stream's sample rate (0 before any output opens).
     pub output_rate: AtomicU32,
     pub mic_gain: AtomicF32,
@@ -107,6 +117,7 @@ impl Shared {
             transport: Transport::new(),
             tracks: ArcSwap::from_pointee(Vec::new()),
             sources: Mutex::new(Vec::new()),
+            preloaded: Mutex::new(HashMap::new()),
             output_rate: AtomicU32::new(0),
             mic_gain: AtomicF32::new(0.0), // muted by default, matching the app
             master_gain: AtomicF32::new(1.0),
@@ -161,6 +172,13 @@ fn reresample_all(shared: &Shared) {
         s.stretch = track_stretch(shared.transport.speed(), rate);
     }
     publish(shared, &sources);
+}
+
+fn resampled_for(decoded: &DecodedTrack, rate: u32) -> Arc<Vec<f32>> {
+    if rate == 0 {
+        return Arc::new(Vec::new());
+    }
+    Arc::new(resample::resample_stereo(&decoded.samples, decoded.sample_rate, rate))
 }
 
 fn effect_chain(mask: u32, rate: u32) -> Option<Arc<Mutex<EffectChain>>> {
@@ -228,22 +246,34 @@ impl AudioEngine {
         }
     }
 
-    /// Install (or replace, by `id`) a decoded track; the engine resamples it to
-    /// the active output rate and adds it to the mix. Loading the FIRST track of
-    /// a fresh song rewinds to the start; adding further tracks (e.g. the
-    /// separated stems) leaves the playhead put.
-    pub fn load_track(&self, id: String, decoded: DecodedTrack) {
+    /// Resample a decoded track to the active output rate, leaving the mix alone
+    /// until [`add_preloaded_track`](Self::add_preloaded_track).
+    pub fn preload_track(&self, id: String, decoded: DecodedTrack) {
         let rate = self.rate();
         let decoded = Arc::new(decoded);
-        let resampled = if rate > 0 {
-            Arc::new(resample::resample_stereo(
-                &decoded.samples,
-                decoded.sample_rate,
-                rate,
-            ))
-        } else {
-            Arc::new(Vec::new())
+        let resampled = resampled_for(&decoded, rate);
+        self.shared
+            .preloaded
+            .lock()
+            .unwrap()
+            .insert(id, PreloadedTrack { decoded, resampled, rate });
+    }
+
+    /// Install (or replace, by `id`) a preloaded track in the mix. Adding the
+    /// FIRST track of a fresh song rewinds to the start; adding further tracks
+    /// leaves the playhead put. No-op for an unknown id.
+    pub fn add_preloaded_track(&self, id: &str) {
+        let Some(preloaded) = self.shared.preloaded.lock().unwrap().remove(id) else {
+            return;
         };
+        let rate = self.rate();
+        let decoded = preloaded.decoded;
+        let resampled = if preloaded.rate == rate {
+            preloaded.resampled
+        } else {
+            resampled_for(&decoded, rate)
+        };
+        let id = id.to_string();
         let mut sources = self.shared.sources.lock().unwrap();
         let fresh_song = sources.is_empty();
         if let Some(s) = sources.iter_mut().find(|s| s.id == id) {
@@ -267,9 +297,10 @@ impl AudioEngine {
         }
     }
 
-    /// Drop the track with `id` from the mix (e.g. the full mix once its stems
-    /// replace it). No-op for an unknown id.
+    /// Drop the track with `id`, whether in the mix or only preloaded. No-op for
+    /// an unknown id.
     pub fn remove_track(&self, id: &str) {
+        self.shared.preloaded.lock().unwrap().remove(id);
         let mut sources = self.shared.sources.lock().unwrap();
         sources.retain(|s| s.id != id);
         publish(&self.shared, &sources);
@@ -401,6 +432,54 @@ impl AudioEngine {
 impl Default for AudioEngine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod preload_tests {
+    use super::*;
+
+    fn track() -> DecodedTrack {
+        DecodedTrack { samples: vec![0.0; 2000], sample_rate: 48_000 }
+    }
+
+    fn mixed_tracks(engine: &AudioEngine) -> usize {
+        engine.shared.tracks.load().len()
+    }
+
+    #[test]
+    fn a_preloaded_track_joins_the_mix_only_when_added() {
+        let engine = AudioEngine::new();
+        engine.shared.output_rate.store(48_000, Ordering::Relaxed);
+        engine.preload_track("a".into(), track());
+        assert_eq!(mixed_tracks(&engine), 0);
+
+        engine.add_preloaded_track("a");
+        assert_eq!(mixed_tracks(&engine), 1);
+        assert_eq!(engine.shared.transport.total_frames(), 1000);
+
+        engine.add_preloaded_track("a");
+        assert_eq!(mixed_tracks(&engine), 1);
+    }
+
+    #[test]
+    fn a_removed_preload_can_no_longer_be_added() {
+        let engine = AudioEngine::new();
+        engine.shared.output_rate.store(48_000, Ordering::Relaxed);
+        engine.preload_track("a".into(), track());
+        engine.remove_track("a");
+        engine.add_preloaded_track("a");
+        assert_eq!(mixed_tracks(&engine), 0);
+    }
+
+    #[test]
+    fn an_output_rate_change_after_preloading_resamples_on_add() {
+        let engine = AudioEngine::new();
+        engine.shared.output_rate.store(48_000, Ordering::Relaxed);
+        engine.preload_track("a".into(), track());
+        engine.shared.output_rate.store(96_000, Ordering::Relaxed);
+        engine.add_preloaded_track("a");
+        assert_eq!(engine.shared.transport.total_frames(), 2000);
     }
 }
 

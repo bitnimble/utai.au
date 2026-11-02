@@ -93,6 +93,8 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    # How the player learns a song's length, from its first Range response.
+    expose_headers=["Content-Range"],
 )
 for router in (
     provisioning_router,

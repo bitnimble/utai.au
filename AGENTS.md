@@ -31,7 +31,7 @@ the repo root**, and the **`src/…` import alias maps to `frontend/src/…`**
 `frontend/src/foo`).
 
 **Per-song cache.** Everything the backend keeps for a song (fetched track,
-stems, backing video, vocals, alignment, beats, pitch, language) lives in
+stems, streaming PCM, backing video, vocals, alignment, beats, pitch, language) lives in
 `cache_dir/songs/<song_id>/` and is evicted LRU as a whole song once over
 `cache_songs_cap_bytes` (`aligner/app/song_cache.py`).
 
@@ -226,8 +226,27 @@ mixer on desktop (`src-tauri/crates/audio/src/stretch.rs`, via `ssstretch`), so
 desktop builds need a C++ compiler. Off 1× the song clock stays in song seconds,
 and the audio plays 6 dB down because Signalsmith overshoots full scale.
 
+**Next-song preload.** The song next in line is readied while the current one plays,
+as soon as it's prepared (`SongIoPresenter.preload`): its streams opened off to the
+side (on desktop, its stems decoded + resampled in Rust), loudness measured, and its
+video loaded on the native player's second `<video>`. When the song ends the next
+starts with nothing left to wait for.
+
+**Streaming PCM.** The app has to fit 2-3 GB Android TVs, so a song's length must not
+show in peak memory on the web and Android path. Stems stay on the backend as headerless
+16-bit stereo at the client's output rate (`GET /music/pcm`, made on first request), and
+any frame is one Range request away (`editing/playback/pcm.ts`). Each song has a worker
+(`song_pcm_worker.ts`) streaming every consumer a window of about 8 s: a `stem-player`
+worklet per stem, whose position follows the context clock so stems stay sample-locked,
+or a Signalsmith stretcher, whose multi-buffer input needs our `patches/` fix. A pass over
+a whole song (loudness, waveform peaks) reads through `PcmReader`'s one reused buffer,
+as a fresh buffer per read outruns GC. Waveform peaks are a bounded pyramid.
+Audio the backend doesn't hold (a local file, a bundle) is decoded whole into a Blob of
+the same PCM: that decode is where length still shows, as it does in desktop's Rust
+decode.
+
 **Volume normalisation.** On by default (Audio menu). Each song is measured to
-BS.1770 loudness in a worker on load (`editing/playback/loudness.ts`, over the sum
+BS.1770 loudness in its worker while it preloads (`editing/playback/loudness.ts`, over the sum
 of its tracks, so stems share one gain) and played at -14 LUFS, boosted no further
 than its peak allows and at most +12 dB. The gain goes through `AudioTrack.outputGain`, so track gains
 can exceed 1 on both web and desktop; the mic monitor is unaffected.

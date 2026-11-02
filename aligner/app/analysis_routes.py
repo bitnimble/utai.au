@@ -7,15 +7,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import subprocess
 from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
+from app.backend_files import backend_file
 from app.job_stream import (
     Envelope,
+    hash_file,
     ndjson_job,
     read_job_audio,
     require_models,
@@ -33,7 +37,15 @@ from app.request_context import (
     run_cancellable,
     set_request_id,
 )
-from app.song_cache import is_valid_song_id, read_json, store_file, touch_song_dir, write_json
+from app.song_cache import (
+    is_valid_song_id,
+    read_json,
+    song_id_of_path,
+    store_file,
+    touch_song_dir,
+    trim_songs,
+    write_json,
+)
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +53,9 @@ router = APIRouter(prefix="/music")
 
 _STEM_ROLES = ("vocals", "accompaniment")
 _STEM_FILES = {f"{role}.flac": role for role in _STEM_ROLES}
+
+PCM_RATES = frozenset({8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000})
+_pcm_writes: dict[Path, asyncio.Future[None]] = {}
 
 
 @router.post("/separate")
@@ -96,6 +111,64 @@ async def lyrics_stem(song_id: str, name: str) -> FileResponse:
     if not stem_path.is_file():
         raise HTTPException(status_code=404, detail="No such stem.")
     return FileResponse(str(stem_path), media_type="audio/flac", filename=name)
+
+
+@router.get("/pcm")
+async def music_pcm(path: str, rate: int) -> FileResponse:
+    """A backend-held audio file as headerless 16-bit little-endian stereo PCM at
+    `rate`, what the player streams: a frame is at byte `frame * 4`, so any part of
+    any song is one Range request away, with no decoder on the client. Made once
+    per file and rate, in the file's song folder."""
+    source = backend_file(path)
+    if source is None:
+        raise HTTPException(status_code=404, detail="No such audio.")
+    if rate not in PCM_RATES:
+        raise HTTPException(status_code=400, detail=f"Unsupported sample rate: {rate}.")
+    song_id = song_id_of_path(source)
+    if song_id is None:
+        stat = source.stat()
+        song_id = await asyncio.to_thread(_hashed_song_id, source, stat.st_size, stat.st_mtime_ns)
+    pcm = touch_song_dir(song_id) / "pcm" / f"{source.name}-{rate}.s16"
+    if not pcm.is_file():
+        try:
+            await _make_pcm_once(source, pcm, rate)
+        except subprocess.CalledProcessError as exc:
+            log.warning("music_pcm: can't transcode %s: %s", source.name, exc.stderr)
+            raise HTTPException(status_code=415, detail="Can't read this audio.") from exc
+    return FileResponse(str(pcm), media_type="application/octet-stream")
+
+
+@lru_cache(maxsize=256)
+def _hashed_song_id(path: Path, _size: int, _mtime_ns: int) -> str:
+    """Every Range request asks, so a file's whole contents are read only once per version of it."""
+    return hash_file(path)
+
+
+async def _make_pcm_once(source: Path, pcm: Path, rate: int) -> None:
+    write = _pcm_writes.get(pcm)
+    if write is None:
+        write = asyncio.ensure_future(asyncio.to_thread(_write_pcm, source, pcm, rate))
+        _pcm_writes[pcm] = write
+        write.add_done_callback(lambda _: _pcm_writes.pop(pcm, None))
+    # Shielded: other requests may be waiting on it when this one's client goes away.
+    await asyncio.shield(write)
+
+
+def _write_pcm(source: Path, pcm: Path, rate: int) -> None:
+    pcm.parent.mkdir(parents=True, exist_ok=True)
+    partial = pcm.with_suffix(".partial")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(source), "-map", "a:0", "-ac", "2",
+             "-af", f"aresample={rate}:filter_size=64:phase_shift=14:cutoff=0.97:linear_interp=1",
+             "-f", "s16le", "-acodec", "pcm_s16le", str(partial)],
+            capture_output=True, check=True, text=True,
+        )
+        # Renamed in last: a Range request must never see a half-written copy.
+        partial.replace(pcm)
+    finally:
+        partial.unlink(missing_ok=True)
+    trim_songs()
 
 
 def _stems_dir(song_id: str) -> Path:

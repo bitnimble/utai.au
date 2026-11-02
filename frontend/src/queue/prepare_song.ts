@@ -27,6 +27,7 @@ import { separateStems, type SeparatedStems } from 'src/lyrics/separate_stems';
 import { isBackendUnreachable } from 'src/net/backend_fetch';
 import { ModelsMissingError, type JobProgress } from 'src/net/backend_job';
 import type { JobAudio } from 'src/net/job_audio';
+import { audioDurationSec, audioFilename } from 'src/editing/playback/song_pcm';
 import { downloadTrack, type TrackResult } from 'src/net/music_source_client';
 import {
   alignmentStartSec,
@@ -75,7 +76,7 @@ export const prepareSong: PrepareSong = async (source, opts) => {
 
 async function prepareFile(file: File, opts: PrepareOptions): Promise<PreparedSong> {
   const music = {
-    durationSec: await decodeDurationSec(file),
+    durationSec: await audioDurationSec({ file }),
     startSec: 0,
     alignmentStartSec: 0,
     durationSlackSec: 0,
@@ -121,7 +122,7 @@ async function streamingMusic(
 ): Promise<KnownMusic> {
   const [found, song] = await Promise.all([skipSegments, identity]);
   const segments = found ?? [];
-  const durationSec = track.durationSec ?? (await decodeDurationSec((await download).file));
+  const durationSec = track.durationSec ?? (await audioDurationSec(await download));
   return {
     durationSec: musicDurationSec(segments, durationSec),
     startSec: musicStartSec(segments, durationSec),
@@ -171,8 +172,9 @@ async function prepareMix(
   pickLyrics: PickLyrics,
   { signal, onStage }: PrepareOptions,
 ): Promise<PreparedSong> {
-  const parsed = parseSongFilename(mix.file.name);
-  const songLabel = meta.title || parsed.title || mix.file.name;
+  const filename = audioFilename(mix);
+  const parsed = parseSongFilename(filename);
+  const songLabel = meta.title || parsed.title || filename;
 
   const separating = trackStage({ kind: 'separating' }, onStage);
   const separation = separating((onProgress) => separateStems(mix, { signal, onProgress })).catch((err: unknown) => {
@@ -223,10 +225,10 @@ async function prepareMix(
     },
     stems: stems
       ? [
-          { role: 'backing', file: stems.backing.file },
-          { role: 'vocals', file: stems.vocals.file, pitchContour },
+          { role: 'backing', audio: stems.backing },
+          { role: 'vocals', audio: stems.vocals, pitchContour },
         ]
-      : [{ role: 'full-mix', file: mix.file }],
+      : [{ role: 'full-mix', audio: mix }],
     lyrics,
     beats,
   };
@@ -386,16 +388,6 @@ function pickMatch(
   });
 }
 
-async function decodeDurationSec(file: File): Promise<number> {
-  try {
-    const ctx = new OfflineAudioContext(1, 1, 44_100);
-    const buffer = await ctx.decodeAudioData(await file.arrayBuffer());
-    return buffer.duration;
-  } catch (err) {
-    throw new Error(`Could not decode ${file.name}: ${message(err)}`);
-  }
-}
-
 function fromBundle(loaded: LoadedSong): PreparedSong {
   return {
     meta: loaded.meta,
@@ -403,7 +395,7 @@ function fromBundle(loaded: LoadedSong): PreparedSong {
     // to an ArrayBuffer-backed view the DOM `BlobPart` type accepts.
     stems: loaded.stems.map((stem) => ({
       role: stem.role,
-      file: new File([new Uint8Array(stem.bytes)], stem.filename, { type: stem.contentType }),
+      audio: { file: new File([new Uint8Array(stem.bytes)], stem.filename, { type: stem.contentType }) },
     })),
     lyrics: loaded.lyrics,
   };

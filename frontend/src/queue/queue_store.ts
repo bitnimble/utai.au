@@ -58,6 +58,11 @@ export class QueueStore {
     return this.items.find((i) => i.status.kind !== 'failed');
   }
 
+  get nextReadySong(): PreparedSong | undefined {
+    const status = this.nextPlayable?.status;
+    return status?.kind === 'ready' ? status.song : undefined;
+  }
+
   get canSkip(): boolean {
     return !this.awaitingNext && this.starting == null && this.nextPlayable != null;
   }

@@ -1,3 +1,4 @@
+import classNames from 'classnames';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { VideoPresenterContext, VideoStoreContext } from './video_contexts';
@@ -32,16 +33,26 @@ export const VideoArea = observer(function VideoArea({ children }: { children?: 
   );
 });
 
-const NativePlayer = ({ presenter }: { presenter: VideoPresenter }) => {
-  const ref = React.useRef<HTMLVideoElement>(null);
+const NativePlayer = observer(function NativePlayer({ presenter }: { presenter: VideoPresenter }) {
+  const store = React.useContext(VideoStoreContext)!;
+  const first = React.useRef<HTMLVideoElement>(null);
+  const second = React.useRef<HTMLVideoElement>(null);
   React.useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    presenter.attachNative(el);
+    if (!first.current || !second.current) return;
+    presenter.attachNative([first.current, second.current]);
     return () => presenter.detach();
   }, [presenter]);
-  return <video ref={ref} className={styles.videoHost} data-testid="video-native" muted playsInline />;
-};
+  return [first, second].map((ref, slot) => (
+    <video
+      key={slot}
+      ref={ref}
+      className={classNames(styles.videoHost, slot !== store.activeSlot && styles.videoStandby)}
+      data-testid={slot === store.activeSlot ? 'video-native' : 'video-standby'}
+      muted
+      playsInline
+    />
+  ));
+});
 
 const EmbedPlayer = ({ presenter }: { presenter: VideoPresenter }) => {
   const hostRef = React.useRef<HTMLDivElement>(null);

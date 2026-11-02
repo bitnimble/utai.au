@@ -7,7 +7,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-test('downloads both stems, keeping where the backend holds them', async () => {
+test('leaves both stems on the backend, named by where it holds them', async () => {
   const urls: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -32,13 +32,11 @@ test('downloads both stems, keeping where the backend holds them', async () => {
   );
 
   expect(progress).toEqual(['loading']);
-  expect(stems.vocals.serverPath).toBe('/cache/songs/abc/stems/vocals.flac');
+  expect(stems.vocals).toEqual({
+    filename: 'vocals.flac',
+    serverPath: '/cache/songs/abc/stems/vocals.flac',
+    downloadPath: 'music/stems/abc/vocals.flac',
+  });
   expect(stems.backing.serverPath).toBe('/cache/songs/abc/stems/accompaniment.flac');
-  expect(stems.vocals.file.name).toBe('vocals.flac');
-  expect(stems.vocals.file.type).toBe('audio/flac');
-  expect(urls).toEqual([
-    '/api/music/separate',
-    '/api/music/stems/abc/vocals.flac',
-    '/api/music/stems/abc/accompaniment.flac',
-  ]);
+  expect(urls).toEqual(['/api/music/separate']);
 });

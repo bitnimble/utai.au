@@ -5,7 +5,10 @@ import { makeAutoObservable } from 'mobx';
 import { NONE_DEVICE_ID, type AudioDevice } from 'src/audio_devices/audio_io_backend';
 import type { AudioTrack, AudioTrackId } from './audio_tracks';
 import type { AudioOutput } from './playback_engine';
+import { encodedAudio } from './song_pcm';
 import { trackEffectMask, type TrackEffect } from './track_effects';
+
+const ANALYSIS_SAMPLE_RATE = 48_000;
 
 /** Streamed ~33 Hz. */
 type Telemetry = { playSec: number; playing: boolean; level: number; latencyMs: number };
@@ -24,7 +27,6 @@ export class NativeAudioOutput implements AudioOutput {
   /** Measured round-trip monitor latency (ms). */
   latencyMs = 0;
 
-  private ctx: AudioContext | undefined;
   private channel: Channel<Telemetry> | undefined;
   private anchor: Anchor = { playSec: 0, atMs: 0, playing: false };
   private playing = false;
@@ -41,7 +43,6 @@ export class NativeAudioOutput implements AudioOutput {
   constructor() {
     makeAutoObservable<
       this,
-      | 'ctx'
       | 'channel'
       | 'anchor'
       | 'playing'
@@ -55,7 +56,6 @@ export class NativeAudioOutput implements AudioOutput {
       | 'pitchChannel'
       | 'pitchListeners'
     >(this, {
-      ctx: false,
       channel: false,
       anchor: false,
       playing: false,
@@ -84,19 +84,23 @@ export class NativeAudioOutput implements AudioOutput {
     this.channel = undefined; // dropping it ends the Rust telemetry thread
   }
 
-  /** Decode-only: playback lives in Rust, but the waveform and alignment still need an `AudioBuffer`. */
-  decodeContext(): AudioContext {
-    if (!this.ctx) this.ctx = new AudioContext();
-    return this.ctx;
+  /** For the waveform and loudness alone: Rust plays the encoded file, at the device's rate. */
+  sampleRate(): number {
+    return ANALYSIS_SAMPLE_RATE;
   }
 
-  async addTrack(track: AudioTrack): Promise<void> {
-    const path = await writeTemp(track.id, track.filename, track.sourceBlob);
+  async preloadTrack(track: AudioTrack): Promise<void> {
+    const path = await writeTemp(track.id, track.filename, await encodedAudio(track.audio));
     try {
-      await this.transport.send('audio_load_track', { id: track.id, path });
+      // Not through `transport`: it would hold up every pause and seek until the decode finishes.
+      await invoke('audio_preload_track', { id: track.id, path });
     } finally {
       await remove(path).catch(() => {});
     }
+  }
+
+  addTrack(track: AudioTrack): void {
+    void this.transport.send('audio_add_preloaded_track', { id: track.id });
   }
 
   removeTrack(id: AudioTrackId): void {

@@ -1,7 +1,8 @@
 import { makeAutoObservable } from 'mobx';
 import { WAVEFORM_PAINT_COLOR } from 'src/editing/utils/waveform_color';
 import type { PitchContour } from 'src/lyrics/pitch_contour';
-import { backendFetch } from 'src/net/backend_fetch';
+import type { JobAudio } from 'src/net/job_audio';
+import type { StemPcm } from './song_pcm';
 import type { TrackEffect } from './track_effects';
 
 /** Opaque per-track id. Every loaded track gets a fresh unique id. */
@@ -18,11 +19,6 @@ export type AudioTrackRole = 'full-mix' | 'vocals' | 'backing' | 'unknown';
 export class AudioTrack {
   readonly id: AudioTrackId;
   readonly filename: string;
-  /** Decoded PCM; feeds playback and the waveform peaks. */
-  readonly buffer: AudioBuffer;
-  /** Original encoded bytes, retained so the lyrics-alignment flow can
-   *  re-upload the source without re-fetching. */
-  readonly sourceBlob: Blob;
   readonly durationSec: number;
   readonly role: AudioTrackRole;
   readonly color = WAVEFORM_PAINT_COLOR;
@@ -41,25 +37,36 @@ export class AudioTrack {
    *  are large and would be pointless to deep-observe). */
   pitchContour: PitchContour | undefined = undefined;
 
+  /** The encoded source, for saving it or handing it to a job. */
+  readonly audio: JobAudio;
+  /** The stem as streamable PCM; feeds playback and the waveform peaks. */
+  readonly pcm: StemPcm;
+
   constructor(fields: {
     id: AudioTrackId;
     filename: string;
-    buffer: AudioBuffer;
-    sourceBlob: Blob;
+    audio: JobAudio;
+    pcm: StemPcm;
     durationSec: number;
     role?: AudioTrackRole;
   }) {
     this.id = fields.id;
     this.filename = fields.filename;
-    this.buffer = fields.buffer;
-    this.sourceBlob = fields.sourceBlob;
+    this.audio = fields.audio;
+    this.pcm = fields.pcm;
     this.durationSec = fields.durationSec;
     this.role = fields.role ?? 'unknown';
-    makeAutoObservable<this, 'buffer' | 'sourceBlob' | 'pitchContour'>(this, {
-      buffer: false,
-      sourceBlob: false,
+    makeAutoObservable<this, 'audio' | 'pcm' | 'pitchContour'>(this, {
+      audio: false,
+      pcm: false,
       pitchContour: false,
     });
+  }
+
+  /** Lets go of what the track holds once it's dropped. */
+  release(): void {
+    this.pcm.release();
+    this.pitchContour = undefined;
   }
 
   /** Linear gain the mixer should apply: 0 when muted, else `volume` at the song's loudness. */
@@ -84,36 +91,4 @@ export function stemLabel(track: AudioTrack): string {
     case 'unknown':
       return audioTrackLabel(track.filename);
   }
-}
-
-/**
- * Decode an audio file's bytes into an {@link AudioBuffer}, returning the
- * original Blob so the alignment upload path can re-submit the source
- * without re-fetching. `decodeAudioData` handles WAV/MP3/FLAC/AAC in
- * modern engines.
- */
-export async function decodeAudioTrackFile(
-  ctx: AudioContext,
-  file: File,
-): Promise<{ buffer: AudioBuffer; sourceBlob: Blob }> {
-  const bytes = await file.arrayBuffer();
-  const buffer = await ctx.decodeAudioData(bytes);
-  return { buffer, sourceBlob: file };
-}
-
-/** Fetch an audio track from a URL and decode it. */
-export async function decodeAudioTrackUrl(
-  ctx: AudioContext,
-  url: string,
-): Promise<{ buffer: AudioBuffer; sourceBlob: Blob }> {
-  const res = await backendFetch(url);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch audio track (${res.status} ${res.statusText})`);
-  }
-  const bytes = await res.arrayBuffer();
-  // The Blob constructor copies its input per spec, so it stays valid
-  // after `decodeAudioData` neuters our `bytes` view.
-  const sourceBlob = new Blob([bytes]);
-  const buffer = await ctx.decodeAudioData(bytes);
-  return { buffer, sourceBlob };
 }

@@ -48,24 +48,29 @@ pub fn audio_list_devices() -> DeviceList {
     DeviceList { inputs, outputs }
 }
 
-/// Decode + resample the file at `path` (a temp file the frontend wrote) and
-/// load it into the engine under `id`. Returns the (longest) track duration in
-/// seconds.
-#[tauri::command]
-pub fn audio_load_track(
+/// Decode + resample the file at `path` (a temp file the frontend wrote), ready
+/// for `audio_add_preloaded_track` under `id`.
+// async: a plain command runs on the main thread, freezing the app for the whole decode.
+#[tauri::command(async)]
+pub fn audio_preload_track(
     id: String,
     path: String,
     app: AppHandle,
     state: State<'_, AudioState>,
-) -> Result<f64, String> {
+) -> Result<(), String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("read {path}: {e}"))?;
     let decoded = match decode::decode_bytes(bytes) {
         Ok(track) => track,
         // symphonia has no Opus decoder, and YouTube downloads are Opus.
         Err(err) => decode_with_ffmpeg(&ffmpeg(&app), &path).map_err(|e| format!("{err}; ffmpeg: {e}"))?,
     };
-    state.0.load_track(id, decoded);
-    Ok(state.0.duration_secs())
+    state.0.preload_track(id, decoded);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn audio_add_preloaded_track(id: String, state: State<'_, AudioState>) {
+    state.0.add_preloaded_track(&id);
 }
 
 const FFMPEG_SAMPLE_RATE: u32 = 48_000;
