@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.pipeline.jp_romaji import _normalize, _split_runs, kana_romaji, tokenize
 
 
@@ -90,6 +92,34 @@ def test_tokenize_mixed_keeps_english_verbatim_and_romanizes_japanese():
     ja = [t for t in toks if t.is_japanese]
     assert "".join(t.surface for t in ja) == "君と"
     assert all(t.romaji.isascii() and " " not in t.romaji for t in ja)
+
+
+@pytest.mark.parametrize(
+    ("text", "surfaces"),
+    [
+        ("take-off", ["take-", "off"]),
+        ("la-la-la now", ["la-", "la-", "la", "now"]),
+        ("wait\N{EM DASH}what", ["wait\N{EM DASH}", "what"]),
+        ("non\N{NON-BREAKING HYPHEN}stop", ["non\N{HYPHEN}", "stop"]),
+        ("wait\N{EN DASH}what", ["wait\N{EN DASH}", "what"]),
+        ("rock-\N{RIGHT SINGLE QUOTATION MARK}n", ["rock-", "\N{RIGHT SINGLE QUOTATION MARK}n"]),
+        ("wait,what", ["wait,what"]),
+        ("1-800-FLOWERS", ["1-800-FLOWERS"]),
+        ("24-7", ["24-7"]),
+        ("3-D", ["3-D"]),
+        ("well-1", ["well-1"]),
+        ("foo-'", ["foo-'"]),
+        ("this--that", ["this--", "that"]),
+        ("rock-'n-roll", ["rock-", "'n-", "roll"]),
+        ("(take-off),", ["(take-", "off),"]),
+        ("I- I- I", ["I-", "I-", "I"]),
+        ("-oh --oh oh- -", ["-oh", "--oh", "oh-"]),
+    ],
+)
+def test_tokenize_splits_english_after_a_dash(text: str, surfaces: list[str]):
+    toks = tokenize(text, treat_kanji_as_japanese=True)
+    assert [t.surface for t in toks] == surfaces
+    assert [t.romaji for t in toks] == surfaces
 
 
 def test_tokenize_drops_japanese_punctuation_morphemes():

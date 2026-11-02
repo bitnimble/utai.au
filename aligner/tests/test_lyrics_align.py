@@ -537,7 +537,7 @@ def _align_sung(sung: str, lyrics: str) -> list[dict]:
 
     all_tokens, all_text, _, _, _ = _preprocess_lines(
         _lines(lyrics),
-        use_jp_romaji=False,
+        use_jp_romaji=True,
         treat_kanji_as_japanese=False,
         iso3="eng",
         preprocess_text=preprocess_text,
@@ -554,6 +554,13 @@ def _align_sung(sung: str, lyrics: str) -> list[dict]:
         get_spans=get_spans,
         postprocess_results=postprocess_results,
     )
+
+
+def test_hyphenated_word_aligns_each_part_where_it_is_sung():
+    first, second = _align_sung("make" + "-" * 20 + "mine" + "-" * 4, "make-mine")
+    assert (first["text"], second["text"]) == ("make-", "mine")
+    assert first["end"] <= 0.3
+    assert 0.9 <= second["start"] <= 1.0
 
 
 def test_last_word_ends_when_sung_before_a_silent_outro():

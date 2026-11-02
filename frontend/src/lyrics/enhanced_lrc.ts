@@ -13,7 +13,8 @@
  * The `<end>` tag is our addition; the gap between a word's end and the
  * next word's start encodes silence. Other tools ignore the trailing
  * tag and still read the line; our own loader recovers exact durations.
- * Lines with no word timings serialize as plain `[mm:ss.ccc]text`.
+ * Whitespace between tags is the line's own: `take-off` and CJK words have
+ * none. Lines with no word timings serialize as plain `[mm:ss.ccc]text`.
  *
  * A leading `[offset:±ms]` line round-trips the live offset slider
  * (`LyricsTrack.offsetSec`). Unlike the standard tag we do NOT bake it
@@ -102,15 +103,30 @@ export function serializeEnhancedLrc(
   for (const line of lines) {
     const stamp = secondsToStamp(line.startSec);
     if (line.words && line.words.length > 0) {
+      const spaced = spacedFromPreviousWord(line.text, line.words);
       const parts = line.words.map(
-        (w) => `<${secondsToStamp(w.startSec)}>${encodeWord(w)}<${secondsToStamp(w.endSec)}>`,
+        (w, i) =>
+          `${i > 0 && spaced[i] ? ' ' : ''}<${secondsToStamp(w.startSec)}>${encodeWord(w)}<${secondsToStamp(w.endSec)}>`,
       );
-      out.push(`[${stamp}]${parts.join(' ')}`);
+      out.push(`[${stamp}]${parts.join('')}`);
     } else {
       out.push(`[${stamp}]${line.text}`);
     }
   }
   return out.join('\n') + '\n';
+}
+
+/** Whether `text` has whitespace before each word, since the word before it. A
+ *  word `text` doesn't contain verbatim counts as spaced. */
+function spacedFromPreviousWord(text: string, words: readonly LyricWord[]): boolean[] {
+  let cursor = 0;
+  return words.map((w) => {
+    const at = text.indexOf(w.text, cursor);
+    if (at < 0) return true;
+    const spaced = /\s/u.test(text.slice(cursor, at));
+    cursor = at + w.text.length;
+    return spaced;
+  });
 }
 
 type WordToken = { type: 'tag'; sec: number } | { type: 'text'; value: string; reading?: string };
@@ -180,8 +196,7 @@ function tokenizeWordLine(s: string): WordToken[] {
  *  followed by whitespace / another tag / end-of-line is this word's end
  *  tag and is consumed. End-less words (foreign start-only files) fall
  *  back to the next word's start, else `start + EPSILON_SEC`. */
-function parseWordSegments(remainder: string): LyricWord[] {
-  const tokens = tokenizeWordLine(remainder);
+function parseWordSegments(tokens: readonly WordToken[]): LyricWord[] {
   const partial: { startSec: number; endSec?: number; text: string; reading?: string }[] = [];
   let j = 0;
   while (j < tokens.length) {
@@ -270,13 +285,15 @@ export function parseEnhancedLrc(input: string): {
     const remainder = raw.slice(lastIdx);
 
     if (WORD_TAG_DETECT_RE.test(remainder)) {
-      const words = parseWordSegments(remainder);
+      const tokens = tokenizeWordLine(remainder);
+      const words = parseWordSegments(tokens);
       if (words.length > 0) {
-        // Word-aligned lines carry a single line stamp; `text` is the
-        // space-joined token surface (drives the chip tooltip only, the
-        // renderer uses `words`). For CJK this re-inserts token spaces,
-        // which is cosmetic and tooltip-only.
-        const text = words.map((w) => w.text).join(' ');
+        // Word-aligned lines carry a single line stamp.
+        const text = tokens
+          .flatMap((t) => (t.type === 'text' ? [t.value] : []))
+          .join('')
+          .replace(/\s+/g, ' ')
+          .trim();
         lines.push({ startSec: stamps[0], text, words });
         continue;
       }

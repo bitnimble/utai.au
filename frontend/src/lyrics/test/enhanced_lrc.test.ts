@@ -44,6 +44,52 @@ describe('serializeEnhancedLrc', () => {
     );
   });
 
+  test("spaces words only where the line's text does", () => {
+    const lines: LyricLine[] = [
+      {
+        startSec: 1,
+        text: 'take-off I- I',
+        words: [
+          { startSec: 1, endSec: 1.2, text: 'take-' },
+          { startSec: 1.2, endSec: 1.4, text: 'off' },
+          { startSec: 1.4, endSec: 1.6, text: 'I-' },
+          { startSec: 1.6, endSec: 1.8, text: 'I' },
+        ],
+      },
+    ];
+    expect(serializeEnhancedLrc(lines)).toBe(
+      '[00:01.000]<00:01.000>take-<00:01.200><00:01.200>off<00:01.400> <00:01.400>I-<00:01.600> <00:01.600>I<00:01.800>\n',
+    );
+  });
+
+  test('leaves CJK words unspaced', () => {
+    const lines: LyricLine[] = [
+      {
+        startSec: 1,
+        text: '君の',
+        words: [
+          { startSec: 1, endSec: 1.2, text: '君' },
+          { startSec: 1.2, endSec: 1.4, text: 'の' },
+        ],
+      },
+    ];
+    expect(serializeEnhancedLrc(lines)).toBe('[00:01.000]<00:01.000>君<00:01.200><00:01.200>の<00:01.400>\n');
+  });
+
+  test("spaces a word the line's text doesn't contain", () => {
+    const lines: LyricLine[] = [
+      {
+        startSec: 1,
+        text: 'Hello there',
+        words: [
+          { startSec: 1, endSec: 1.2, text: 'hi' },
+          { startSec: 1.2, endSec: 1.4, text: 'you' },
+        ],
+      },
+    ];
+    expect(serializeEnhancedLrc(lines)).toBe('[00:01.000]<00:01.000>hi<00:01.200> <00:01.200>you<00:01.400>\n');
+  });
+
   test('line-only line stays plain LRC', () => {
     const lines: LyricLine[] = [{ startSec: 15, text: 'A plain line' }];
     expect(serializeEnhancedLrc(lines)).toBe('[00:15.000]A plain line\n');
@@ -134,6 +180,33 @@ describe('parseEnhancedLrc', () => {
     ]);
   });
 
+  test("recovers the line's text with its spacing between words", () => {
+    const { lines } = parseEnhancedLrc(
+      '[00:01.000]<00:01.000>take-<00:01.200><00:01.200>off<00:01.400> <00:01.400>I-<00:01.600> <00:01.600>I<00:01.800>\n',
+    );
+    expect(lines[0].text).toBe('take-off I- I');
+    expect(lines[0].words!.map((w) => w.text)).toEqual(['take-', 'off', 'I-', 'I']);
+    expect(lines[0].words![0].endSec).toBeCloseTo(1.2, 6);
+  });
+
+  test("rebuilds the line's text from unescaped, ruby-free word text", () => {
+    const { lines } = parseEnhancedLrc(
+      '[00:01.000]<00:01.000>｜生《せい》<00:01.200> <00:01.300>x\\<3<00:01.500>\n',
+    );
+    expect(lines[0].text).toBe('生 x<3');
+  });
+
+  test("keeps a start-only (foreign) file's spacing in the line's text", () => {
+    const { lines } = parseEnhancedLrc('[00:01.000]<00:01.000>foo <00:01.500>bar\n');
+    expect(lines[0].text).toBe('foo bar');
+  });
+
+  test('collapses spaces either side of each tag in a foreign file', () => {
+    const { lines } = parseEnhancedLrc('[00:01.000] <00:01.000> foo <00:01.500> bar\n');
+    expect(lines[0].text).toBe('foo bar');
+    expect(lines[0].words!.map((w) => w.text)).toEqual(['foo', 'bar']);
+  });
+
   test('infers end times for start-only (foreign) enhanced LRC', () => {
     const { lines } = parseEnhancedLrc(
       '[00:01.000]<00:01.000>foo <00:01.500>bar\n',
@@ -180,8 +253,10 @@ describe('round-trip stability', () => {
         '[00:01.000]<00:01.000>one<00:01.400> <00:01.400>two<00:01.900>\n' +
         '[00:05.000]a plain line\n' +
         '[00:08.000]\n',
-      // Japanese tokens (no inter-token spaces in the source surface)
+      // Japanese tokens saved with spaces between them
       '[00:02.000]<00:02.000>君<00:02.300> <00:02.300>の<00:02.450> <00:02.450>名<00:02.800>\n',
+      // words with no space between them
+      '[00:02.000]<00:02.000>take-<00:02.300><00:02.300>off<00:02.800>\n',
       // escaped specials
       '[00:01.000]<00:01.000>x\\<3<00:01.200>\n',
       // negative offset, line-only
