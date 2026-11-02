@@ -26,6 +26,9 @@
 
 .toast {
     composes: bodySm from '../../typography.module.css';
+    display: flex;
+    align-items: center;
+    gap: 8px;
     pointer-events: auto;
     max-width: min(420px, 90vw);
     padding: 8px 14px;
@@ -43,6 +46,10 @@
     word-break: break-word;
     text-align: center;
     animation: toastDropIn 180ms ease-out;
+}
+
+.toastMessage {
+    min-width: 0;
 }
 
 .toastSuccess {

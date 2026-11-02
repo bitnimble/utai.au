@@ -133,6 +133,84 @@ test('tv remote: a slider in a menu is reached with up and down, and entered wit
   await expect(page.getByTestId('toggle-audio-tracks')).toBeFocused();
 });
 
+test('tv remote: a toast is dismissed by moving to its button and pressing OK', async ({ page }) => {
+  await page.goto(HOST_PATH);
+  await expect(page.getByTestId('settings-open')).toBeVisible();
+  await page.evaluate(async () => {
+    const toasts = import('/src/ui/toasts/toasts.ts' as string) as Promise<typeof import('src/ui/toasts/toasts')>;
+    (await toasts).toastStore.showError('Something broke', { testId: 'tv-toast' });
+  });
+  const toast = page.getByTestId('tv-toast');
+  await expect(toast).toBeVisible();
+
+  await page.getByTestId('settings-open').focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(toast.getByRole('button', { name: 'Dismiss' })).toBeFocused();
+
+  await page.keyboard.press('Enter');
+  await expect(toast).toHaveCount(0);
+});
+
+test('tv remote: where fullscreen is unsupported, Back leaves the page\'s fullscreen, not the app', async ({ page }) => {
+  await page.addInitScript(() => {
+    Element.prototype.requestFullscreen = () => Promise.reject(new TypeError('Fullscreen is not supported'));
+  });
+  await page.goto(HOST_PATH);
+  const toggle = page.getByTestId('fullscreen-toggle');
+
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-label', 'Exit fullscreen');
+
+  expect(await page.evaluate(() => window.utaiBack?.())).toBe(true);
+  await expect(toggle).toHaveAttribute('aria-label', 'Fullscreen');
+  expect(await page.evaluate(() => window.utaiBack?.())).toBe(false);
+});
+
+test('tv remote: fullscreen chrome hides while focused, and the next press only brings it back', async ({ page }) => {
+  await page.goto(HOST_PATH);
+  const toggle = page.getByTestId('fullscreen-toggle');
+  const footer = page.getByRole('contentinfo');
+
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-label', 'Exit fullscreen');
+  await expect(footer).toHaveCSS('opacity', '1');
+  await expect(footer).toHaveCSS('opacity', '0', { timeout: 6000 });
+
+  await page.keyboard.press('ArrowLeft');
+  await expect(footer).toHaveCSS('opacity', '1');
+  await expect(toggle).toBeFocused();
+
+  await expect(footer).toHaveCSS('opacity', '0', { timeout: 6000 });
+  await page.keyboard.press('Enter');
+  await expect(footer).toHaveCSS('opacity', '1');
+  await expect(toggle).toHaveAttribute('aria-label', 'Exit fullscreen');
+
+  await page.keyboard.press('ArrowLeft');
+  await expect(toggle).not.toBeFocused();
+  await expect(footer).toHaveCSS('opacity', '1');
+
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-label', 'Fullscreen');
+});
+
+test('tv remote: an idle press still acts while the pointer keeps the fullscreen chrome showing', async ({ page }) => {
+  await page.goto(HOST_PATH);
+  const toggle = page.getByTestId('fullscreen-toggle');
+
+  await toggle.hover();
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-label', 'Exit fullscreen');
+  await expect(page.locator('[data-chrome-idle]').first()).toBeAttached({ timeout: 6000 });
+  await expect(page.getByRole('contentinfo')).toHaveCSS('opacity', '1');
+
+  await page.keyboard.press('ArrowLeft');
+  await expect(toggle).not.toBeFocused();
+});
+
 type UtaiWindow = { utai?: { playbackEngine?: { currentTime?: number; state?: string } } };
 
 test('tv remote: the media buttons play, pause, seek and restart', async ({ page }) => {

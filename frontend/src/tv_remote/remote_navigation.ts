@@ -36,6 +36,8 @@ const ACROSS_WEIGHT = 2;
 export function followRemote(): () => void {
   const onKey = (e: KeyboardEvent): void => {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    // Registered first, so it has to step aside for the key that only reveals the chrome.
+    if (focusInHiddenChrome()) return;
     const active = document.activeElement;
     // A remote's centre button is Enter, and a native box toggles on Space alone.
     if (e.key === 'Enter' && active instanceof HTMLInputElement && TOGGLES.has(active.type)) {
@@ -86,6 +88,11 @@ export function followRemote(): () => void {
     delete window[TV_BACK];
     delete window[TV_KEY];
   };
+}
+
+export function focusInHiddenChrome(): boolean {
+  // Same condition as the rule hiding it in karaoke_page.module.css: hovered or menu-open chrome still shows.
+  return document.activeElement?.closest("[data-chrome-idle]:not(:hover, :has([aria-expanded='true']))") != null;
 }
 
 function keepsArrow(element: HTMLElement, horizontal: boolean): boolean {

@@ -4,6 +4,7 @@ import type { AppSettingsStore, ViewMode } from 'src/settings/app_settings_store
 /** Data only; {@link import('./fullscreen_presenter').FullscreenPresenter} is the sole writer. */
 export class FullscreenStore {
   active = false;
+  chromeIdle = false;
 
   constructor(private readonly settings: Pick<AppSettingsStore, 'viewMode'>) {
     makeAutoObservable<this, 'settings'>(this, { settings: false });
