@@ -1,6 +1,8 @@
 import { afterAll, beforeEach, expect, test } from 'bun:test';
+import type { JobAudio } from 'src/net/job_audio';
 import { AudioTrack } from '../audio_tracks';
 import { AudioOutput, PlaybackEngine } from '../playback_engine';
+import type { StemPcm } from '../song_pcm';
 import type { TrackEffect } from '../track_effects';
 
 const timers = new Map<number, { cb: () => void; ms: number }>();
@@ -38,6 +40,20 @@ beforeEach(() => {
   frames.clear();
 });
 
+const SAMPLE_RATE = 48000;
+
+function fakeStem(durationSec: number): { filename: string; audio: JobAudio; pcm: StemPcm & { releases: number } } {
+  const pcm = {
+    origin: { kind: 'blob', blob: new Blob() } as const,
+    frames: durationSec * SAMPLE_RATE,
+    sampleRate: SAMPLE_RATE,
+    releases: 0,
+    attach: () => new MessageChannel().port1,
+    release: () => void pcm.releases++,
+  };
+  return { filename: 'a.wav', audio: { file: new File([], 'a.wav') }, pcm };
+}
+
 class FakeOutput implements AudioOutput {
   position = 0;
   startedFrom: number | undefined;
@@ -46,10 +62,14 @@ class FakeOutput implements AudioOutput {
   pendingStart: (() => void) | undefined;
   deferStart = false;
   outputDelay = 0;
-  decodeContext(): AudioContext {
-    throw new Error('unused');
+  sampleRate(): number {
+    return SAMPLE_RATE;
   }
-  async addTrack(): Promise<void> {}
+  async preloadTrack(): Promise<void> {}
+  added: string[] = [];
+  addTrack(track: AudioTrack): void {
+    this.added.push(track.id);
+  }
   removeTrack(): void {}
   setTrackGain(_id: string, _gain: number): void {}
   effectCalls: Array<readonly TrackEffect[]> = [];
@@ -86,8 +106,7 @@ class FakeOutput implements AudioOutput {
 function loadedEngine(): { engine: PlaybackEngine; output: FakeOutput } {
   const output = new FakeOutput();
   const engine = new PlaybackEngine(output);
-  const buffer = { duration: 100 } as AudioBuffer;
-  engine.audioTracks.set('t', new AudioTrack({ id: 't', filename: 'a', buffer, sourceBlob: new Blob(), durationSec: 100 }));
+  engine.audioTracks.set('t', new AudioTrack({ id: 't', ...fakeStem(100), durationSec: 100 }));
   return { engine, output };
 }
 
@@ -110,8 +129,8 @@ test('running off the end stops, rewinds and reports it, until the next seek or 
   const seenByListener: [string, boolean][] = [];
   engine.onEnded(() => seenByListener.push([engine.state, engine.ended]));
   await engine.play();
-  expect(timerDelays()).toEqual([100_500]);
-  output.position = 100.5;
+  expect(timerDelays()).toEqual([100_000]);
+  output.position = 100;
   fireTimers();
 
   expect(engine.state).toBe('idle');
@@ -123,7 +142,7 @@ test('running off the end stops, rewinds and reports it, until the next seek or 
   expect(engine.ended).toBe(false);
   expect(engine.cued).toBe(true);
 
-  output.position = 100.5;
+  output.position = 100;
   await engine.play();
   fireTimers();
   expect(engine.ended).toBe(true);
@@ -141,7 +160,7 @@ test('play starts from the cued position, and a manual stop is not an end', asyn
   expect(output.startedFrom).toBe(42);
   expect(engine.currentTime).toBe(42);
   expect(engine.cued).toBe(false);
-  expect(timerDelays()).toEqual([58_500]);
+  expect(timerDelays()).toEqual([58_000]);
 
   engine.stop();
   expect(timers.size).toBe(0);
@@ -175,7 +194,7 @@ test('pause holds the playhead and cancels the end; resume reschedules it from t
 
   await engine.resume();
   expect(engine.state).toBe('playing');
-  expect(timerDelays()).toEqual([50_500]);
+  expect(timerDelays()).toEqual([50_000]);
 });
 
 test('seeking while playing moves the output and reschedules the end', async () => {
@@ -184,7 +203,7 @@ test('seeking while playing moves the output and reschedules the end', async () 
   engine.seek(60);
   expect(output.seeks).toEqual([60]);
   expect(engine.currentTime).toBe(60);
-  expect(timerDelays()).toEqual([40_500]);
+  expect(timerDelays()).toEqual([40_000]);
 });
 
 test('a positive audio offset delays the output only, and the song ends once the audio has', async () => {
@@ -195,7 +214,7 @@ test('a positive audio offset delays the output only, and the song ends once the
   await engine.play();
   expect(output.startedFrom).toBe(10);
   expect(engine.currentTime).toBe(10);
-  expect(timerDelays()).toEqual([90_700]);
+  expect(timerDelays()).toEqual([90_200]);
 });
 
 test('pausing with a positive offset rewinds to the last audio heard, as the output drops its delay', async () => {
@@ -239,7 +258,7 @@ test('a negative audio offset holds everything but the audio back by as much', a
   expect(engine.currentTime).toBe(19.75);
   engine.seek(30);
   expect(output.seeks).toEqual([30.25]);
-  expect(timerDelays()).toEqual([70_500]);
+  expect(timerDelays()).toEqual([70_000]);
 });
 
 test('changing the offset while paused keeps the playhead and moves the audio under it', async () => {
@@ -282,12 +301,12 @@ test('a speed change reaches the output at once and moves the end, not the song 
   expect(engine.state).toBe('playing');
   expect(output.seeks).toEqual([]);
   expect(engine.currentTime).toBe(40);
-  expect(timerDelays()).toEqual([120_500]);
+  expect(timerDelays()).toEqual([120_000]);
   expect(engine.durationSec).toBe(100);
 
   engine.seek(50);
   expect(output.seeks).toEqual([50]);
-  expect(timerDelays()).toEqual([100_500]);
+  expect(timerDelays()).toEqual([100_000]);
 });
 
 test('the audio offset stays in heard time at any speed', async () => {
@@ -298,7 +317,7 @@ test('the audio offset stays in heard time at any speed', async () => {
   await engine.play();
   expect(output.startedFrom).toBe(10.25);
   expect(engine.currentTime).toBe(10);
-  expect(timerDelays()).toEqual([180_500]);
+  expect(timerDelays()).toEqual([180_000]);
 
   engine.stop();
   engine.setAudioOffset(0.5);
@@ -342,66 +361,60 @@ test('track effects reach the output only when they change', () => {
   expect(engine.audioTracks.get('t')?.effects).toEqual([]);
 });
 
-test('volume normalisation: a cleared song\'s late measurement is dropped, and the setting and mix apply on top', async () => {
-  const measurements: Array<{ reply: (gain: number) => void }> = [];
-  class FakeWorker {
-    onmessage: ((e: { data: number }) => void) | undefined;
-    constructor(url: URL) {
-      if (url.pathname.endsWith('loudness_worker.ts')) {
-        measurements.push({ reply: (gain) => this.onmessage?.({ data: gain }) });
-      }
-    }
-    postMessage(): void {}
-    terminate(): void {}
+class GainRecordingOutput extends FakeOutput {
+  gains = new Map<string, number>();
+  override setTrackGain(id: string, gain: number): void {
+    this.gains.set(id, gain);
   }
-  class DecodingOutput extends FakeOutput {
-    gains = new Map<string, number>();
-    override decodeContext(): AudioContext {
-      const buffer = {
-        duration: 10,
-        length: 480,
-        sampleRate: 48000,
-        numberOfChannels: 1,
-        getChannelData: () => new Float32Array(480),
-      };
-      return { decodeAudioData: async () => buffer } as unknown as AudioContext;
-    }
-    override setTrackGain(id: string, gain: number): void {
-      this.gains.set(id, gain);
-    }
-  }
-  const measurementsStarted = async (count: number): Promise<void> => {
-    while (measurements.length < count) await Bun.sleep(1);
-  };
+}
 
-  const realWorker = globalThis.Worker;
-  Reflect.set(globalThis, 'Worker', FakeWorker);
-  try {
-    const output = new DecodingOutput();
-    const engine = new PlaybackEngine(output);
-    const file = new File([new Uint8Array(4)], 'a.wav');
+test('a preloaded track stays out of the song until installed', async () => {
+  const output = new GainRecordingOutput();
+  const engine = new PlaybackEngine(output);
+  const track = await engine.preloadTrack({ ...fakeStem(10), role: 'backing' });
 
-    const firstSong = engine.loadAudioTrack(file);
-    await measurementsStarted(1);
-    engine.clearAudioTrack('track-1');
-    const secondSong = engine.loadAudioTrack(file);
-    await measurementsStarted(2);
-    measurements[1].reply(0.5);
-    await secondSong;
-    measurements[0].reply(3);
-    await firstSong;
-    expect(output.gains.get('track-2')).toBe(0.5);
+  expect(engine.audioTracks.size).toBe(0);
+  expect(engine.durationSec).toBe(0);
+  expect(output.added).toEqual([]);
 
-    engine.setNormalizeVolume(false);
-    expect(output.gains.get('track-2')).toBe(1);
-    engine.setNormalizeVolume(true);
-    expect(output.gains.get('track-2')).toBe(0.5);
+  engine.installTracks([track], 1);
+  expect(engine.audioTracks.get(track.id)).toBe(track);
+  expect(engine.durationSec).toBe(10);
+  expect(output.added).toEqual([track.id]);
+});
 
-    engine.setTrackVolume('track-2', 0.5);
-    expect(output.gains.get('track-2')).toBe(0.25);
-    engine.setTrackMuted('track-2', true);
-    expect(output.gains.get('track-2')).toBe(0);
-  } finally {
-    Reflect.set(globalThis, 'Worker', realWorker);
-  }
+test('a track lets go of its stream when cleared or discarded, whoever still holds the track', async () => {
+  const output = new GainRecordingOutput();
+  const engine = new PlaybackEngine(output);
+  const installedStem = fakeStem(10);
+  const discardedStem = fakeStem(10);
+  const installed = await engine.preloadTrack(installedStem);
+  engine.installTracks([installed], 1);
+  const discarded = await engine.preloadTrack(discardedStem);
+  expect(installedStem.pcm.releases).toBe(0);
+
+  engine.clearAudioTrack(installed.id);
+  engine.discardPreloadedTrack(discarded);
+
+  expect(installedStem.pcm.releases).toBe(1);
+  expect(discardedStem.pcm.releases).toBe(1);
+  expect(installed.durationSec).toBe(10);
+});
+
+test('volume normalisation: the setting and mix apply on top of the installed gain', async () => {
+  const output = new GainRecordingOutput();
+  const engine = new PlaybackEngine(output);
+  const track = await engine.preloadTrack(fakeStem(10));
+  engine.installTracks([track], 0.5);
+  expect(output.gains.get(track.id)).toBe(0.5);
+
+  engine.setNormalizeVolume(false);
+  expect(output.gains.get(track.id)).toBe(1);
+  engine.setNormalizeVolume(true);
+  expect(output.gains.get(track.id)).toBe(0.5);
+
+  engine.setTrackVolume(track.id, 0.5);
+  expect(output.gains.get(track.id)).toBe(0.25);
+  engine.setTrackMuted(track.id, true);
+  expect(output.gains.get(track.id)).toBe(0);
 });

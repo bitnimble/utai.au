@@ -26,6 +26,10 @@ class FakeTransport {
     if (this.hasAudio) this.state = 'playing';
   }
 
+  stop(): void {
+    this.state = 'idle';
+  }
+
   load(hasAudio: boolean): void {
     this.state = 'idle';
     this.hasAudio = hasAudio;
@@ -57,6 +61,7 @@ type Harness = {
   store: QueueStore;
   transport: FakeTransport;
   loaded: string[];
+  preloaded: (string | undefined)[];
   pending: Pending[];
   identifying: Identifying[];
   downloading: Downloading[];
@@ -72,7 +77,11 @@ function setup(): Harness {
   const transport = new FakeTransport();
   const loaded: string[] = [];
   const pending: Pending[] = [];
+  const preloaded: (string | undefined)[] = [];
   const songIo = {
+    preload: (song: PreparedSong | undefined): void => {
+      preloaded.push(song?.meta.title);
+    },
     loadPreparedSong: async (song: PreparedSong): Promise<void> => {
       const title = song.meta.title ?? '';
       loaded.push(title);
@@ -118,7 +127,7 @@ function setup(): Harness {
   const fileName = (source: QueueSource): string => (source.kind === 'file' ? source.file.name : '');
   const order = (): string[] => store.items.map((i) => fileName(i.source));
   const idOf = (name: string): string => store.items.find((i) => fileName(i.source) === name)!.id;
-  return { store, transport, loaded, pending, identifying, downloading, presenter, add, order, idOf };
+  return { store, transport, loaded, preloaded, pending, identifying, downloading, presenter, add, order, idOf };
 }
 
 const LADY_UPLOAD: TrackResult = {
@@ -226,8 +235,41 @@ describe('QueuePresenter', () => {
     expect(h.store.canSkip).toBe(true);
     h.presenter.skip();
     await flush();
-    expect(h.loaded).toEqual(['a', '<cleared>', 'b']);
+    expect(h.loaded).toEqual(['a', 'b']);
     expect(h.order()).toEqual(['c']);
+  });
+
+  test('preloads the song next in line once it is ready, following reorders', async () => {
+    const h = setup();
+    await playFirst(h, 'a');
+    h.add('b');
+    h.add('c');
+    h.pending[1].resolve();
+    await flush();
+    h.pending[2].resolve();
+    await flush();
+    expect(h.preloaded.at(-1)).toBe('b');
+    h.presenter.playNext(h.idOf('c'));
+    expect(h.preloaded.at(-1)).toBe('c');
+    h.presenter.remove(h.idOf('c'));
+    expect(h.preloaded.at(-1)).toBe('b');
+  });
+
+  test('keeps the starting song preloaded until it has started, then moves on to the next', async () => {
+    const h = setup();
+    await playFirst(h, 'a');
+    h.add('b');
+    h.add('c');
+    h.pending[1].resolve();
+    await flush();
+    h.pending[2].resolve();
+    await flush();
+    h.transport.end();
+    expect(h.store.starting?.title).toBe('b');
+    expect(h.preloaded.at(-1)).toBe('b');
+    await flush();
+    expect(h.loaded).toEqual(['a', 'b']);
+    expect(h.preloaded.at(-1)).toBe('c');
   });
 
   test('skip to a song still preparing drops the current one and waits for it', async () => {

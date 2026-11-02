@@ -9,6 +9,14 @@ import { createYouTubePlayer, YouTubePlayerHandle } from './youtube_player';
 
 const FIRST_FRAME_TIMEOUT_MS = 3000;
 
+/** One video loading or loaded on one of the native player's `<video>`s. */
+type NativeLoad = {
+  id: string;
+  controller: AbortController;
+  backing: BackingVideo | undefined;
+  firstFrame: boolean;
+};
+
 /**
  * Orchestrates the muted backing video against the audio transport
  * ({@link playbackEngine} is the master clock, the video only follows). The
@@ -24,18 +32,27 @@ const FIRST_FRAME_TIMEOUT_MS = 3000;
 export class VideoPresenter {
   private backing: BackingVideo | undefined;
   private embedHandle: YouTubePlayerHandle | undefined;
-  private videoEl: HTMLVideoElement | undefined;
+  private slots: readonly [HTMLVideoElement, HTMLVideoElement] | undefined;
+  private current: NativeLoad | undefined;
+  /** The next song's video, loading behind the current one to swap in with no wait. */
+  private standby: NativeLoad | undefined;
+  private nextVideoId: string | undefined;
   private loadedVideoId: string | undefined;
   private disposers: IReactionDisposer[] = [];
-  /** Bumped on every attach/detach; an in-flight async init/fetch that no longer
+  /** Bumped on every attach/detach; an in-flight async init that no longer
    *  matches is stale and bails instead of installing its backing (guards the
    *  mount→unmount→mount that StrictMode / a fast reload / the native→embed swap
    *  produce). */
   private epoch = 0;
-  private resolveController: AbortController | undefined;
   private follower: VideoClockFollower | undefined;
 
   constructor(private readonly store: VideoStore) {}
+
+  /** The video of the song that plays next, if any. */
+  preload(videoId: string | undefined): void {
+    this.nextVideoId = videoId;
+    this.syncStandby();
+  }
 
   /** Resolves once the song's video has a frame to show, or there's no point waiting
    *  longer: it failed over to the embed, or {@link FIRST_FRAME_TIMEOUT_MS} passed.
@@ -51,11 +68,11 @@ export class VideoPresenter {
     }
   }
 
-  attachNative(el: HTMLVideoElement): void {
-    const epoch = ++this.epoch;
-    this.videoEl = el;
+  attachNative(slots: readonly [HTMLVideoElement, HTMLVideoElement]): void {
+    this.epoch++;
+    this.slots = slots;
     this.disposers.push(
-      reaction(() => this.store.videoId, () => void this.loadNative(epoch), { fireImmediately: true }),
+      reaction(() => this.store.videoId, () => this.loadNative(), { fireImmediately: true }),
       reaction(() => playbackEngine.state, () => this.applyTransport()),
       reaction(() => playbackEngine.speed, () => this.applyTransport()),
       reaction(() => playbackEngine.currentTime, () => this.syncTime()),
@@ -75,49 +92,94 @@ export class VideoPresenter {
 
   detach(): void {
     this.epoch++;
-    this.resolveController?.abort();
-    this.resolveController = undefined;
+    this.current?.controller.abort();
+    this.current = undefined;
+    this.dropStandby();
     for (const dispose of this.disposers) dispose();
     this.disposers = [];
     this.backing?.destroy();
     this.setBacking(undefined);
     this.embedHandle = undefined;
-    this.videoEl = undefined;
+    this.slots = undefined;
     this.loadedVideoId = undefined;
     this.setFirstFrameVideoId(undefined);
   }
 
   // --- native <video> backing (primary) ---
 
-  /** Resolve the backend URL for the current video, install a native backing on
-   *  it, and align it to the transport. On failure, record the id so the view
-   *  falls back to the embed. */
-  private async loadNative(epoch: number): Promise<void> {
+  /** Show the current video: its standby if already loading, else a fresh load. */
+  private loadNative(): void {
+    this.current?.controller.abort();
+    this.current = undefined;
     this.backing?.destroy();
     this.setBacking(undefined);
     this.loadedVideoId = undefined;
     this.setFirstFrameVideoId(undefined);
-    this.resolveController?.abort();
-    const el = this.videoEl;
+    const slots = this.slots;
     const id = this.store.videoId;
-    if (!el || id == null) return;
-    const controller = new AbortController();
-    this.resolveController = controller;
+    if (!slots || id == null) return;
+    if (this.standby?.id === id) {
+      this.current = this.standby;
+      this.standby = undefined;
+      runInAction(() => {
+        this.store.activeSlot = this.store.activeSlot === 0 ? 1 : 0;
+      });
+    } else {
+      this.current = this.startNativeLoad(slots[this.store.activeSlot], id);
+    }
+    this.showCurrent(this.current);
+    this.syncStandby();
+  }
+
+  private showCurrent(load: NativeLoad): void {
+    if (load.backing == null) return;
+    this.setBacking(load.backing);
+    this.loadedVideoId = load.id;
+    if (load.firstFrame) this.setFirstFrameVideoId(load.id);
+    this.applyTransport();
+  }
+
+  private syncStandby(): void {
+    const slots = this.slots;
+    const id = this.nextVideoId;
+    if (this.standby != null && this.standby.id === id) return;
+    this.dropStandby();
+    if (!slots || id == null || id === this.current?.id || this.store.nativeFailedIds.has(id)) return;
+    this.standby = this.startNativeLoad(slots[this.store.activeSlot === 0 ? 1 : 0], id);
+  }
+
+  private dropStandby(): void {
+    this.standby?.controller.abort();
+    this.standby?.backing?.destroy();
+    this.standby = undefined;
+  }
+
+  /** Resolve the backend URL for a video and install a native backing on `el`.
+   *  On failure, record the id so the view falls back to the embed. */
+  private startNativeLoad(el: HTMLVideoElement, id: string): NativeLoad {
+    const load: NativeLoad = { id, controller: new AbortController(), backing: undefined, firstFrame: false };
+    void this.resolveNativeLoad(el, load);
+    return load;
+  }
+
+  private async resolveNativeLoad(el: HTMLVideoElement, load: NativeLoad): Promise<void> {
+    const { id, controller } = load;
     try {
       const src = await resolveBackingVideoUrl(id, controller.signal);
-      // A newer attach/detach or video change superseded this fetch.
-      if (this.epoch !== epoch || this.store.videoId !== id) return;
-      this.setBacking(
-        createNativeVideo(el, src, {
-          onReady: () => this.applyTransport(),
-          onFirstFrame: () => this.setFirstFrameVideoId(id),
-          onError: () => this.markNativeFailed(id),
-        }),
-      );
-      this.loadedVideoId = id;
-      this.applyTransport();
+      if (controller.signal.aborted) return;
+      load.backing = createNativeVideo(el, src, {
+        onReady: () => {
+          if (load === this.current) this.applyTransport();
+        },
+        onFirstFrame: () => {
+          load.firstFrame = true;
+          if (load === this.current) this.setFirstFrameVideoId(id);
+        },
+        onError: () => this.markNativeFailed(id),
+      });
+      if (load === this.current) this.showCurrent(load);
     } catch (err) {
-      if (controller.signal.aborted || this.epoch !== epoch) return;
+      if (controller.signal.aborted) return;
       console.error('[video] no backend for the backing video; falling back to the embed', err);
       this.markNativeFailed(id);
     }

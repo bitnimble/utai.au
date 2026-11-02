@@ -9,8 +9,6 @@ pub struct Transport {
     playing: AtomicBool,
     /// Playhead as a sample-frame index into the loaded track.
     frame: AtomicU64,
-    /// Total frames in the loaded track (0 == no track).
-    total_frames: AtomicU64,
     /// Bit pattern of the `f64` speed.
     speed: AtomicU64,
     /// Bumped whenever the playhead stops following on from the last block.
@@ -22,7 +20,6 @@ impl Default for Transport {
         Self {
             playing: AtomicBool::new(false),
             frame: AtomicU64::new(0),
-            total_frames: AtomicU64::new(0),
             speed: AtomicU64::new(1f64.to_bits()),
             discontinuity: AtomicU64::new(0),
         }
@@ -66,14 +63,6 @@ impl Transport {
 
     fn mark_discontinuity(&self) {
         self.discontinuity.fetch_add(1, Ordering::Release);
-    }
-
-    pub fn set_total_frames(&self, n: u64) {
-        self.total_frames.store(n, Ordering::Relaxed);
-    }
-
-    pub fn total_frames(&self) -> u64 {
-        self.total_frames.load(Ordering::Relaxed)
     }
 
     pub fn is_playing(&self) -> bool {
@@ -148,7 +137,6 @@ mod tests {
     #[test]
     fn seek_may_pass_the_end() {
         let t = Transport::new();
-        t.set_total_frames(100);
         t.seek_frames(250);
         assert_eq!(t.frame(), 250);
     }
@@ -156,7 +144,6 @@ mod tests {
     #[test]
     fn stop_rewinds_and_pauses() {
         let t = Transport::new();
-        t.set_total_frames(100);
         t.play();
         t.seek_frames(40);
         t.stop();
@@ -167,7 +154,6 @@ mod tests {
     #[test]
     fn advance_only_moves_while_playing() {
         let t = Transport::new();
-        t.set_total_frames(100);
         let start = t.advance_playing(10);
         assert_eq!(start, 0);
         assert_eq!(t.frame(), 0); // paused, so no advance
@@ -180,7 +166,6 @@ mod tests {
     #[test]
     fn advance_runs_past_end() {
         let t = Transport::new();
-        t.set_total_frames(50);
         t.play();
         t.seek_frames(45);
         t.advance_playing(10);
@@ -213,7 +198,6 @@ mod tests {
     #[test]
     fn seconds_conversion_roundtrips() {
         let t = Transport::new();
-        t.set_total_frames(48_000);
         t.seek_secs(0.5, 48_000);
         assert_eq!(t.frame(), 24_000);
         assert!((t.position_secs(48_000) - 0.5).abs() < 1e-9);

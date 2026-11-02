@@ -1,14 +1,17 @@
 import { Channel, invoke, type InvokeArgs } from '@tauri-apps/api/core';
 import { join, tempDir } from '@tauri-apps/api/path';
-import { mkdir, remove, writeFile } from '@tauri-apps/plugin-fs';
+import { mkdir, writeFile } from '@tauri-apps/plugin-fs';
 import { makeAutoObservable } from 'mobx';
 import { NONE_DEVICE_ID, type AudioDevice } from 'src/audio_devices/audio_io_backend';
 import type { AudioTrack, AudioTrackId } from './audio_tracks';
 import type { AudioOutput } from './playback_engine';
 import { trackEffectMask, type TrackEffect } from './track_effects';
 
-/** Streamed ~33 Hz. */
-type Telemetry = { playSec: number; playing: boolean; level: number; latencyMs: number };
+const NO_OUTPUT_SAMPLE_RATE = 48_000;
+const TEMP_WRITE_SLICE_BYTES = 1 << 22;
+
+/** Streamed ~33 Hz. `outputRate` is 0 while there's no output. */
+type Telemetry = { playSec: number; playing: boolean; level: number; latencyMs: number; outputRate: number };
 
 /** One mic pitch reading from the sidecar's RMVPE, streamed while a scoring session runs. */
 export type PitchTelemetry = { hz: number; confidence: number };
@@ -24,11 +27,11 @@ export class NativeAudioOutput implements AudioOutput {
   /** Measured round-trip monitor latency (ms). */
   latencyMs = 0;
 
-  private ctx: AudioContext | undefined;
   private channel: Channel<Telemetry> | undefined;
   private anchor: Anchor = { playSec: 0, atMs: 0, playing: false };
   private playing = false;
   private speed = 1;
+  private outputRate = 0;
   private readonly transport = new CommandQueue();
   private readonly devices = new CommandQueue();
   private monitorInput = NONE_DEVICE_ID;
@@ -41,11 +44,11 @@ export class NativeAudioOutput implements AudioOutput {
   constructor() {
     makeAutoObservable<
       this,
-      | 'ctx'
       | 'channel'
       | 'anchor'
       | 'playing'
       | 'speed'
+      | 'outputRate'
       | 'transport'
       | 'devices'
       | 'monitorInput'
@@ -55,11 +58,11 @@ export class NativeAudioOutput implements AudioOutput {
       | 'pitchChannel'
       | 'pitchListeners'
     >(this, {
-      ctx: false,
       channel: false,
       anchor: false,
       playing: false,
       speed: false,
+      outputRate: false,
       transport: false,
       devices: false,
       monitorInput: false,
@@ -84,19 +87,17 @@ export class NativeAudioOutput implements AudioOutput {
     this.channel = undefined; // dropping it ends the Rust telemetry thread
   }
 
-  /** Decode-only: playback lives in Rust, but the waveform and alignment still need an `AudioBuffer`. */
-  decodeContext(): AudioContext {
-    if (!this.ctx) this.ctx = new AudioContext();
-    return this.ctx;
+  sampleRate(): number {
+    return this.outputRate > 0 ? this.outputRate : NO_OUTPUT_SAMPLE_RATE;
   }
 
-  async addTrack(track: AudioTrack): Promise<void> {
-    const path = await writeTemp(track.id, track.filename, track.sourceBlob);
-    try {
-      await this.transport.send('audio_load_track', { id: track.id, path });
-    } finally {
-      await remove(path).catch(() => {});
-    }
+  async preloadTrack(track: AudioTrack): Promise<void> {
+    // Not through `transport`: it would hold up every pause and seek until the first audio is in.
+    await invoke('audio_preload_track', { id: track.id, origin: await nativeOrigin(track) });
+  }
+
+  addTrack(track: AudioTrack): void {
+    void this.transport.send('audio_add_preloaded_track', { id: track.id });
   }
 
   removeTrack(id: AudioTrackId): void {
@@ -237,6 +238,7 @@ export class NativeAudioOutput implements AudioOutput {
   }
 
   private onTelemetry(msg: Telemetry): void {
+    this.outputRate = msg.outputRate;
     if (Math.abs(msg.level - this.micLevel) >= 0.01) this.micLevel = msg.level;
     if (Math.abs(msg.latencyMs - this.latencyMs) >= 0.1) this.latencyMs = msg.latencyMs;
     // sampled before our last play/pause landed
@@ -257,11 +259,28 @@ class CommandQueue {
   }
 }
 
-async function writeTemp(id: string, filename: string, blob: Blob): Promise<string> {
+type NativePcmOrigin = { kind: 'url'; url: string } | { kind: 'file'; path: string; rate: number };
+
+/** The rate is left to Rust, which follows the output device. */
+async function nativeOrigin({ id, pcm }: AudioTrack): Promise<NativePcmOrigin> {
+  if (pcm.origin.kind === 'url') {
+    const url = new URL(pcm.origin.url);
+    url.searchParams.delete('rate');
+    return { kind: 'url', url: url.href };
+  }
+  return { kind: 'file', path: await writeTempPcm(id, pcm.origin.blob), rate: pcm.sampleRate };
+}
+
+/** Rust deletes it, once it's done with it. */
+async function writeTempPcm(id: AudioTrackId, blob: Blob): Promise<string> {
   const dir = await join(await tempDir(), 'utai');
   await mkdir(dir, { recursive: true });
-  const safe = filename.replace(/[^\w.-]+/g, '_') || 'audio';
-  const path = await join(dir, `${id}-${safe}`);
-  await writeFile(path, new Uint8Array(await blob.arrayBuffer()));
+  const path = await join(dir, `${id}-${crypto.randomUUID()}.s16`);
+  // In slices, not `blob.stream()`: the plugin writes a stream through its `open` and `write`
+  // commands, which the app's capabilities don't grant.
+  for (let start = 0; start < blob.size; start += TEMP_WRITE_SLICE_BYTES) {
+    const slice = await blob.slice(start, start + TEMP_WRITE_SLICE_BYTES).arrayBuffer();
+    await writeFile(path, new Uint8Array(slice), { append: start > 0 });
+  }
   return path;
 }

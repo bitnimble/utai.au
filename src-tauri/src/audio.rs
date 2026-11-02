@@ -3,23 +3,27 @@
 //! selection, volumes, and a telemetry `Channel` streaming playhead + input
 //! level for the frontend to dead-reckon against. Desktop-only.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use reqwest::blocking::{Client, Response};
+use reqwest::header::{CONTENT_RANGE, RANGE};
+use reqwest::{StatusCode, Url};
 use tauri::ipc::Channel;
-use tauri::{AppHandle, State};
+use tauri::State;
 
-use crate::no_console::NoConsole;
-use utai_audio::decode;
 use utai_audio::device::{AudioEngine, DeviceSelection};
+use utai_audio::stream::{PcmInfo, PcmSource, TempFilePcm, BYTES_PER_FRAME};
 
 /// The engine handle, in an `Arc` so the telemetry thread can share it.
 pub struct AudioState(pub Arc<AudioEngine>);
 
 impl AudioState {
     pub fn new() -> Self {
+        // What the last run left: the process exits without its streams letting go of their files.
+        let _ = std::fs::remove_dir_all(temp_pcm_dir());
         Self(Arc::new(AudioEngine::new()))
     }
 }
@@ -40,6 +44,8 @@ pub struct Telemetry {
     level: f32,
     /// Measured round-trip monitor latency in ms (0 until streams report it).
     latency_ms: f32,
+    /// 0 while there's no output.
+    output_rate: u32,
 }
 
 #[tauri::command]
@@ -48,55 +54,114 @@ pub fn audio_list_devices() -> DeviceList {
     DeviceList { inputs, outputs }
 }
 
-/// Decode + resample the file at `path` (a temp file the frontend wrote) and
-/// load it into the engine under `id`. Returns the (longest) track duration in
-/// seconds.
-#[tauri::command]
-pub fn audio_load_track(
-    id: String,
-    path: String,
-    app: AppHandle,
-    state: State<'_, AudioState>,
-) -> Result<f64, String> {
-    let bytes = std::fs::read(&path).map_err(|e| format!("read {path}: {e}"))?;
-    let decoded = match decode::decode_bytes(bytes) {
-        Ok(track) => track,
-        // symphonia has no Opus decoder, and YouTube downloads are Opus.
-        Err(err) => decode_with_ffmpeg(&ffmpeg(&app), &path).map_err(|e| format!("{err}; ffmpeg: {e}"))?,
+/// Where a track's PCM is: the backend's `/music/pcm` for a file it holds, which makes it at
+/// whatever `rate` is asked for, or a temp file the frontend decoded into and this now owns.
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PcmOrigin {
+    Url { url: String },
+    File { path: PathBuf, rate: u32 },
+}
+
+/// Open the track's stream, ready for `audio_add_preloaded_track` under `id`.
+// async: a plain command runs on the main thread, freezing the app until the first audio is in.
+#[tauri::command(async)]
+pub fn audio_preload_track(id: String, origin: PcmOrigin, state: State<'_, AudioState>) -> Result<(), String> {
+    let source: Box<dyn PcmSource> = match origin {
+        PcmOrigin::Url { url } => Box::new(HttpPcm::new(&url)?),
+        PcmOrigin::File { path, rate } if is_temp_pcm_path(&path) => Box::new(TempFilePcm::new(path, rate)?),
+        PcmOrigin::File { path, .. } => return Err(format!("{} isn't a temp PCM file", path.display())),
     };
-    state.0.load_track(id, decoded);
-    Ok(state.0.duration_secs())
+    state.0.preload_track(id, source)
 }
 
-const FFMPEG_SAMPLE_RATE: u32 = 48_000;
-
-fn ffmpeg(app: &AppHandle) -> PathBuf {
-    crate::paths::data_root(app)
-        .map(|root| crate::paths::bundled_ffmpeg(&root))
-        .ok()
-        .filter(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from("ffmpeg"))
+fn temp_pcm_dir() -> PathBuf {
+    std::env::temp_dir().join("utai")
 }
 
-fn decode_with_ffmpeg(ffmpeg: &Path, path: &str) -> Result<decode::DecodedTrack, String> {
-    let rate = FFMPEG_SAMPLE_RATE.to_string();
-    let out = Command::new(ffmpeg)
-        .args(["-v", "error", "-i", path, "-f", "f32le", "-ac", "2", "-ar", &rate, "-"])
-        .no_console()
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+/// `TempFilePcm` deletes what it's given, and any page able to invoke can name the path.
+fn is_temp_pcm_path(path: &Path) -> bool {
+    path.starts_with(temp_pcm_dir()) && !path.components().any(|c| c == Component::ParentDir)
+}
+
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// The first request at a rate is the one that makes the PCM, from the whole song.
+const HTTP_MAKE_PCM_TIMEOUT: Duration = Duration::from_secs(600);
+
+struct HttpPcm {
+    url: Url,
+    rate_url: Option<Url>,
+    client: Option<Client>,
+}
+
+impl HttpPcm {
+    fn new(url: &str) -> Result<Self, String> {
+        let url = Url::parse(url).map_err(|e| format!("{url}: {e}"))?;
+        Ok(Self { url, rate_url: None, client: None })
     }
-    let samples: Vec<f32> = out
-        .stdout
-        .chunks_exact(4)
-        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-        .collect();
-    if samples.is_empty() {
-        return Err("decoded to zero samples".to_string());
+
+    fn get_range(&mut self, start: u64, end: u64, timeout: Duration) -> Result<Response, String> {
+        let url = self.rate_url.as_ref().ok_or("PCM source isn't open")?.clone();
+        let client = match self.client.take() {
+            Some(client) => client,
+            None => {
+                // Errs when one is already installed, which is all this wants.
+                let _ = rustls::crypto::ring::default_provider().install_default();
+                // Built here, on the feeder thread: a blocking client panics if built inside the
+                // async runtime that Tauri commands run on.
+                Client::builder()
+                    .no_proxy()
+                    .connect_timeout(HTTP_CONNECT_TIMEOUT)
+                    .build()
+                    .map_err(|e| e.to_string())?
+            }
+        };
+        let response = self
+            .client
+            .insert(client)
+            .get(url)
+            .timeout(timeout)
+            .header(RANGE, format!("bytes={start}-{}", end - 1))
+            .send()
+            .map_err(|e| e.to_string())?;
+        if response.status() != StatusCode::PARTIAL_CONTENT {
+            return Err(format!("PCM range answered {}", response.status()));
+        }
+        Ok(response)
     }
-    Ok(decode::DecodedTrack { samples, sample_rate: FFMPEG_SAMPLE_RATE })
+}
+
+impl PcmSource for HttpPcm {
+    fn open(&mut self, rate: u32) -> Result<PcmInfo, String> {
+        let mut url = self.url.clone();
+        url.query_pairs_mut().append_pair("rate", &rate.to_string());
+        self.rate_url = Some(url);
+        let response = self.get_range(0, 1, HTTP_MAKE_PCM_TIMEOUT)?;
+        let total = response
+            .headers()
+            .get(CONTENT_RANGE)
+            .and_then(|range| range.to_str().ok())
+            .and_then(total_bytes)
+            .ok_or("PCM answered no length")?;
+        Ok(PcmInfo { frames: total / BYTES_PER_FRAME, rate })
+    }
+
+    fn read(&mut self, start_frame: u64, bytes: &mut [u8]) -> Result<(), String> {
+        let start = start_frame * BYTES_PER_FRAME;
+        let mut response = self.get_range(start, start + bytes.len() as u64, HTTP_READ_TIMEOUT)?;
+        response.read_exact(bytes).map_err(|e| e.to_string())
+    }
+}
+
+/// From `bytes 0-0/1234`.
+fn total_bytes(content_range: &str) -> Option<u64> {
+    content_range.rsplit('/').next()?.parse().ok()
+}
+
+#[tauri::command]
+pub fn audio_add_preloaded_track(id: String, state: State<'_, AudioState>) {
+    state.0.add_preloaded_track(&id);
 }
 
 /// Drop a track from the mix (e.g. the full mix once its stems replace it).
@@ -172,37 +237,6 @@ pub fn audio_set_devices(
     });
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ffmpeg_decodes_opus_webm_symphonia_cannot() {
-        let ffmpeg = PathBuf::from(std::env::var("UTAI_TEST_FFMPEG").unwrap_or_else(|_| "ffmpeg".into()));
-        if Command::new(&ffmpeg).arg("-version").output().is_err() {
-            eprintln!("no ffmpeg; skipping");
-            return;
-        }
-        let path = std::env::temp_dir().join(format!("utai-opus-{}.webm", std::process::id()));
-        let made = Command::new(&ffmpeg)
-            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-ac", "2"])
-            .args(["-c:a", "libopus"])
-            .arg(&path)
-            .status()
-            .unwrap();
-        assert!(made.success());
-        assert!(decode::decode_bytes(std::fs::read(&path).unwrap()).is_err());
-
-        let track = decode_with_ffmpeg(&ffmpeg, path.to_str().unwrap()).unwrap();
-        let _ = std::fs::remove_file(&path);
-
-        assert_eq!(track.sample_rate, FFMPEG_SAMPLE_RATE);
-        let secs = track.frames() as f64 / FFMPEG_SAMPLE_RATE as f64;
-        assert!((secs - 1.0).abs() < 0.05, "{secs}s");
-        assert!(track.samples.iter().any(|s| s.abs() > 0.05));
-    }
-}
-
 /// Start streaming playhead + level on `channel` (~33 Hz). The thread ends on
 /// its own when the frontend drops the channel (send fails).
 #[tauri::command]
@@ -215,9 +249,100 @@ pub fn audio_subscribe(channel: Channel<Telemetry>, state: State<'_, AudioState>
             playing: engine.is_playing(),
             level: engine.level(),
             latency_ms: engine.latency_ms(),
+            output_rate: engine.output_rate(),
         };
         if channel.send(msg).is_err() {
             break;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    /// Answers `requests` connections like `/music/pcm` does: frame `n`'s bytes are `n as u8`.
+    fn serve_pcm(total_bytes: u64, requests: usize) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/api/music/pcm?path=%2Fcache%2Fa.flac", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut request_lines = Vec::new();
+            for _ in 0..requests {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(socket.try_clone().unwrap());
+                let mut range = (0u64, 0u64);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                request_lines.push(line.trim().to_string());
+                loop {
+                    let mut header = String::new();
+                    reader.read_line(&mut header).unwrap();
+                    if header.trim().is_empty() {
+                        break;
+                    }
+                    let lower = header.to_ascii_lowercase();
+                    if let Some(value) = lower.strip_prefix("range: bytes=") {
+                        let (start, end) = value.trim().split_once('-').unwrap();
+                        range = (start.parse().unwrap(), end.parse().unwrap());
+                    }
+                }
+                let body: Vec<u8> = (range.0..=range.1).map(|byte| (byte / BYTES_PER_FRAME) as u8).collect();
+                write!(
+                    socket,
+                    "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {}-{}/{total_bytes}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    range.0,
+                    range.1,
+                    body.len(),
+                )
+                .unwrap();
+                socket.write_all(&body).unwrap();
+            }
+            request_lines
+        });
+        (url, server)
+    }
+
+    #[test]
+    fn http_pcm_learns_the_length_at_the_rate_asked_for_and_reads_any_frame() {
+        let (url, server) = serve_pcm(4_000, 2);
+        let mut source = HttpPcm::new(&url).unwrap();
+
+        let info = source.open(44_100).unwrap();
+        assert_eq!((info.frames, info.rate), (1_000, 44_100));
+        let mut bytes = [0u8; 8];
+        source.read(7, &mut bytes).unwrap();
+        assert_eq!(bytes, [7, 7, 7, 7, 8, 8, 8, 8]);
+
+        let requests = server.join().unwrap();
+        for request in requests {
+            assert!(request.contains("path=%2Fcache%2Fa.flac&rate=44100"), "{request}");
+        }
+    }
+
+    #[test]
+    fn only_a_file_directly_in_the_temp_pcm_folder_may_be_handed_over() {
+        assert!(is_temp_pcm_path(&temp_pcm_dir().join("track-1.s16")));
+        assert!(!is_temp_pcm_path(&temp_pcm_dir().join("../../home/song.flac")));
+        assert!(!is_temp_pcm_path(Path::new("/home/someone/song.flac")));
+    }
+
+    #[test]
+    fn http_pcm_refuses_an_answer_that_is_not_the_range() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/pcm?path=a", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            let mut reader = BufReader::new(socket.try_clone().unwrap());
+            while reader.read_line(&mut line).unwrap() > 2 {
+                line.clear();
+            }
+            write!(socket, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let err = HttpPcm::new(&url).unwrap().open(48_000).err().unwrap();
+        server.join().unwrap();
+        assert!(err.contains("404"), "{err}");
+    }
 }

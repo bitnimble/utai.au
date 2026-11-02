@@ -1,13 +1,8 @@
 import { makeAutoObservable, runInAction } from 'mobx';
 import type { PitchContour } from 'src/lyrics/pitch_contour';
-import {
-  AudioTrack,
-  AudioTrackId,
-  AudioTrackRole,
-  decodeAudioTrackFile,
-  decodeAudioTrackUrl,
-} from './audio_tracks';
-import { measureSongLoudnessGain } from './loudness_worker_client';
+import { AudioTrack, AudioTrackId, AudioTrackRole } from './audio_tracks';
+import type { JobAudio } from 'src/net/job_audio';
+import type { StemPcm } from './song_pcm';
 import { buildLinearTimeline, EMPTY_TIMELINE, UtaiTimeline } from './timeline';
 import { trackEffectMask, type TrackEffect } from './track_effects';
 import { waveformWorker } from './waveform_worker_client';
@@ -16,7 +11,6 @@ export type PlayerState = 'idle' | 'loading' | 'playing' | 'paused';
 
 type TrackMix = { readonly volume: number; readonly muted: boolean };
 
-const PLAYBACK_TAIL_SECONDS = 0.5;
 export const MAX_AUDIO_OFFSET_SEC = 1;
 export const MIN_SPEED = 0.5;
 export const MAX_SPEED = 1.5;
@@ -24,8 +18,12 @@ export const SPEED_STEP = 0.05;
 
 /** The Web Audio graph (web, Android) or the Rust/cpal engine (desktop). */
 export interface AudioOutput {
-  decodeContext(): AudioContext;
-  addTrack(track: AudioTrack): Promise<void>;
+  /** The sample rate a track's PCM is wanted at. */
+  sampleRate(): number;
+  /** Readies a track without it being heard, so {@link addTrack} takes no time. */
+  preloadTrack(track: AudioTrack): Promise<void>;
+  addTrack(track: AudioTrack): void;
+  /** Also takes back a track that was only preloaded. */
   removeTrack(id: AudioTrackId): void;
   setTrackGain(id: AudioTrackId, gain: number): void;
   setTrackEffects(id: AudioTrackId, effects: readonly TrackEffect[]): void;
@@ -60,7 +58,6 @@ export class PlaybackEngine {
 
   private normalizeVolume = true;
   private measuredLoudnessGain = 1;
-  private loudnessToken = 0;
   private rafId: number | undefined;
   private endTimerId: number | undefined;
   private trackIdCounter = 0;
@@ -77,7 +74,6 @@ export class PlaybackEngine {
       | 'output'
       | 'normalizeVolume'
       | 'measuredLoudnessGain'
-      | 'loudnessToken'
       | 'rafId'
       | 'endTimerId'
       | 'trackIdCounter'
@@ -89,7 +85,6 @@ export class PlaybackEngine {
       output: false,
       normalizeVolume: false,
       measuredLoudnessGain: false,
-      loudnessToken: false,
       feedStartSec: false,
       rafId: false,
       endTimerId: false,
@@ -117,21 +112,53 @@ export class PlaybackEngine {
     return () => this.endedListeners.delete(cb);
   }
 
-  /** Must run inside a user gesture on some browsers (the picker click grants it). */
-  async loadAudioTrack(file: File, role?: AudioTrackRole): Promise<AudioTrackId> {
-    return this.installTrack(file.name, role, (ctx) => decodeAudioTrackFile(ctx, file));
+  sampleRate(): number {
+    return this.output.sampleRate();
   }
 
-  async loadAudioTrackFromUrl(url: string, filename: string, role?: AudioTrackRole): Promise<AudioTrackId> {
-    return this.installTrack(filename, role, (ctx) => decodeAudioTrackUrl(ctx, url));
+  /** Readies a track off to the side: the current song is untouched until {@link installTracks}. */
+  async preloadTrack(stem: {
+    filename: string;
+    audio: JobAudio;
+    pcm: StemPcm;
+    role?: AudioTrackRole;
+    pitchContour?: PitchContour;
+  }): Promise<AudioTrack> {
+    const id: AudioTrackId = `track-${++this.trackIdCounter}`;
+    const durationSec = stem.pcm.frames / stem.pcm.sampleRate;
+    const track = new AudioTrack({ id, ...stem, durationSec });
+    track.pitchContour = stem.pitchContour;
+    await this.output.preloadTrack(track);
+    return track;
+  }
+
+  /** Makes preloaded tracks the song's, in one synchronous step. */
+  installTracks(tracks: readonly AudioTrack[], loudnessGain: number): void {
+    this.measuredLoudnessGain = loudnessGain;
+    for (const track of tracks) {
+      const mix = this.mixByRole.get(track.role);
+      if (mix) {
+        track.volume = mix.volume;
+        track.muted = mix.muted;
+      }
+      this.audioTracks.set(track.id, track);
+      this.output.addTrack(track);
+    }
+    this.applyLoudnessGain();
+  }
+
+  discardPreloadedTrack(track: AudioTrack): void {
+    this.output.removeTrack(track.id);
+    track.release();
   }
 
   clearAudioTrack(id: AudioTrackId): void {
-    if (!this.audioTracks.has(id)) return;
-    this.loudnessToken++;
+    const track = this.audioTracks.get(id);
+    if (track == null) return;
     this.audioTracks.delete(id);
     this.output.removeTrack(id);
     waveformWorker.dropTrack(id);
+    track.release();
   }
 
   /** `volume` is clamped to [0, 1]; `muted` forces silence without discarding it. */
@@ -147,11 +174,6 @@ export class PlaybackEngine {
     if (!track) return;
     track.muted = muted;
     this.applyMix(track);
-  }
-
-  setTrackPitchContour(id: AudioTrackId, contour: PitchContour): void {
-    const track = this.audioTracks.get(id);
-    if (track) track.pitchContour = contour;
   }
 
   setTrackEffects(id: AudioTrackId, effects: readonly TrackEffect[]): void {
@@ -273,38 +295,6 @@ export class PlaybackEngine {
     this.output.seek(sec);
   }
 
-  private async installTrack(
-    filename: string,
-    role: AudioTrackRole | undefined,
-    decode: (ctx: AudioContext) => Promise<{ buffer: AudioBuffer; sourceBlob: Blob }>,
-  ): Promise<AudioTrackId> {
-    const { buffer, sourceBlob } = await decode(this.output.decodeContext());
-    const id: AudioTrackId = `track-${++this.trackIdCounter}`;
-    const track = new AudioTrack({ id, filename, buffer, sourceBlob, durationSec: buffer.duration, role });
-    const mix = this.mixByRole.get(track.role);
-    if (mix) {
-      track.volume = mix.volume;
-      track.muted = mix.muted;
-    }
-    await this.output.addTrack(track);
-    runInAction(() => {
-      this.audioTracks.set(id, track);
-    });
-    this.output.setTrackGain(id, track.outputGain);
-    waveformWorker.registerTrack(id, buffer);
-    // Awaited so the song's first play is already at its level.
-    await this.measureLoudness();
-    return id;
-  }
-
-  private async measureLoudness(): Promise<void> {
-    const token = ++this.loudnessToken;
-    const gain = await measureSongLoudnessGain(Array.from(this.audioTracks.values(), (t) => t.buffer));
-    if (token !== this.loudnessToken) return;
-    this.measuredLoudnessGain = gain;
-    this.applyLoudnessGain();
-  }
-
   private applyLoudnessGain(): void {
     const gain = this.normalizeVolume ? this.measuredLoudnessGain : 1;
     for (const track of this.audioTracks.values()) {
@@ -369,10 +359,7 @@ export class PlaybackEngine {
     // Whichever of the audio and the rest is behind finishes |offset| after the output does.
     const remainingSec =
       (this.durationSec - this.output.positionSec()) / this.speed + Math.abs(this.audioOffsetSec);
-    this.endTimerId = window.setTimeout(
-      () => this.finish(),
-      Math.max(0, (remainingSec + PLAYBACK_TAIL_SECONDS) * 1000),
-    );
+    this.endTimerId = window.setTimeout(() => this.finish(), Math.max(0, remainingSec * 1000));
   }
 
   private clearEndTimer(): void {

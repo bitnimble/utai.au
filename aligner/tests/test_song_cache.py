@@ -22,7 +22,7 @@ def cache(tmp_path: Path, monkeypatch) -> Path:
 def _song(cache: Path, song_id: str, size: int, hours_ago: float) -> Path:
     folder = cache / "songs" / song_id
     (folder / "stems").mkdir(parents=True)
-    (folder / "stems" / "vocals.flac").write_bytes(b"x" * size)
+    (folder / "stems" / "vocals.opus").write_bytes(b"x" * size)
     (folder / "beats.json").write_text("{}")
     used = time.time() - hours_ago * _HOUR
     os.utime(folder, (used, used))
@@ -49,6 +49,68 @@ def test_trim_spares_a_song_in_use_even_over_the_cap(cache: Path) -> None:
 
     assert not idle.exists()
     assert in_use.is_dir()
+
+
+def _pcm_copy(cache: Path, name: str, size: int, hours_ago: float) -> Path:
+    path = cache / "pcm" / name
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(b"x" * size)
+    used = time.time() - hours_ago * _HOUR
+    os.utime(path, (used, used))
+    return path
+
+
+@pytest.fixture
+def small_pcm_cap(monkeypatch) -> None:
+    monkeypatch.setattr(song_cache.settings, "cache_songs_cap_bytes", 10**9)
+    monkeypatch.setattr(song_cache.settings, "cache_pcm_cap_bytes", 10)
+
+
+@pytest.mark.usefixtures("small_pcm_cap")
+def test_pcm_trim_drops_the_least_recently_used_copies_until_under_the_cap(cache: Path) -> None:
+    oldest = _pcm_copy(cache, "oldest.s16", 8, hours_ago=5)
+    middle = _pcm_copy(cache, "middle.s16", 8, hours_ago=4)
+    newest = _pcm_copy(cache, "newest.s16", 8, hours_ago=3)
+
+    song_cache.trim_pcm()
+
+    assert not oldest.exists()
+    assert not middle.exists()
+    assert newest.exists()
+
+
+@pytest.mark.usefixtures("small_pcm_cap")
+def test_pcm_trim_spares_a_copy_in_use_even_over_the_cap(cache: Path) -> None:
+    idle = _pcm_copy(cache, "idle.s16", 50, hours_ago=2)
+    playing = _pcm_copy(cache, "playing.s16", 50, hours_ago=0.5)
+
+    song_cache.trim_pcm()
+
+    assert not idle.exists()
+    assert playing.exists()
+
+
+def test_startup_clears_pcm_writes_no_one_finished(cache: Path, monkeypatch) -> None:
+    monkeypatch.setattr(song_cache.settings, "cache_pcm_cap_bytes", 1000)
+    partial = _pcm_copy(cache, "song-1-48000.s16.abc.part", 8, hours_ago=0)
+    finished = _pcm_copy(cache, "song-1-44100.s16", 8, hours_ago=0)
+
+    song_cache.tidy_cache()
+
+    assert not partial.exists()
+    assert finished.exists()
+
+
+def test_a_long_download_name_still_gets_a_usable_pcm_path(cache: Path) -> None:
+    webm, flac = cache / ("歌" * 50 + ".webm"), cache / ("歌" * 50 + ".flac")
+    webm.write_bytes(b"audio")
+    flac.write_bytes(b"audio")
+
+    path = song_cache.pcm_path(_HEX_ID, webm, 48_000)
+
+    assert path.parent == cache / "pcm"
+    assert len(path.name) < 128
+    assert path != song_cache.pcm_path(_HEX_ID, flac, 48_000)
 
 
 def test_trim_leaves_the_compiled_engines_alone(cache: Path) -> None:

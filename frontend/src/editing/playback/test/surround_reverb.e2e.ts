@@ -125,8 +125,18 @@ test('surround reverb: switching a playing track on reroutes it through the effe
       const buffer = ctx.createBuffer(1, rate, rate);
       buffer.getChannelData(0)[0] = 1;
       buffer.getChannelData(0)[rate / 2] = 1;
-      const track = new AudioTrack({ id: 'v', filename: 'v.wav', buffer, sourceBlob: new Blob(), durationSec: 1, role: 'vocals' });
-      const controller = new AudioTrackPlaybackController(ctx, ctx.destination);
+      const pcm = { origin: { kind: 'blob', blob: new Blob() }, frames: rate, sampleRate: rate, attach: () => {}, release: () => {} };
+      const track = new AudioTrack({ id: 'v', filename: 'v.wav', audio: { file: new File([], 'v.wav') }, pcm, durationSec: 1, role: 'vocals' });
+      const bufferPlayback = (context) => {
+        const source = new AudioBufferSourceNode(context, { buffer });
+        return {
+          node: source,
+          play: (when, offsetSec) => source.start(when, offsetSec),
+          stop: () => {},
+          dispose: () => {},
+        };
+      };
+      const controller = new AudioTrackPlaybackController(ctx, ctx.destination, undefined, bufferPlayback);
       controller.scheduleAll([track], 0, 0);
       void ctx.suspend(0.25).then(() => {
         controller.setTrackEffects('v', trackEffectMask(['surround-reverb']));

@@ -15,10 +15,6 @@
     {
       "identifier": "fs:allow-mkdir",
       "allow": [{ "path": "$TEMP/utai" }, { "path": "$TEMP/utai/**" }]
-    },
-    {
-      "identifier": "fs:allow-remove",
-      "allow": [{ "path": "$TEMP/utai/**" }]
     }
   ]
 }

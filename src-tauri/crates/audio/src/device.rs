@@ -1,28 +1,30 @@
 //! cpal device I/O: a dedicated audio thread owns the (`!Send`) input/output
 //! streams; control happens through lock-free [`Shared`] state (transport,
-//! gains, the resampled track `ArcSwap`) plus a command channel for device
+//! gains, the track `ArcSwap`) plus a command channel for device
 //! changes. The output callback mixes the backing track with mic frames pulled
 //! from a lock-free ring the input callback fills.
 //!
 //! The engine auto-matches each device: it runs the **output** at the device's
-//! own default sample rate + format + channel count (the track is resampled to
-//! that rate and the mix is converted to that format), and opens the **input**
+//! own default sample rate + format + channel count (tracks stream at that rate
+//! and the mix is converted to that format), and opens the **input**
 //! at the output rate in the mic's native format (works when in/out share a
 //! clock, e.g. an ASIO interface). WASAPI-exclusive + ASIO tuning are follow-ups.
 
 use crate::effects::EffectChain;
+use crate::mixer::{self, ReadFrames};
+use crate::stream::{open_stream, PcmSource, PcmStream, Playhead, Retired};
 use crate::stretch::TrackStretch;
 use crate::transport::{SpeedClock, Transport};
-use crate::{decode::DecodedTrack, mixer, resample};
 use arc_swap::ArcSwap;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{
     Device, FromSample, Host, Sample, SampleFormat, SampleRate, SizedSample, Stream, StreamConfig,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 
 const CHANNELS: u16 = 2;
@@ -44,10 +46,10 @@ impl AtomicF32 {
     }
 }
 
-/// One playback track as the output callback sees it: interleaved-stereo PCM
-/// resampled to the output rate, plus its effective gain (mute folded in).
+/// One playback track as the output callback sees it: its PCM at the output rate,
+/// plus its effective gain (mute folded in).
 pub struct MixTrack {
-    pub samples: Arc<Vec<f32>>,
+    pub stream: Arc<PcmStream>,
     pub gain: f32,
     /// Only the output callback locks it.
     pub effects: Option<Arc<Mutex<EffectChain>>>,
@@ -55,14 +57,12 @@ pub struct MixTrack {
     pub stretch: Option<Arc<Mutex<TrackStretch>>>,
 }
 
-/// One track as the control thread owns it: the decoded source (kept for
-/// re-resampling on an output-rate change), its resampled playback buffer, its
-/// effective gain, and its effect chain (built for the output rate, so rebuilt
-/// with it) with the mask it was built from. Keyed by the frontend's track id.
+/// One track as the control thread owns it: its stream, its effective gain, and
+/// its effect chain (built for the output rate, so rebuilt with it) with the mask
+/// it was built from. Keyed by the frontend's track id.
 struct SourceTrack {
     id: String,
-    decoded: Arc<DecodedTrack>,
-    resampled: Arc<Vec<f32>>,
+    stream: Arc<PcmStream>,
     gain: f32,
     effect_mask: u32,
     effects: Option<Arc<Mutex<EffectChain>>>,
@@ -76,9 +76,12 @@ pub struct Shared {
     /// The playback track set the output callback mixes (lock-free snapshot,
     /// summed per-track at each track's gain).
     pub tracks: ArcSwap<Vec<MixTrack>>,
+    retired_tracks: Mutex<Retired<Vec<MixTrack>>>,
     /// The control-thread-owned source tracks; `tracks` is republished from
     /// these on any change (add / remove / gain / output-rate). Control only.
     sources: Mutex<Vec<SourceTrack>>,
+    /// Streams ready to join `sources`, by id. Control only.
+    preloaded: Mutex<HashMap<String, Arc<PcmStream>>>,
     /// The active output stream's sample rate (0 before any output opens).
     pub output_rate: AtomicU32,
     pub mic_gain: AtomicF32,
@@ -106,7 +109,9 @@ impl Shared {
         Self {
             transport: Transport::new(),
             tracks: ArcSwap::from_pointee(Vec::new()),
+            retired_tracks: Mutex::new(Retired::new()),
             sources: Mutex::new(Vec::new()),
+            preloaded: Mutex::new(HashMap::new()),
             output_rate: AtomicU32::new(0),
             mic_gain: AtomicF32::new(0.0), // muted by default, matching the app
             master_gain: AtomicF32::new(1.0),
@@ -121,42 +126,37 @@ impl Shared {
     }
 }
 
-/// Republish the lock-free `tracks` snapshot + total-frame count (the longest
-/// track drives duration) from the current `sources`. Call while holding the
-/// `sources` lock.
+impl Playhead for Shared {
+    fn frame(&self) -> u64 {
+        self.transport.frame()
+    }
+
+    fn output_rate(&self) -> u32 {
+        self.output_rate.load(Ordering::Relaxed)
+    }
+}
+
+/// Republish the lock-free `tracks` snapshot from the current `sources`. Call
+/// while holding the `sources` lock.
 fn publish(shared: &Shared, sources: &[SourceTrack]) {
     let tracks: Vec<MixTrack> = sources
         .iter()
         .map(|s| MixTrack {
-            samples: s.resampled.clone(),
+            stream: s.stream.clone(),
             gain: s.gain,
             effects: s.effects.clone(),
             stretch: s.stretch.clone(),
         })
         .collect();
-    let total = sources
-        .iter()
-        .map(|s| (s.resampled.len() / 2) as u64)
-        .max()
-        .unwrap_or(0);
-    shared.tracks.store(Arc::new(tracks));
-    shared.transport.set_total_frames(total);
+    let old = shared.tracks.swap(Arc::new(tracks));
+    shared.retired_tracks.lock().unwrap().retire(old);
 }
 
-/// Re-resample every source track to the active output rate and republish.
-/// No-op until an output rate is known. Control-thread only (allocates).
-fn reresample_all(shared: &Shared) {
-    let rate = shared.output_rate.load(Ordering::Relaxed);
-    if rate == 0 {
-        return;
-    }
+/// Rebuild what's built for the output rate. Each track's stream notices the
+/// rate for itself. Control-thread only (allocates).
+fn rebuild_for_rate(shared: &Shared, rate: u32) {
     let mut sources = shared.sources.lock().unwrap();
     for s in sources.iter_mut() {
-        s.resampled = Arc::new(resample::resample_stereo(
-            &s.decoded.samples,
-            s.decoded.sample_rate,
-            rate,
-        ));
         s.effects = effect_chain(s.effect_mask, rate);
         s.stretch = track_stretch(shared.transport.speed(), rate);
     }
@@ -171,8 +171,8 @@ fn track_stretch(speed: f64, rate: u32) -> Option<Arc<Mutex<TrackStretch>>> {
     (speed != 1.0 && rate > 0).then(|| Arc::new(Mutex::new(TrackStretch::new(rate))))
 }
 
-/// Switch to a new output rate, preserving the current playback *time* across
-/// the resample (the playhead is stored in frames, which the new rate rescales).
+/// Switch to a new output rate, preserving the current playback *time* (the
+/// playhead is stored in frames, which the new rate rescales).
 fn retune(shared: &Shared, new_rate: u32) {
     let old_rate = shared.output_rate.load(Ordering::Relaxed);
     if old_rate == new_rate {
@@ -184,7 +184,7 @@ fn retune(shared: &Shared, new_rate: u32) {
         0.0
     };
     shared.output_rate.store(new_rate, Ordering::Relaxed);
-    reresample_all(shared);
+    rebuild_for_rate(shared, new_rate);
     if old_rate > 0 {
         shared.transport.seek_secs(secs, new_rate);
     }
@@ -228,50 +228,55 @@ impl AudioEngine {
         }
     }
 
-    /// Install (or replace, by `id`) a decoded track; the engine resamples it to
-    /// the active output rate and adds it to the mix. Loading the FIRST track of
-    /// a fresh song rewinds to the start; adding further tracks (e.g. the
-    /// separated stems) leaves the playhead put.
-    pub fn load_track(&self, id: String, decoded: DecodedTrack) {
-        let rate = self.rate();
-        let decoded = Arc::new(decoded);
-        let resampled = if rate > 0 {
-            Arc::new(resample::resample_stereo(
-                &decoded.samples,
-                decoded.sample_rate,
-                rate,
-            ))
-        } else {
-            Arc::new(Vec::new())
+    /// Open a track's stream, holding the opening of its audio ready, leaving the
+    /// mix alone until [`add_preloaded_track`](Self::add_preloaded_track).
+    pub fn preload_track(&self, id: String, source: Box<dyn PcmSource>) -> Result<(), String> {
+        let stream = open_stream(source, Arc::downgrade(&self.shared) as Weak<dyn Playhead>)?;
+        self.shared.preloaded.lock().unwrap().insert(id, stream);
+        Ok(())
+    }
+
+    /// Install a preloaded track in the mix. Adding the FIRST track of a fresh song
+    /// rewinds to the start; adding further tracks leaves the playhead put. No-op
+    /// for an unknown id.
+    pub fn add_preloaded_track(&self, id: &str) {
+        let Some(stream) = self.shared.preloaded.lock().unwrap().remove(id) else {
+            return;
         };
         let mut sources = self.shared.sources.lock().unwrap();
+        // Under the lock: `retune` stores the new rate before rebuilding the stretches.
+        let rate = self.rate();
         let fresh_song = sources.is_empty();
-        if let Some(s) = sources.iter_mut().find(|s| s.id == id) {
-            s.decoded = decoded;
-            s.resampled = resampled;
-        } else {
-            sources.push(SourceTrack {
-                id,
-                decoded,
-                resampled,
-                gain: 1.0,
-                effect_mask: 0,
-                effects: None,
-                stretch: track_stretch(self.shared.transport.speed(), rate),
-            });
-        }
+        sources.push(SourceTrack {
+            id: id.to_string(),
+            stream: stream.clone(),
+            gain: 1.0,
+            effect_mask: 0,
+            effects: None,
+            stretch: track_stretch(self.shared.transport.speed(), rate),
+        });
         publish(&self.shared, &sources);
         drop(sources);
         if fresh_song {
             self.shared.transport.stop();
         }
+        // After the rewind: following the last song's playhead would drop the opening it holds.
+        stream.join_mix();
     }
 
-    /// Drop the track with `id` from the mix (e.g. the full mix once its stems
-    /// replace it). No-op for an unknown id.
+    /// Drop the track with `id`, whether in the mix or only preloaded. No-op for
+    /// an unknown id.
     pub fn remove_track(&self, id: &str) {
+        if let Some(stream) = self.shared.preloaded.lock().unwrap().remove(id) {
+            stream.stop();
+        }
         let mut sources = self.shared.sources.lock().unwrap();
-        sources.retain(|s| s.id != id);
+        sources.retain(|s| {
+            if s.id == id {
+                s.stream.stop();
+            }
+            s.id != id
+        });
         publish(&self.shared, &sources);
     }
 
@@ -325,12 +330,8 @@ impl AudioEngine {
         self.shared.output_rate.load(Ordering::Relaxed)
     }
 
-    pub fn duration_secs(&self) -> f64 {
-        let rate = self.rate();
-        if rate == 0 {
-            return 0.0;
-        }
-        self.shared.transport.total_frames() as f64 / rate as f64
+    pub fn output_rate(&self) -> u32 {
+        self.rate()
     }
 
     pub fn play(&self) {
@@ -348,12 +349,16 @@ impl AudioEngine {
         let rate = self.rate();
         for s in sources.iter_mut() {
             s.effects = effect_chain(s.effect_mask, rate);
+            s.stream.wake();
         }
         publish(&self.shared, &sources);
     }
     pub fn seek_secs(&self, secs: f64) {
         self.shared.transport.seek_secs(secs, self.rate());
         self.shared.clear_track_delay.store(true, Ordering::Relaxed);
+        for s in self.shared.sources.lock().unwrap().iter() {
+            s.stream.wake();
+        }
     }
     pub fn position_secs(&self) -> f64 {
         self.shared.transport.position_secs(self.rate())
@@ -505,7 +510,7 @@ fn pick_device(host: &Host, name: Option<&str>, input: bool) -> Option<Device> {
 }
 
 /// Build the output stream at the device's own default rate + format + channels,
-/// setting the engine rate (and resampling the track) to match.
+/// setting the engine rate to match.
 fn build_output(dev: &Device, shared: &Arc<Shared>) -> Option<Stream> {
     let supported = dev
         .default_output_config()
@@ -605,12 +610,16 @@ where
                     }
                     mixer::silence(&mut effected);
                 } else if let Some(st) = stretch.as_mut() {
-                    st.render(&mut effected, t.samples.as_slice(), start, source_frames, speed, discontinuity);
-                } else if effects.is_none() {
-                    mixer::add_track(&mut mix, t.samples.as_slice(), start, t.gain);
-                    continue;
+                    let window = t.stream.window();
+                    if window.ready_around(start as u64) {
+                        st.render(&mut effected, &**window, start, source_frames, speed, discontinuity);
+                    } else {
+                        // A pre-roll of silence would fade in, over audio due in a few ms.
+                        st.skip();
+                        mixer::silence(&mut effected);
+                    }
                 } else {
-                    mixer::read_track(&mut effected, t.samples.as_slice(), start);
+                    t.stream.window().read_frames(&mut effected, start);
                 }
                 if let Some(mut fx) = effects {
                     fx.process(&mut effected);
@@ -739,4 +748,102 @@ where
 
 fn stream_err(e: cpal::StreamError) {
     log::error!("[utai-audio] stream error: {e}");
+}
+
+#[cfg(test)]
+mod preload_tests {
+    use super::*;
+    use crate::stream::{PcmInfo, BYTES_PER_FRAME};
+
+    const RATE: u32 = 48_000;
+    const SONG_FRAMES: u64 = 1 << 20;
+
+    /// Every sample is `level`.
+    struct Constant {
+        level: i16,
+    }
+
+    impl PcmSource for Constant {
+        fn open(&mut self, rate: u32) -> Result<PcmInfo, String> {
+            Ok(PcmInfo { frames: SONG_FRAMES, rate })
+        }
+        fn read(&mut self, _start_frame: u64, bytes: &mut [u8]) -> Result<(), String> {
+            for sample in bytes.chunks_exact_mut(BYTES_PER_FRAME as usize / 2) {
+                sample.copy_from_slice(&self.level.to_le_bytes());
+            }
+            Ok(())
+        }
+    }
+
+    /// With no audio thread: a real one opens the test machine's device, whose rate would race these.
+    fn engine() -> AudioEngine {
+        let shared = Arc::new(Shared::new());
+        shared.output_rate.store(RATE, Ordering::Relaxed);
+        let (cmd_tx, _) = mpsc::channel();
+        AudioEngine { shared, cmd_tx, thread: None }
+    }
+
+    fn preload(engine: &AudioEngine, id: &str) {
+        engine.preload_track(id.into(), Box::new(Constant { level: 16384 })).unwrap();
+    }
+
+    fn mixed_tracks(engine: &AudioEngine) -> usize {
+        engine.shared.tracks.load().len()
+    }
+
+    fn opening_heard(engine: &AudioEngine) -> f32 {
+        let mut out = [0.0f32; 2];
+        engine.shared.tracks.load()[0].stream.window().read_frames(&mut out, 0);
+        out[0]
+    }
+
+    #[test]
+    fn a_preloaded_track_joins_the_mix_only_when_added() {
+        let engine = engine();
+        preload(&engine, "a");
+        assert_eq!(mixed_tracks(&engine), 0);
+
+        engine.add_preloaded_track("a");
+        assert_eq!(mixed_tracks(&engine), 1);
+    }
+
+    #[test]
+    fn a_removed_preload_can_no_longer_be_added() {
+        let engine = engine();
+        preload(&engine, "a");
+        engine.remove_track("a");
+        engine.add_preloaded_track("a");
+        assert_eq!(mixed_tracks(&engine), 0);
+    }
+
+    #[test]
+    fn the_next_song_is_ready_to_play_the_moment_it_replaces_one_far_along() {
+        let engine = engine();
+        preload(&engine, "old");
+        engine.add_preloaded_track("old");
+        engine.shared.transport.seek_frames(SONG_FRAMES - 1);
+        preload(&engine, "new");
+
+        engine.remove_track("old");
+        engine.add_preloaded_track("new");
+
+        assert_eq!(engine.shared.transport.frame(), 0);
+        assert_eq!(opening_heard(&engine), 0.5);
+    }
+
+    #[test]
+    fn an_output_rate_change_keeps_the_time_and_rebuilds_what_is_built_for_the_rate() {
+        let engine = engine();
+        preload(&engine, "a");
+        engine.add_preloaded_track("a");
+        engine.set_track_effects("a", 1);
+        let effects_before = engine.shared.tracks.load()[0].effects.clone().unwrap();
+        engine.seek_secs(10.0);
+
+        retune(&engine.shared, RATE * 2);
+
+        assert_eq!(engine.shared.transport.frame(), RATE as u64 * 2 * 10);
+        let effects_after = engine.shared.tracks.load()[0].effects.clone().unwrap();
+        assert!(!Arc::ptr_eq(&effects_before, &effects_after));
+    }
 }

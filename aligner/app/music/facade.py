@@ -19,7 +19,10 @@ search is plain YouTube search, talk-show clips and all).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -28,6 +31,7 @@ from typing import Any, Protocol
 
 from app.backend_files import backend_file
 from app.config import settings
+from app.pipeline.audio_io import encode_transparent_opus
 from app.song_cache import held_download, song_id_for_source, store_file, touch_song_dir
 
 from .models import (
@@ -70,6 +74,7 @@ FAIL_STATUSES = frozenset({"Failed", "Cancelled", "Unavailable"})
 _UPLOADER_TITLED_SERVICES = frozenset({"soundcloud", YOUTUBE_MUSIC})
 
 _MAX_HELD_NAME_BYTES = 150
+_LOSSLESS_SUFFIXES = frozenset({".flac", ".wav", ".aif", ".aiff"})
 
 # Only whole tracks are fetchable song sources; albums / artists / playlists in
 # the raw results are dropped from what we hand the UI.
@@ -346,13 +351,12 @@ class MusicFacade:
             if src is None:
                 return None
             name = _download_filename(item).encode()[:_MAX_HELD_NAME_BYTES].decode(errors="ignore")
-            dest = touch_song_dir(song_id) / "download" / f"{name}{src.suffix}"
+            folder = touch_song_dir(song_id) / "download"
             try:
-                store_file(dest, src)
+                return _store_download(src, folder, name)
             except OSError:
                 log.warning("could not move %s into its song's folder", src, exc_info=True)
                 return None
-            return dest
 
     def _effective_config(self) -> MusicConfig:
         """The stored config with every catalog service present exactly once in
@@ -529,6 +533,26 @@ def _moved_away(item: dict[str, Any]) -> bool:
         return False
     file = Path(path).resolve()
     return file.is_relative_to(downloads.resolve()) and not file.is_file()
+
+
+def _store_download(src: Path, folder: Path, name: str) -> Path:
+    if src.suffix.lower() in _LOSSLESS_SUFFIXES:
+        with tempfile.TemporaryDirectory(prefix="utai_download_") as scratch:
+            encoded = Path(scratch) / "track.opus"
+            try:
+                encode_transparent_opus(src, encoded)
+            except (subprocess.CalledProcessError, OSError, RuntimeError):
+                log.warning("could not compress %s", src, exc_info=True)
+            else:
+                dest = folder / f"{name}.opus"
+                store_file(dest, encoded)
+                # Still open on Windows: the track is held by now, so this mustn't fail the fetch.
+                with contextlib.suppress(OSError):
+                    src.unlink()
+                return dest
+    dest = folder / f"{name}{src.suffix}"
+    store_file(dest, src)
+    return dest
 
 
 def _shared_download(item: dict[str, Any]) -> Path | None:

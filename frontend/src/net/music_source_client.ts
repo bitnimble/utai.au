@@ -10,7 +10,7 @@
 
 import { backendFetch, errorDetail, okJson } from 'src/net/backend_fetch';
 import { sleep } from 'src/net/fetch_retrying';
-import { downloadJobAudio, parseBackendAudio, type JobAudio } from 'src/net/job_audio';
+import { parseBackendAudio, receiveJobAudio, type JobAudio } from 'src/net/job_audio';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
 
 export type AuthKind = 'anonymous' | 'credentials' | 'token' | 'oauth' | 'interactive';
@@ -245,7 +245,7 @@ async function startFetchJob(track: TrackResult, signal: AbortSignal | undefined
 async function fetchedAudio(raw: unknown, signal: AbortSignal | undefined): Promise<JobAudio> {
   const audio = parseBackendAudio(raw, 'track');
   if (audio == null) throw new Error('music/fetch returned no audio');
-  return downloadJobAudio(audio, signal);
+  return receiveJobAudio(audio, signal);
 }
 
 function fetchJobUrl(jobId: string): string {

@@ -22,6 +22,7 @@ import { parseEnhancedLrc, serializeEnhancedLrc } from 'src/lyrics/enhanced_lrc'
 import { LyricLine } from 'src/lyrics/lrc';
 import type { PitchContour } from 'src/lyrics/pitch_contour';
 import { LyricsSource } from 'src/lyrics/store';
+import type { JobAudio } from 'src/net/job_audio';
 import type { SkipSegment } from 'src/skip_segments/sponsorblock';
 import {
   AudioStemDoc,
@@ -78,7 +79,7 @@ export type LoadedSong = {
   lyrics: LoadedLyrics[];
 };
 
-export type PreparedStem = { role: AudioStemRole; file: File; pitchContour?: PitchContour };
+export type PreparedStem = { role: AudioStemRole; audio: JobAudio; pitchContour?: PitchContour };
 
 /** Everything the session needs to play a song, ready to load. */
 export type PreparedSong = {

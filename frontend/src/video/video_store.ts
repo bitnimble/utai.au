@@ -2,6 +2,8 @@ import { makeAutoObservable } from 'mobx';
 import { SongStore } from 'src/karaoke/song_store';
 import { songVideoId } from './youtube';
 
+export type VideoSlot = 0 | 1;
+
 /**
  * Data-only store for the song's embedded video. `videoId` is a reshape of the
  * loaded song's source / music-video URL into a YouTube id (undefined for a
@@ -16,6 +18,8 @@ export class VideoStore {
   readonly nativeFailedIds: Set<string> = new Set();
   /** The video whose native backing has decoded a frame to show. */
   firstFrameVideoId: string | undefined = undefined;
+  /** Which of the native player's two `<video>`s is showing; the other holds the next song's. */
+  activeSlot: VideoSlot = 0;
 
   constructor(private readonly song: SongStore) {
     makeAutoObservable<this, 'song'>(this, { song: false });

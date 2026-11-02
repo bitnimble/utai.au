@@ -1,16 +1,18 @@
 import { comparer, makeAutoObservable, reaction, runInAction } from 'mobx';
 import { playbackEngine } from 'src/editing/playback/player';
 import { appSettingsStore } from 'src/settings/app_settings_presenter';
-import { AudioTrackId, AudioTrackRole } from 'src/editing/playback/audio_tracks';
-import type { PitchContour } from 'src/lyrics/pitch_contour';
+import { AudioTrack, AudioTrackId } from 'src/editing/playback/audio_tracks';
+import { audioFilename, openSongPcm } from 'src/editing/playback/song_pcm';
 import {
   MAX_PX_PER_SECOND,
   MIN_PX_PER_SECOND,
   ViewportStore,
 } from 'src/editing/viewport/viewport_store';
-import { toastStore } from 'src/ui/toasts/toasts';
+import type { PreparedStem } from './song_bundle';
 import { SongStore } from './song_store';
 import { SongMeta } from './song_schema';
+
+export type PreloadedSongAudio = { tracks: AudioTrack[]; failures: string[]; loudnessGain: number };
 
 /**
  * The single writer for the karaoke session: viewport mutations (scroll /
@@ -83,21 +85,36 @@ export class KaraokePresenter {
 
   // --- audio ---
 
-  /** Decode a local audio file into a new track and refresh the song
-   *  duration (the longest track drives the shared time axis).
-   *  Returns the new track's id, or undefined if decoding failed. */
-  async loadAudioFile(file: File, role?: AudioTrackRole): Promise<AudioTrackId | undefined> {
-    try {
-      const id = await playbackEngine.loadAudioTrack(file, role);
-      runInAction(() => {
-        this.song.durationSec = playbackEngine.durationSec;
-      });
-      return id;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toastStore.showError(`Could not load ${file.name}: ${message}`);
-      return undefined;
+  /** Everything a song's audio takes, done off to the side of the current song.
+   *  A stem that can't be decoded is left out and listed in `failures`. */
+  async preloadSongAudio(stems: readonly PreparedStem[]): Promise<PreloadedSongAudio> {
+    const opened = await openSongPcm(stems.map((s) => s.audio), playbackEngine.sampleRate());
+    const tracks: AudioTrack[] = [];
+    const failures = opened.failures;
+    for (const [i, { audio, role, pitchContour }] of stems.entries()) {
+      const pcm = opened.stems[i];
+      if (pcm == null) continue;
+      const filename = audioFilename(audio);
+      try {
+        tracks.push(await playbackEngine.preloadTrack({ filename, audio, pcm, role, pitchContour }));
+      } catch (err) {
+        pcm.release();
+        failures.push(`Could not load ${filename}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
+    return { tracks, failures, loudnessGain: opened.loudnessGain };
+  }
+
+  /** Refreshes the song duration too: the longest track drives the shared time axis. */
+  installSongAudio({ tracks, loudnessGain }: PreloadedSongAudio): void {
+    playbackEngine.installTracks(tracks, loudnessGain);
+    runInAction(() => {
+      this.song.durationSec = playbackEngine.durationSec;
+    });
+  }
+
+  discardSongAudio({ tracks }: PreloadedSongAudio): void {
+    for (const track of tracks) playbackEngine.discardPreloadedTrack(track);
   }
 
   setTrackVolume(id: AudioTrackId, volume: number): void {
@@ -110,10 +127,6 @@ export class KaraokePresenter {
 
   setSpeed(rate: number): void {
     playbackEngine.setSpeed(rate);
-  }
-
-  setTrackPitchContour(id: AudioTrackId, contour: PitchContour): void {
-    playbackEngine.setTrackPitchContour(id, contour);
   }
 
   /** Tear the current song down: stop playback, drop every audio track,

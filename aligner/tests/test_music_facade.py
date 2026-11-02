@@ -13,6 +13,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from app.config import settings
 from app.music import facade as facade_module
 from app.music.facade import (
@@ -22,6 +24,7 @@ from app.music.facade import (
     _opt_seconds,
 )
 from app.music.models import AddAccountRequest, TrackResult
+from tests.tones import assert_opus_tone, write_tone
 
 # --- fakes ----------------------------------------------------------------
 
@@ -502,6 +505,42 @@ def test_a_long_title_still_moves_into_the_songs_folder(tmp_path, monkeypatch):
     assert held.parent == tmp_path / "cache" / "songs" / "dQw4w9WgXcQ" / "download"
     assert result["audio"]["filename"] == "歌" * 50
     assert not file.exists()
+
+
+def _adopted(tmp_path, monkeypatch, name: str, write: Any) -> dict[str, Any]:
+    file = _shared_downloads(tmp_path, monkeypatch)
+    source = file.with_name(name)
+    file.unlink()
+    write(source)
+    client = FakeClient()
+    client.queue_sequence = [_downloaded(source)]
+    audio = _collect(_facade(tmp_path, client, FakePool()).fetch(_YT_URL))[-1]["audio"]
+    assert not source.exists()
+    return audio
+
+
+@pytest.mark.parametrize("name", ["Song.FLAC", "Song.wav"])
+def test_a_lossless_download_is_held_as_opus(tmp_path, monkeypatch, name):
+    audio = _adopted(tmp_path, monkeypatch, name, lambda path: write_tone(path, 440))
+
+    assert Path(audio["serverPath"]).suffix == ".opus"
+    assert audio["contentType"] == "audio/opus"
+    assert audio["filename"] == "Song_ A"
+    assert_opus_tone(Path(audio["serverPath"]), 440)
+
+
+def test_a_lossy_download_is_held_untouched(tmp_path, monkeypatch):
+    audio = _adopted(tmp_path, monkeypatch, "Song.webm", lambda p: p.write_bytes(b"audio"))
+
+    assert Path(audio["serverPath"]).suffix == ".webm"
+    assert Path(audio["serverPath"]).read_bytes() == b"audio"
+
+
+def test_a_lossless_download_that_will_not_encode_is_held_as_it_came(tmp_path, monkeypatch):
+    audio = _adopted(tmp_path, monkeypatch, "Song.flac", lambda p: p.write_bytes(b"not audio"))
+
+    assert Path(audio["serverPath"]).suffix == ".flac"
+    assert Path(audio["serverPath"]).read_bytes() == b"not audio"
 
 
 def test_a_second_fetch_waits_for_a_move_whose_fetch_was_cancelled(tmp_path, monkeypatch):

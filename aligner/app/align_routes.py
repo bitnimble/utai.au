@@ -14,7 +14,6 @@ import json
 import logging
 import math
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -32,6 +31,7 @@ from app.job_stream import (
     require_models,
     require_pipeline_role,
 )
+from app.pipeline.audio_io import encode_opus
 from app.pipeline.lyrics_align import InputLine, aligner, lines_to_json
 from app.pipeline.separate import separator
 from app.request_context import new_request_id, run_cancellable, set_request_id
@@ -254,18 +254,5 @@ def _encode_vocals_to_opus(src: Path, dest: Path) -> None:
     `-application voip` biases libopus toward speech intelligibility at
     low bitrate. Raises CalledProcessError on encoder failure so the
     caller can decide whether to fall back to running uncached."""
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        raise RuntimeError(
-            "ffmpeg not found on PATH; required to populate the vocals cache."
-        )
     dest.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        ffmpeg, "-y", "-loglevel", "error", "-nostdin",
-        "-i", str(src),
-        "-ac", "1", "-ar", "16000",
-        "-c:a", "libopus", "-b:a", "24k",
-        "-application", "voip",
-        str(dest),
-    ]
-    subprocess.run(cmd, check=True)
+    encode_opus(src, dest, "-ac", "1", "-ar", "16000", "-b:a", "24k", "-application", "voip")

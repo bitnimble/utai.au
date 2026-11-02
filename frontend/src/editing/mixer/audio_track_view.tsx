@@ -4,7 +4,8 @@ import { observer } from 'mobx-react-lite';
 import React from 'react';
 import { KaraokePresenterContext } from 'src/karaoke/karaoke_contexts';
 import type { StructuralPresenter } from 'src/editing/structure/structural_presenter';
-import { AudioTrack, AudioTrackId, audioTrackLabel } from 'src/editing/playback/audio_tracks';
+import { AudioTrack, audioTrackLabel } from 'src/editing/playback/audio_tracks';
+import { playbackEngine } from 'src/editing/playback/player';
 import { waveformWorker, BarSlice } from 'src/editing/playback/waveform_worker_client';
 import { WAVEFORM_PAINT_COLOR } from 'src/editing/utils/waveform_color';
 import { Slider } from 'src/ui/slider/slider';
@@ -38,15 +39,11 @@ const WAVEFORM_RENDER_DEBOUNCE_MS = 120;
 const transferredCanvases = new WeakSet<HTMLCanvasElement>();
 const pendingChunkReleases = new Set<string>();
 
-function attachWaveformChunk(
-  canvas: HTMLCanvasElement,
-  chunkKey: string,
-  trackId: AudioTrackId,
-): () => void {
+function attachWaveformChunk(canvas: HTMLCanvasElement, chunkKey: string, track: AudioTrack): () => void {
   pendingChunkReleases.delete(chunkKey);
   if (!transferredCanvases.has(canvas)) {
     transferredCanvases.add(canvas);
-    waveformWorker.attachChunk(chunkKey, canvas.transferControlToOffscreen(), trackId);
+    waveformWorker.attachChunk(chunkKey, canvas.transferControlToOffscreen(), track);
   }
   return () => {
     pendingChunkReleases.add(chunkKey);
@@ -163,8 +160,6 @@ const AudioTrackWaveformCanvas = observer(
     }
     if (visibleChunks.length === 0) return null;
 
-    const ampScale = waveformWorker.getAmpScale(track.id);
-
     return (
       <>
         {visibleChunks.map((chunk, i) => (
@@ -175,7 +170,6 @@ const AudioTrackWaveformCanvas = observer(
             bars={layout.bars}
             height={height}
             laneColor={track.color}
-            ampScale={ampScale}
             livePxPerBeat={livePxPerBeat}
             padBeats={padBeats}
             testId={i === 0 ? testId : undefined}
@@ -196,7 +190,6 @@ const AudioTrackWaveformChunk = observer(
     bars,
     height,
     laneColor,
-    ampScale,
     livePxPerBeat,
     padBeats,
     testId,
@@ -206,7 +199,6 @@ const AudioTrackWaveformChunk = observer(
     bars: BarBeat[];
     height: number;
     laneColor: string | undefined;
-    ampScale: number;
     livePxPerBeat: number;
     padBeats: number;
     testId?: string;
@@ -235,8 +227,10 @@ const AudioTrackWaveformChunk = observer(
         console.warn('[mixer] OffscreenCanvas not supported; waveform chunk will not render');
         return;
       }
-      return attachWaveformChunk(canvas, chunkKey, track.id);
-    }, [chunkKey, track.id]);
+      // Dropped since this render: attaching would spawn a worker nothing terminates.
+      if (playbackEngine.audioTracks.get(track.id) !== track) return;
+      return attachWaveformChunk(canvas, chunkKey, track);
+    }, [chunkKey, track]);
 
     const isFirstDrawRef = React.useRef(true);
     React.useEffect(() => {
@@ -275,7 +269,6 @@ const AudioTrackWaveformChunk = observer(
           backingH,
           songLeadInSec,
           laneColor ?? WAVEFORM_PAINT_COLOR,
-          ampScale,
         );
       };
       if (isFirstDrawRef.current) {
@@ -285,7 +278,7 @@ const AudioTrackWaveformChunk = observer(
       }
       const id = window.setTimeout(fire, WAVEFORM_RENDER_DEBOUNCE_MS);
       return () => window.clearTimeout(id);
-    }, [chunkKey, chunk, bars, height, livePxPerBeat, laneColor, ampScale, chunkLayout.width]);
+    }, [chunkKey, track.id, chunk, bars, height, livePxPerBeat, laneColor, chunkLayout.width]);
 
     return (
       <canvas

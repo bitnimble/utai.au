@@ -5,23 +5,29 @@ song's folder (see `song_cache`), so a repeat song reuses it."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import shutil
+import subprocess
 from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
+from app.backend_files import backend_file
 from app.job_stream import (
     Envelope,
+    hash_file,
     ndjson_job,
     read_job_audio,
     require_models,
     require_pipeline_role,
 )
 from app.pipeline import language_id
+from app.pipeline.audio_io import encode_transparent_opus
 from app.pipeline.beats import analyze as beats
 from app.pipeline.pitch import analyze as pitch
 from app.pipeline.separate import separator
@@ -33,14 +39,31 @@ from app.request_context import (
     run_cancellable,
     set_request_id,
 )
-from app.song_cache import is_valid_song_id, read_json, store_file, touch_song_dir, write_json
+from app.song_cache import (
+    is_valid_song_id,
+    part_path,
+    pcm_path,
+    read_json,
+    song_id_of_path,
+    store_file,
+    touch_song_dir,
+    trim_pcm,
+    write_json,
+)
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/music")
 
 _STEM_ROLES = ("vocals", "accompaniment")
-_STEM_FILES = {f"{role}.flac": role for role in _STEM_ROLES}
+_STEM_FILES = {f"{role}.opus": role for role in _STEM_ROLES}
+_STEM_CONTENT_TYPE = "audio/ogg"
+
+PCM_RATES = frozenset({
+    8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000, 64_000, 88_200,
+    96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000,
+})
+_pcm_writes: dict[Path, asyncio.Future[None]] = {}
 
 
 @router.post("/separate")
@@ -54,8 +77,8 @@ async def lyrics_separate(
     `job_stream`) ending:
 
         {"type": "result", "data": {"stems": [
-            {"role": "vocals", "path": "music/stems/<id>/vocals.flac",
-             "serverPath": "...", "filename": "vocals.flac", "contentType": "audio/flac"},
+            {"role": "vocals", "path": "music/stems/<id>/vocals.opus",
+             "serverPath": "...", "filename": "vocals.opus", "contentType": "audio/ogg"},
             {"role": "accompaniment", ...}]}}
 
     The mix is an upload, or `mixPath` for a file this backend shares. The stems
@@ -74,18 +97,50 @@ async def lyrics_separate(
         return _stems_result_envelope(audio.song_id)
 
     async def separate() -> Envelope:
+        if await _convert_flac_stems(stems_dir, audio.scratch_dir):
+            log.info("lyrics_separate: stems converted from FLAC (%s)", audio.song_id)
+            return _stems_result_envelope(audio.song_id)
         paths = await run_cancellable(separator.get().run_stems, audio.path, audio.scratch_dir)
         for name, role in _STEM_FILES.items():
             await asyncio.to_thread(store_file, stems_dir / name, paths[role])
+        _remove_flac_stems(stems_dir)
         log.info("lyrics_separate: stems cache MISS, populated (%s)", audio.song_id)
         return _stems_result_envelope(audio.song_id)
 
     return ndjson_job(request, request_id, "lyrics_separate", audio, separate, gpu=True, cached=cached)
 
 
+async def _convert_flac_stems(stems_dir: Path, scratch_dir: Path) -> bool:
+    """Converts FLAC stems on disk to Opus. False if a stem is missing or won't decode,
+    so the caller separates afresh."""
+    stems = [stems_dir / name for name in _STEM_FILES]
+    if not all(stem.is_file() or stem.with_suffix(".flac").is_file() for stem in stems):
+        return False
+    for stem in stems:
+        if stem.is_file():
+            continue
+        flac = stem.with_suffix(".flac")
+        encoded = scratch_dir / stem.name
+        try:
+            await run_cancellable(encode_transparent_opus, flac, encoded)
+        except subprocess.CalledProcessError as exc:
+            log.warning("lyrics_separate: can't convert %s: %s", flac, exc.stderr)
+            return False
+        await asyncio.to_thread(store_file, stem, encoded)
+    _remove_flac_stems(stems_dir)
+    return True
+
+
+def _remove_flac_stems(stems_dir: Path) -> None:
+    for flac in stems_dir.glob("*.flac"):
+        # Still open on Windows: harmless, it goes when the song does.
+        with contextlib.suppress(OSError):
+            flac.unlink()
+
+
 @router.get("/stems/{song_id}/{name}")
 async def lyrics_stem(song_id: str, name: str) -> FileResponse:
-    """Stream a separated stem FLAC produced by /music/separate.
+    """Stream a separated stem produced by /music/separate.
 
     `song_id` and `name`, one of the fixed stem filenames, are validated to
     foreclose path traversal (no `../`, no absolute paths, no arbitrary reads
@@ -95,7 +150,66 @@ async def lyrics_stem(song_id: str, name: str) -> FileResponse:
     stem_path = _stems_dir(song_id) / name
     if not stem_path.is_file():
         raise HTTPException(status_code=404, detail="No such stem.")
-    return FileResponse(str(stem_path), media_type="audio/flac", filename=name)
+    return FileResponse(str(stem_path), media_type=_STEM_CONTENT_TYPE, filename=name)
+
+
+@router.get("/pcm")
+async def music_pcm(path: str, rate: int) -> FileResponse:
+    """A backend-held audio file as headerless 16-bit little-endian stereo PCM at
+    `rate`, what the player streams: a frame is at byte `frame * 4`, so any part of
+    any song is one Range request away, with no decoder on the client. Decoded on
+    the first request for a file and rate, and again once evicted (`trim_pcm`)."""
+    source = backend_file(path)
+    if source is None:
+        raise HTTPException(status_code=404, detail="No such audio.")
+    if rate not in PCM_RATES:
+        raise HTTPException(status_code=400, detail=f"Unsupported sample rate: {rate}.")
+    song_id = song_id_of_path(source)
+    if song_id is None:
+        stat = source.stat()
+        song_id = await asyncio.to_thread(_hashed_song_id, source, stat.st_size, stat.st_mtime_ns)
+    touch_song_dir(song_id)
+    pcm = pcm_path(song_id, source, rate)
+    if not pcm.is_file():
+        try:
+            await _make_pcm_once(source, pcm, rate)
+        except subprocess.CalledProcessError as exc:
+            log.warning("music_pcm: can't transcode %s: %s", source.name, exc.stderr)
+            raise HTTPException(status_code=415, detail="Can't read this audio.") from exc
+    return FileResponse(str(pcm), media_type="application/octet-stream")
+
+
+@lru_cache(maxsize=256)
+def _hashed_song_id(path: Path, _size: int, _mtime_ns: int) -> str:
+    """Every Range request asks, so a file's whole contents are read only once per version of it."""
+    return hash_file(path)
+
+
+async def _make_pcm_once(source: Path, pcm: Path, rate: int) -> None:
+    write = _pcm_writes.get(pcm)
+    if write is None:
+        write = asyncio.ensure_future(asyncio.to_thread(_write_pcm, source, pcm, rate))
+        _pcm_writes[pcm] = write
+        write.add_done_callback(lambda _: _pcm_writes.pop(pcm, None))
+    # Shielded: other requests may be waiting on it when this one's client goes away.
+    await asyncio.shield(write)
+
+
+def _write_pcm(source: Path, pcm: Path, rate: int) -> None:
+    pcm.parent.mkdir(parents=True, exist_ok=True)
+    partial = part_path(pcm)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(source), "-map", "a:0", "-ac", "2",
+             "-af", f"aresample={rate}:filter_size=64:phase_shift=14:cutoff=0.97:linear_interp=1",
+             "-f", "s16le", "-acodec", "pcm_s16le", str(partial)],
+            capture_output=True, check=True, text=True,
+        )
+        # Renamed in last: a Range request must never see a half-written copy.
+        partial.replace(pcm)
+    finally:
+        partial.unlink(missing_ok=True)
+    trim_pcm()
 
 
 def _stems_dir(song_id: str) -> Path:
@@ -115,7 +229,7 @@ def _stems_result_envelope(song_id: str) -> Envelope:
                     "path": f"music/stems/{song_id}/{name}",
                     "serverPath": str(_stems_dir(song_id) / name),
                     "filename": name,
-                    "contentType": "audio/flac",
+                    "contentType": _STEM_CONTENT_TYPE,
                 }
                 for name, role in _STEM_FILES.items()
             ]

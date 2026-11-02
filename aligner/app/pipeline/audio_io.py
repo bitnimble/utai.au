@@ -1,4 +1,4 @@
-"""Fast audio decoding.
+"""Fast audio decoding, and the Opus encoding of what's kept.
 
 soundfile (libsndfile) decodes WAV/FLAC/OGG/Opus/... in one shot; use it directly
 for anything it can open. For containers it can't (e.g. some MP3/M4A/AAC),
@@ -14,11 +14,31 @@ libsndfile, so decoding compatible formats needs no system library.
 from __future__ import annotations
 
 import io
+import shutil
 import subprocess
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+
+_TRANSPARENT_OPUS_BITRATE = "192k"
+
+
+def encode_opus(src: str | Path, dest: str | Path, *options: str) -> None:
+    """Raises RuntimeError without ffmpeg, CalledProcessError when `src` won't encode."""
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError("ffmpeg not found on PATH")
+    subprocess.run(
+        [ffmpeg, "-nostdin", "-v", "error", "-y", "-i", str(src), *options, "-c:a", "libopus", "-f", "opus", str(dest)],
+        capture_output=True, check=True, text=True,
+    )
+
+
+def encode_transparent_opus(src: str | Path, dest: str | Path) -> None:
+    """Encode `src` to stereo Opus in `dest`, for keeping audio that will be played. Equal-length
+    sources decode to equal lengths, so stems encoded apart stay sample-locked."""
+    encode_opus(src, dest, "-map", "a:0", "-ac", "2", "-ar", "48000", "-b:a", _TRANSPARENT_OPUS_BITRATE)
 
 
 def load_samples(

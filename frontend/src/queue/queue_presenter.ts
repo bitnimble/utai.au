@@ -1,4 +1,4 @@
-import { makeAutoObservable, reaction } from 'mobx';
+import { comparer, makeAutoObservable, reaction } from 'mobx';
 import type { PlaybackEngine } from 'src/editing/playback/playback_engine';
 import type { PreparedSong } from 'src/karaoke/song_bundle';
 import type { SongIoPresenter } from 'src/karaoke/song_io_presenter';
@@ -13,8 +13,8 @@ import { PlayedSong, QueueItem, QueueItemId, QueueSidebarTab, QueueStore } from 
 
 const MAX_HISTORY_LENGTH = 100;
 
-type SongLoader = Pick<SongIoPresenter, 'loadPreparedSong' | 'clearSong'>;
-type Transport = Pick<PlaybackEngine, 'state' | 'play' | 'onEnded'>;
+type SongLoader = Pick<SongIoPresenter, 'preload' | 'loadPreparedSong' | 'clearSong'>;
+type Transport = Pick<PlaybackEngine, 'state' | 'play' | 'stop' | 'onEnded'>;
 type DownloadTrack = (track: TrackResult, opts?: DownloadTrackOptions) => TrackDownload;
 
 /** Sole writer for {@link QueueStore}. */
@@ -88,6 +88,14 @@ export class QueuePresenter {
         },
         { fireImmediately: true },
       ),
+      // Held while a song starts: the one starting still needs its preloaded video.
+      reaction(
+        () => [this.store.starting == null, this.store.nextReadySong] as const,
+        ([idle, song]) => {
+          if (idle) this.songIo.preload(song);
+        },
+        { fireImmediately: true, equals: comparer.shallow },
+      ),
     );
   }
 
@@ -95,6 +103,7 @@ export class QueuePresenter {
     this.disposed = true;
     for (const dispose of this.disposers) dispose();
     this.disposers = [];
+    this.songIo.preload(undefined);
     this.preparing?.controller.abort();
     for (const { controller } of this.downloads.values()) controller.abort();
     this.downloads.clear();
@@ -153,7 +162,9 @@ export class QueuePresenter {
   /** Drop the current song; the next one starts as soon as it's ready. */
   skip(): void {
     if (!this.store.canSkip) return;
-    this.songIo.clearSong();
+    // Not cleared when the next song can follow at once: that would unmount the player holding its video.
+    if (this.store.nextReadySong != null) this.transport.stop();
+    else this.songIo.clearSong();
     this.store.nowPlaying = undefined;
     this.store.awaitingNext = true;
   }
@@ -263,6 +274,8 @@ export class QueuePresenter {
         this.prepareNext();
         return;
       }
+      // Its stems are all the song needs now; this holds the rest of the download.
+      this.downloads.delete(item.id);
     }
     this.update(item.id, {
       status: { kind: 'ready', song },

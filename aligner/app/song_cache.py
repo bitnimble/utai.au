@@ -1,9 +1,9 @@
-"""What the backend keeps per song, all under `cache_dir/songs/<song_id>/` so
-that dropping a song drops everything it took:
+"""What the backend keeps per song, under `cache_dir/songs/<song_id>/` so that
+dropping a song drops everything it took:
 
     download/<title>.<ext>              the track OnTheSpot fetched
     video/<video_id>-<digest>.mp4       backing video
-    stems/{vocals,accompaniment}.flac   full-quality stems
+    stems/{vocals,accompaniment}.opus   full-quality stems
     vocals/<key>.opus                   the aligner's vocals, for a mix aligned without stems
     alignment/<key>.json                alignment results, one per lyrics + aligner version
     beats.json, pitch.json, language.json
@@ -12,6 +12,9 @@ that dropping a song drops everything it took:
 backing video share a folder), the SHA-256 of any other source's URL, or the
 SHA-256 of an uploaded file. A job naming a file already in a song's folder
 belongs to that song.
+
+Audio being played is decoded to `cache_dir/pcm/`, a far smaller LRU of its own:
+a copy evicted is only decoded again.
 """
 from __future__ import annotations
 
@@ -43,6 +46,8 @@ _YOUTUBE_HOSTS = frozenset({"youtube.com", "music.youtube.com", "m.youtube.com"}
 _YOUTUBE_PATH_RE = re.compile(r"^/(?:embed|shorts|v)/([^/]+)")
 
 _trim_lock = threading.Lock()
+# Its own: a decode waits on this trim, and a song trim can take seconds.
+_pcm_trim_lock = threading.Lock()
 
 
 def is_valid_song_id(song_id: str) -> bool:
@@ -106,7 +111,7 @@ def store_file(dest: Path, src: Path) -> None:
     """Move `src` to `dest` so that a reader never sees it half-written, then trim
     the cache in the background."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _part_path(dest)
+    tmp = part_path(dest)
     try:
         shutil.move(str(src), str(tmp))
         os.replace(tmp, dest)
@@ -114,6 +119,23 @@ def store_file(dest: Path, src: Path) -> None:
         tmp.unlink(missing_ok=True)
     # Not on the caller: stems are stored holding the GPU lock, and a trim can take seconds.
     threading.Thread(target=trim_songs, name="trim-songs", daemon=True).start()
+
+
+def part_path(dest: Path) -> Path:
+    # Unique: sessions preparing the same song write the same `dest` concurrently.
+    return dest.with_name(f"{dest.name}.{uuid.uuid4().hex}.part")
+
+
+def pcm_path(song_id: str, source: Path, rate: int) -> Path:
+    """Where this version of a song's file is kept decoded at `rate`, marked as just
+    used: its mtime is the LRU order."""
+    stat = source.stat()
+    # Hashed: a download's name is already near the longest a filename can be.
+    version = hashlib.sha256(f"{source.name}-{stat.st_size}-{stat.st_mtime_ns}".encode()).hexdigest()[:16]
+    path = _pcm_root() / f"{song_id}-{version}-{rate}.s16"
+    with contextlib.suppress(OSError):
+        os.utime(path)
+    return path
 
 
 def read_json(path: Path) -> Any | None:
@@ -125,7 +147,7 @@ def read_json(path: Path) -> Any | None:
 
 def write_json(path: Path, value: Any) -> None:
     """Best-effort: a failure only costs the next request a recompute."""
-    tmp = _part_path(path)
+    tmp = part_path(path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
@@ -150,20 +172,45 @@ def trim_songs() -> None:
                 )
 
 
+def trim_pcm() -> None:
+    with _pcm_trim_lock:
+        copies = sorted(_pcm_copies())
+        total = sum(size for _, size, _ in copies)
+        for _, size, path in copies:
+            if total <= settings.cache_pcm_cap_bytes:
+                break
+            if not _in_use(path):
+                with contextlib.suppress(OSError):
+                    path.unlink()
+                    total -= size
+
+
 def tidy_cache() -> None:
-    """Startup housekeeping: removes cache dirs nothing reads, then applies the cap."""
+    """Startup housekeeping: removes cache dirs nothing reads and writes no one
+    finished, then applies the caps."""
     for name in _UNUSED_CACHE_DIRS:
         shutil.rmtree(settings.cache_dir / name, ignore_errors=True)
+    for partial in _pcm_root().glob("*.part"):
+        partial.unlink(missing_ok=True)
     trim_songs()
+    trim_pcm()
 
 
 def _songs_root() -> Path:
     return settings.cache_dir / "songs"
 
 
-def _part_path(dest: Path) -> Path:
-    # Unique: sessions preparing the same song write the same `dest` concurrently.
-    return dest.with_name(f"{dest.name}.{uuid.uuid4().hex}.part")
+def _pcm_root() -> Path:
+    return settings.cache_dir / "pcm"
+
+
+def _pcm_copies() -> list[tuple[float, int, Path]]:
+    copies = []
+    for path in _pcm_root().glob("*"):
+        with contextlib.suppress(OSError):
+            stat = path.stat()
+            copies.append((stat.st_mtime, stat.st_size, path))
+    return copies
 
 
 def _song_folders() -> list[tuple[float, int, Path]]:
@@ -177,11 +224,11 @@ def _song_folders() -> list[tuple[float, int, Path]]:
     return songs
 
 
-def _in_use(folder: Path) -> bool:
+def _in_use(path: Path) -> bool:
     # Stat now, not at scan time: a job may have just been handed this folder's paths.
     # Nothing pins a song's files between its jobs, yet later jobs name them by path.
     try:
-        return time.time() - folder.stat().st_mtime < _IN_USE_SEC
+        return time.time() - path.stat().st_mtime < _IN_USE_SEC
     except OSError:
         return True
 
