@@ -40,6 +40,7 @@ export class AppSettingsPresenter {
         showFurigana: this.settings.showFurigana,
         showRomaji: this.settings.showRomaji,
         vocalSurroundReverb: this.settings.vocalSurroundReverb,
+        normalizeVolume: this.settings.normalizeVolume,
       });
       try {
         localStorage.setItem(STORAGE_KEY, snapshot);
@@ -116,6 +117,10 @@ export class AppSettingsPresenter {
     this.settings.vocalSurroundReverb = on;
   }
 
+  setNormalizeVolume(on: boolean): void {
+    this.settings.normalizeVolume = on;
+  }
+
   setLyricsFontSize(px: number): void {
     this.settings.lyricsFontSizePx = Math.max(
       MIN_LYRIC_FONT_SIZE_PX,
@@ -181,6 +186,9 @@ export class AppSettingsPresenter {
       }
       if (typeof obj.vocalSurroundReverb === 'boolean') {
         this.settings.vocalSurroundReverb = obj.vocalSurroundReverb;
+      }
+      if (typeof obj.normalizeVolume === 'boolean') {
+        this.settings.normalizeVolume = obj.normalizeVolume;
       }
     } catch {
       // corrupt JSON; keep defaults

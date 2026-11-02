@@ -55,6 +55,7 @@ test('playback: the Audio menu speed is heard at once, at the same pitch, and fo
         seek: (s: number) => void;
         pause: () => Promise<void>;
         resume: () => Promise<void>;
+        setNormalizeVolume: (on: boolean) => void;
       };
     };
     heard?: () => Promise<{ hz: number; peak: number }>;
@@ -102,6 +103,7 @@ test('playback: the Audio menu speed is heard at once, at the same pitch, and fo
     `,
   });
   await page.waitForFunction(() => (window as unknown as EngineWindow).heard != null);
+  await page.evaluate(() => (window as unknown as EngineWindow).utai.playbackEngine.setNormalizeVolume(false));
   await page.evaluate(() => (window as unknown as EngineWindow).utai.playbackEngine.seek(0));
   const heard = (): Promise<{ hz: number; peak: number }> =>
     page.evaluate(() => (window as unknown as EngineWindow).heard!());
@@ -165,6 +167,80 @@ test('playback: the Audio menu speed is heard at once, at the same pitch, and fo
   expect(backToNormal.hz).toBeGreaterThan(420);
   expect(backToNormal.hz).toBeLessThan(460);
   expect(backToNormal.peak).toBeGreaterThan(slowed.peak);
+});
+
+test('playback: volume normalisation boosts a quiet song by default, and the Audio menu turns it off across reloads', async ({
+  page,
+}) => {
+  await page.goto(HOST_PATH);
+
+  const seconds = 10;
+  const sampleRate = 44100;
+  const quietTone = makeWav(seconds, sampleRate);
+  const amplitude = 0.098;
+  for (let i = 0; i < seconds * sampleRate; i++) {
+    const sample = amplitude * Math.sin((2 * Math.PI * 440 * i) / sampleRate);
+    quietTone.writeInt16LE(Math.round(sample * 32767), 44 + i * 2);
+  }
+  const loadTone = (): Promise<void> =>
+    page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+      name: 'quiet.wav',
+      mimeType: 'audio/wav',
+      buffer: quietTone,
+    });
+
+  type EngineWindow = {
+    utai: { playbackEngine: { state: string; audioTracks: Map<string, { outputGain: number }> } };
+    heardPeak?: () => Promise<number>;
+  };
+  const outputGain = (): Promise<number | undefined> =>
+    page.evaluate(
+      () => Array.from((window as unknown as EngineWindow).utai.playbackEngine.audioTracks.values())[0]?.outputGain,
+    );
+  const toneIsPlaying = (): Promise<void> =>
+    expect
+      .poll(() => page.evaluate(() => (window as unknown as EngineWindow).utai.playbackEngine.state), {
+        timeout: 15_000,
+      })
+      .toBe('playing');
+
+  await loadTone();
+  await toneIsPlaying();
+  expect(await outputGain()).toBeGreaterThan(2);
+  expect(await outputGain()).toBeLessThan(2.4);
+
+  await page.addScriptTag({
+    type: 'module',
+    content: `
+      import { webAudioOutput } from '/src/editing/playback/player.ts';
+      const analyser = new AnalyserNode(webAudioOutput.getAudioContext(), { fftSize: 16384 });
+      webAudioOutput.getOutputNode().connect(analyser);
+      window.heardPeak = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        const samples = new Float32Array(analyser.fftSize);
+        analyser.getFloatTimeDomainData(samples);
+        return samples.reduce((peak, s) => Math.max(peak, Math.abs(s)), 0);
+      };
+    `,
+  });
+  await page.waitForFunction(() => (window as unknown as EngineWindow).heardPeak != null);
+  const heardPeak = (): Promise<number> => page.evaluate(() => (window as unknown as EngineWindow).heardPeak!());
+  expect(await heardPeak()).toBeGreaterThan(amplitude * 1.8);
+
+  await page.getByTestId('audio-menu').click();
+  await expect(page.getByTestId('normalize-volume')).toHaveAttribute('aria-checked', 'true');
+  await page.getByTestId('normalize-volume').click();
+  expect(await outputGain()).toBe(1);
+  const unnormalizedPeak = await heardPeak();
+  expect(unnormalizedPeak).toBeGreaterThan(amplitude * 0.8);
+  expect(unnormalizedPeak).toBeLessThan(amplitude * 1.2);
+
+  await page.reload();
+  await loadTone();
+  await toneIsPlaying();
+  expect(await outputGain()).toBe(1);
+  await page.getByTestId('audio-menu').click();
+  await expect(page.getByTestId('normalize-volume')).toHaveAttribute('aria-checked', 'false');
 });
 
 test('playback: a queued track auto-plays, and stop then play advances the playhead again', async ({

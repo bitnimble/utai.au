@@ -32,6 +32,8 @@ export class AudioTrack {
   volume = 1;
   muted = false;
   effects: readonly TrackEffect[] = [];
+  /** Song-wide volume normalisation; may exceed 1. */
+  loudnessGain = 1;
 
   /** Vocal pitch contour, present on a `vocals` stem once the backend extracted
    *  it. Read imperatively at align time to map pitch onto words, never in a
@@ -60,9 +62,9 @@ export class AudioTrack {
     });
   }
 
-  /** Linear gain the mixer should apply: 0 when muted, else `volume`. */
+  /** Linear gain the mixer should apply: 0 when muted, else `volume` at the song's loudness. */
   get outputGain(): number {
-    return this.muted ? 0 : this.volume;
+    return this.muted ? 0 : this.volume * this.loudnessGain;
   }
 }
 

@@ -20,15 +20,17 @@ import { SongMeta } from './song_schema';
  */
 export class KaraokePresenter {
   private disposeVocalEffects: (() => void) | undefined;
+  private disposeNormalizeVolume: (() => void) | undefined;
 
   constructor(
     private readonly song: SongStore,
     private readonly viewport: ViewportStore,
   ) {
-    makeAutoObservable<this, 'song' | 'viewport' | 'disposeVocalEffects'>(this, {
+    makeAutoObservable<this, 'song' | 'viewport' | 'disposeVocalEffects' | 'disposeNormalizeVolume'>(this, {
       song: false,
       viewport: false,
       disposeVocalEffects: false,
+      disposeNormalizeVolume: false,
     });
   }
 
@@ -45,10 +47,16 @@ export class KaraokePresenter {
       },
       { fireImmediately: true, equals: comparer.structural },
     );
+    this.disposeNormalizeVolume = reaction(
+      () => appSettingsStore.normalizeVolume,
+      (on) => playbackEngine.setNormalizeVolume(on),
+      { fireImmediately: true },
+    );
   }
 
   dispose(): void {
     this.disposeVocalEffects?.();
+    this.disposeNormalizeVolume?.();
   }
 
   // --- viewport ---

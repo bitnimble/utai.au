@@ -88,6 +88,9 @@ export class AppSettingsStore {
   /** Play the vocal stem as a wide, reverberant backing vocal. */
   vocalSurroundReverb: boolean = false;
 
+  /** Play every song at the same loudness. */
+  normalizeVolume: boolean = true;
+
   constructor() {
     makeAutoObservable(this);
   }

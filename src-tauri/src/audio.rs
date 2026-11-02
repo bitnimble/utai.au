@@ -105,7 +105,7 @@ pub fn audio_remove_track(id: String, state: State<'_, AudioState>) {
     state.0.remove_track(&id);
 }
 
-/// Set one track's effective gain in [0, 1] (mute == 0).
+/// Set one track's effective gain (mute == 0).
 #[tauri::command]
 pub fn audio_set_track_gain(id: String, gain: f32, state: State<'_, AudioState>) {
     state.0.set_track_gain(&id, gain);

@@ -226,6 +226,12 @@ mixer on desktop (`src-tauri/crates/audio/src/stretch.rs`, via `ssstretch`), so
 desktop builds need a C++ compiler. Off 1× the song clock stays in song seconds,
 and the audio plays 6 dB down because Signalsmith overshoots full scale.
 
+**Volume normalisation.** On by default (Audio menu). Each song is measured to
+BS.1770 loudness in a worker on load (`editing/playback/loudness.ts`, over the sum
+of its tracks, so stems share one gain) and played at -14 LUFS, boosted no further
+than its peak allows and at most +12 dB. The gain goes through `AudioTrack.outputGain`, so track gains
+can exceed 1 on both web and desktop; the mic monitor is unaffected.
+
 **Build-output location (`UTAI_BUILD_DIR`).** Set in `.env` to move the
 heavy Rust/Tauri artifacts off the repo disk (maps to `CARGO_TARGET_DIR`).
 
