@@ -23,7 +23,7 @@ export type AudioStemRole = z.infer<typeof audioStemRoleSchema>;
 
 export const audioStemSchema = z.object({
   role: audioStemRoleSchema,
-  /** Path within the zip, e.g. `audio/vocals.flac`. */
+  /** Path within the zip, e.g. `audio/vocals.opus`. */
   file: z.string(),
   /** Original display filename, preserved for the mixer row label. */
   filename: z.string().optional(),

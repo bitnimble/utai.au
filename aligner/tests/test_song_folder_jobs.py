@@ -16,6 +16,7 @@ import app.analysis_routes as analysis
 from app import job_stream
 from app.config import settings
 from app.provisioning import Provisioner
+from tests.tones import assert_opus_tone, write_tone
 
 _SONG = "dQw4w9WgXcQ"
 _LYRICS = json.dumps([{"startSec": 0.0, "text": "hello"}])
@@ -61,7 +62,7 @@ def test_separate_keeps_stems_in_the_songs_folder_and_reuses_them(song: Path, mo
 
     def run_stems(_mix: Path, scratch: Path) -> dict[str, Path]:
         runs.append(scratch)
-        paths = {"vocals": scratch / "v.flac", "accompaniment": scratch / "a.flac"}
+        paths = {"vocals": scratch / "v.opus", "accompaniment": scratch / "a.opus"}
         for role, path in paths.items():
             path.write_bytes(role.encode())
         return paths
@@ -74,11 +75,70 @@ def test_separate_keeps_stems_in_the_songs_folder_and_reuses_them(song: Path, mo
 
     assert len(runs) == 1
     assert first == second
-    assert (song / "stems" / "vocals.flac").read_bytes() == b"vocals"
-    assert (song / "stems" / "accompaniment.flac").read_bytes() == b"accompaniment"
+    assert (song / "stems" / "vocals.opus").read_bytes() == b"vocals"
+    assert (song / "stems" / "accompaniment.opus").read_bytes() == b"accompaniment"
     vocals = next(s for s in first["stems"] if s["role"] == "vocals")
-    assert vocals["path"] == f"music/stems/{_SONG}/vocals.flac"
-    assert vocals["serverPath"] == str(song / "stems" / "vocals.flac")
+    assert vocals["path"] == f"music/stems/{_SONG}/vocals.opus"
+    assert vocals["serverPath"] == str(song / "stems" / "vocals.opus")
+
+
+def _no_separation(monkeypatch) -> None:
+    def run_stems(_mix: Path, _scratch: Path) -> dict[str, Path]:
+        raise AssertionError("the stems were already held")
+
+    monkeypatch.setattr(analysis, "separator", SimpleNamespace(get=lambda: SimpleNamespace(run_stems=run_stems)))
+
+
+def _flac(path: Path, hz: float) -> None:
+    path.parent.mkdir(exist_ok=True)
+    write_tone(path, hz)
+
+
+def test_stems_held_as_flac_become_opus_without_separating_again(song: Path, monkeypatch) -> None:
+    _no_separation(monkeypatch)
+    _flac(song / "stems" / "vocals.flac", 440)
+    _flac(song / "stems" / "accompaniment.flac", 220)
+
+    result = _run(analysis.lyrics_separate, mix=None, mixPath=str(song / "download" / "Song.webm"))
+
+    assert sorted(p.name for p in (song / "stems").iterdir()) == ["accompaniment.opus", "vocals.opus"]
+    assert [s["filename"] for s in result["stems"]] == ["vocals.opus", "accompaniment.opus"]
+    assert_opus_tone(song / "stems" / "vocals.opus", 440)
+    assert_opus_tone(song / "stems" / "accompaniment.opus", 220)
+
+
+def test_a_conversion_cut_short_picks_up_where_it_stopped(song: Path, monkeypatch) -> None:
+    _no_separation(monkeypatch)
+    _flac(song / "stems" / "accompaniment.flac", 220)
+    (song / "stems" / "vocals.opus").write_bytes(b"already encoded")
+
+    _run(analysis.lyrics_separate, mix=None, mixPath=str(song / "download" / "Song.webm"))
+
+    assert sorted(p.name for p in (song / "stems").iterdir()) == ["accompaniment.opus", "vocals.opus"]
+    assert (song / "stems" / "vocals.opus").read_bytes() == b"already encoded"
+    assert_opus_tone(song / "stems" / "accompaniment.opus", 220)
+
+
+def test_a_held_flac_that_will_not_decode_is_separated_again(song: Path, monkeypatch) -> None:
+    runs: list[Path] = []
+
+    def run_stems(_mix: Path, scratch: Path) -> dict[str, Path]:
+        runs.append(scratch)
+        paths = {"vocals": scratch / "v.opus", "accompaniment": scratch / "a.opus"}
+        for role, path in paths.items():
+            path.write_bytes(role.encode())
+        return paths
+
+    monkeypatch.setattr(analysis, "separator", SimpleNamespace(get=lambda: SimpleNamespace(run_stems=run_stems)))
+    (song / "stems").mkdir()
+    (song / "stems" / "vocals.flac").write_bytes(b"not audio")
+    _flac(song / "stems" / "accompaniment.flac", 220)
+
+    _run(analysis.lyrics_separate, mix=None, mixPath=str(song / "download" / "Song.webm"))
+
+    assert len(runs) == 1
+    assert sorted(p.name for p in (song / "stems").iterdir()) == ["accompaniment.opus", "vocals.opus"]
+    assert (song / "stems" / "vocals.opus").read_bytes() == b"vocals"
 
 
 def test_beats_are_kept_in_the_songs_folder_and_reused(song: Path, monkeypatch) -> None:
@@ -221,8 +281,8 @@ def test_a_job_that_queued_behind_the_same_songs_job_reuses_its_result(song: Pat
 
     def stems_written_while_queued(lock: Any, job: Any, lane: Any) -> Any:
         stems.mkdir()
-        (stems / "vocals.flac").write_bytes(b"vocals")
-        (stems / "accompaniment.flac").write_bytes(b"accompaniment")
+        (stems / "vocals.opus").write_bytes(b"vocals")
+        (stems / "accompaniment.opus").write_bytes(b"accompaniment")
         return real_gpu_stream(lock, job, lane)
 
     monkeypatch.setattr(job_stream, "serialized_gpu_stream", stems_written_while_queued)

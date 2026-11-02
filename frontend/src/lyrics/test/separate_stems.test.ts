@@ -15,14 +15,14 @@ test('leaves both stems on the backend, named by where it holds them', async () 
     if (url.endsWith('/music/separate')) {
       const stem = (role: string): object => ({
         role,
-        path: `music/stems/abc/${role}.flac`,
-        serverPath: `/cache/songs/abc/stems/${role}.flac`,
-        filename: `${role}.flac`,
+        path: `music/stems/abc/${role}.opus`,
+        serverPath: `/cache/songs/abc/stems/${role}.opus`,
       });
-      const body = [{ type: 'loading' }, { type: 'result', data: { stems: [stem('vocals'), stem('accompaniment')] } }];
+      const vocals = { ...stem('vocals'), filename: 'Named by the backend.opus' };
+      const body = [{ type: 'loading' }, { type: 'result', data: { stems: [vocals, stem('accompaniment')] } }];
       return new Response(body.map((e) => JSON.stringify(e)).join('\n'));
     }
-    return new Response(new Blob([new Uint8Array([1])]), { headers: { 'content-type': 'audio/flac' } });
+    return new Response(new Blob([new Uint8Array([1])]), { headers: { 'content-type': 'audio/ogg' } });
   }) as typeof fetch;
 
   const progress: string[] = [];
@@ -33,10 +33,14 @@ test('leaves both stems on the backend, named by where it holds them', async () 
 
   expect(progress).toEqual(['loading']);
   expect(stems.vocals).toEqual({
-    filename: 'vocals.flac',
-    serverPath: '/cache/songs/abc/stems/vocals.flac',
-    downloadPath: 'music/stems/abc/vocals.flac',
+    filename: 'Named by the backend.opus',
+    serverPath: '/cache/songs/abc/stems/vocals.opus',
+    downloadPath: 'music/stems/abc/vocals.opus',
   });
-  expect(stems.backing.serverPath).toBe('/cache/songs/abc/stems/accompaniment.flac');
+  expect(stems.backing).toEqual({
+    filename: 'accompaniment.opus',
+    serverPath: '/cache/songs/abc/stems/accompaniment.opus',
+    downloadPath: 'music/stems/abc/accompaniment.opus',
+  });
   expect(urls).toEqual(['/api/music/separate']);
 });

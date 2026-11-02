@@ -23,7 +23,7 @@ export async function separateStems(mix: JobAudio, opts: JobOptions = {}): Promi
   const refs: unknown[] = Array.isArray(stems) ? stems : [];
   const stem = async (role: string): Promise<JobAudio> => {
     const ref = refs.find((s) => (s as { role?: unknown } | null)?.role === role);
-    const audio = parseBackendAudio(ref, `${role}.flac`);
+    const audio = parseBackendAudio(ref, `${role}.opus`);
     if (audio == null) throw new Error(`music/separate did not return a ${role} stem`);
     return receiveJobAudio(audio, opts.signal);
   };

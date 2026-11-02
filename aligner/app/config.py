@@ -80,6 +80,7 @@ class Settings(BaseSettings):
 
     cache_dir: Path = Path("/cache")
     cache_songs_cap_bytes: int = 20 * 1024 * 1024 * 1024  # 20 GB
+    cache_pcm_cap_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GB
 
     # --- Backing video ---
     # yt-dlp format selector + sort for the karaoke backing video: the highest

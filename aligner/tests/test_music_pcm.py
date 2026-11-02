@@ -3,6 +3,7 @@ model-warming lifespan never runs."""
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +14,7 @@ from fastapi.testclient import TestClient
 
 import app.analysis_routes as routes
 from app.config import settings
+from app.pipeline import audio_io
 
 RATE = 44_100
 BYTES_PER_FRAME = 4
@@ -83,7 +85,7 @@ def test_a_failed_transcode_leaves_nothing_a_later_request_would_serve(client: T
     res = client.get("/music/pcm", params={"path": str(path), "rate": RATE})
 
     assert res.status_code == 415
-    assert not list((tmp_path / "songs").rglob("pcm/*"))
+    assert not list((tmp_path / "pcm").glob("*"))
 
 
 def test_files_differing_only_by_extension_get_their_own_pcm(client: TestClient, tmp_path: Path) -> None:
@@ -152,13 +154,89 @@ def test_refuses_a_rate_no_device_runs_at_so_they_cannot_fill_the_disk(client: T
     assert client.get("/music/pcm", params={"path": str(path), "rate": 48_001}).status_code == 400
 
 
-def test_writing_pcm_keeps_the_cache_under_its_cap(
+def test_writing_pcm_keeps_the_decoded_copies_under_their_cap(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = stem(tmp_path)
-    trims: list[bool] = []
-    monkeypatch.setattr(routes, "trim_songs", lambda: trims.append(True))
+    monkeypatch.setattr(settings, "cache_pcm_cap_bytes", 1)
+    stale = tmp_path / "pcm" / "stale.s16"
+    stale.parent.mkdir()
+    stale.write_bytes(b"x" * 100)
+    os.utime(stale, (0, 0))
 
     assert client.get("/music/pcm", params={"path": str(path), "rate": RATE}).status_code == 200
 
-    assert trims == [True]
+    assert not stale.exists()
+
+
+def test_a_decoded_copy_evicted_is_only_decoded_again(client: TestClient, tmp_path: Path) -> None:
+    path = stem(tmp_path)
+    params = {"path": str(path), "rate": RATE}
+    first = client.get("/music/pcm", params=params).content
+
+    for copy in (tmp_path / "pcm").iterdir():
+        copy.unlink()
+
+    assert client.get("/music/pcm", params=params).content == first
+
+
+def test_a_source_changed_under_the_same_name_is_decoded_afresh(client: TestClient, tmp_path: Path) -> None:
+    path = stem(tmp_path)
+    params = {"path": str(path), "rate": RATE}
+    first = client.get("/music/pcm", params=params).content
+
+    t = np.arange(RATE // 2) / RATE
+    sf.write(path, np.stack([0.25 * np.sin(2 * np.pi * 220 * t)] * 2, axis=1), RATE, subtype="PCM_24")
+
+    assert len(client.get("/music/pcm", params=params).content) == len(first) // 2
+
+
+def test_each_request_marks_its_copy_as_just_used(client: TestClient, tmp_path: Path) -> None:
+    path = stem(tmp_path)
+    params = {"path": str(path), "rate": RATE}
+    client.get("/music/pcm", params=params)
+    copy = next((tmp_path / "pcm").iterdir())
+    os.utime(copy, (0, 0))
+
+    client.get("/music/pcm", params=params, headers={"Range": "bytes=0-99"})
+
+    assert copy.stat().st_mtime > 0
+
+
+def _opus_stems(tmp_path: Path, rate: int) -> tuple[Path, Path]:
+    """A click at 1s in each of two different signals, 3s long."""
+    folder = tmp_path / "songs" / "abc" / "stems"
+    folder.mkdir(parents=True)
+    rng = np.random.default_rng(0)
+    frames = rate * 3
+    paths = []
+    for role, level in (("vocals", 0.02), ("accompaniment", 0.05)):
+        signal = rng.normal(0, level, (frames, 2))
+        signal[rate] = 0.9
+        wav = tmp_path / f"{role}.wav"
+        sf.write(wav, signal, rate, subtype="PCM_24")
+        opus = folder / f"{role}.opus"
+        audio_io.encode_transparent_opus(wav, opus)
+        paths.append(opus)
+    return paths[0], paths[1]
+
+
+@pytest.mark.parametrize("source_rate", [44_100, 48_000])
+@pytest.mark.parametrize("output_rate", [44_100, 48_000])
+def test_opus_stems_decode_sample_locked_and_true_to_their_length(
+    client: TestClient, tmp_path: Path, source_rate: int, output_rate: int
+) -> None:
+    vocals, accompaniment = _opus_stems(tmp_path, source_rate)
+
+    decoded = [
+        np.frombuffer(
+            client.get("/music/pcm", params={"path": str(path), "rate": output_rate}).content, dtype="<i2"
+        ).reshape(-1, 2)
+        for path in (vocals, accompaniment)
+    ]
+
+    assert len(decoded[0]) == len(decoded[1])
+    assert abs(len(decoded[0]) - output_rate * 3) < 64
+    clicks = [int(np.abs(stem[:, 0]).argmax()) for stem in decoded]
+    assert clicks[0] == clicks[1]
+    assert abs(clicks[0] - output_rate) <= 2

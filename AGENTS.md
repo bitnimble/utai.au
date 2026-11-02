@@ -31,9 +31,12 @@ the repo root**, and the **`src/…` import alias maps to `frontend/src/…`**
 `frontend/src/foo`).
 
 **Per-song cache.** Everything the backend keeps for a song (fetched track,
-stems, streaming PCM, backing video, vocals, alignment, beats, pitch, language) lives in
+stems, backing video, vocals, alignment, beats, pitch, language) lives in
 `cache_dir/songs/<song_id>/` and is evicted LRU as a whole song once over
-`cache_songs_cap_bytes` (`aligner/app/song_cache.py`).
+`cache_songs_cap_bytes` (`aligner/app/song_cache.py`). Audio is kept compressed: stems
+and lossless downloads as 192 kbps Opus (`audio_io.encode_transparent_opus`), lossy
+downloads as they came. What's playing is decoded to `cache_dir/pcm/`, its own LRU
+under `cache_pcm_cap_bytes`.
 
 **One HTTP API on every platform.** The frontend talks to the backend
 (`aligner/app/main.py`) only over HTTP, through `backendFetch`; nothing branches
@@ -234,7 +237,7 @@ When the song ends the next starts with nothing left to wait for.
 **Streaming PCM.** The app has to fit 2-3 GB Android TVs, so a song's length must not
 show in peak memory on any platform. The backend's ffmpeg decodes all it holds: stems
 stay on the backend as headerless 16-bit stereo at the output's rate (`GET /music/pcm`,
-made on first request), and any frame is one Range request away
+decoded from the kept audio when first asked for), and any frame is one Range request away
 (`editing/playback/pcm.ts`). On web and Android each song has a worker
 (`song_pcm_worker.ts`) streaming every consumer a window of about 8 s: a `stem-player`
 worklet per stem, whose position follows the context clock so stems stay sample-locked,
