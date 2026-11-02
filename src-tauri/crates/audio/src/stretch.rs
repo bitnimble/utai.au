@@ -1,7 +1,7 @@
 //! Real-time speed change for one track, keeping its pitch: the desktop mixer's
 //! counterpart to the Signalsmith worklet the web output runs.
 
-use crate::mixer;
+use crate::mixer::{self, ReadFrames};
 use ssstretch::Stretch;
 
 // Signalsmith overshoots full scale by up to 6 dB on loud material, which would clip at the output.
@@ -47,10 +47,10 @@ impl TrackStretch {
 
     /// Fill interleaved-stereo `out` with `track` as heard from `start_frame`, moving through
     /// `input_frames` of it. A new `epoch` means the position jumped, or the rate changed.
-    pub fn render(
+    pub fn render<T: ReadFrames + ?Sized>(
         &mut self,
         out: &mut [f32],
-        track: &[f32],
+        track: &T,
         start_frame: usize,
         input_frames: usize,
         rate: f64,
@@ -95,7 +95,7 @@ impl TrackStretch {
         }
     }
 
-    fn seek(&mut self, track: &[f32], read_frame: usize, rate: f64) {
+    fn seek<T: ReadFrames + ?Sized>(&mut self, track: &T, read_frame: usize, rate: f64) {
         let preroll = (self.stretch.block_samples() + self.stretch.interval_samples()) as usize;
         // The pre-roll must end at `read_frame`: near the start, silence stands in for what's
         // missing, or the stretcher would hear what comes after `read_frame` as already past.
@@ -108,12 +108,18 @@ impl TrackStretch {
         }
     }
 
-    fn load_input(&mut self, track: &[f32], start_frame: usize, frames: usize, leading_silence: usize) {
+    fn load_input<T: ReadFrames + ?Sized>(
+        &mut self,
+        track: &T,
+        start_frame: usize,
+        frames: usize,
+        leading_silence: usize,
+    ) {
         let total = leading_silence + frames;
         self.source.resize(total * 2, 0.0);
         let (silence, audio) = self.source.split_at_mut(leading_silence * 2);
         mixer::silence(silence);
-        mixer::read_track(audio, track, start_frame);
+        track.read_frames(audio, start_frame);
         for channel in &mut self.input {
             channel.resize(total, 0.0);
         }
@@ -212,26 +218,25 @@ mod tests {
         let mut block = vec![0.0; BLOCK_FRAMES * 2];
         let input_frames = BLOCK_FRAMES / 2;
         for i in 0..20 {
-            stretch.render(&mut block, &track, i * input_frames, input_frames, 0.5, 0);
+            stretch.render(&mut block, track.as_slice(), i * input_frames, input_frames, 0.5, 0);
         }
         let mut peak = 0.0f32;
         for i in 0..40 {
             let start = RATE as usize * 10 + i * input_frames;
-            stretch.render(&mut block, &track, start, input_frames, 0.5, 1);
+            stretch.render(&mut block, track.as_slice(), start, input_frames, 0.5, 1);
             peak = peak.max(block.iter().fold(0.0f32, |max, s| max.max(s.abs())));
         }
         assert!(peak > 0.1, "peak {peak}");
     }
 
-    /// A second of tone at half speed, then a `TrackStretch` left mid-tone, in a track that's
-    /// silent from `SILENT_FROM`.
+    /// A `TrackStretch` left mid-tone, in a track that's silent by `SILENT_FROM`.
     fn stretch_left_mid_tone() -> (TrackStretch, Vec<f32>) {
         let mut track = sine(RATE as usize * 2, 440.0);
         track.extend(vec![0.0f32; RATE as usize * 4 * 2]);
         let mut stretch = TrackStretch::new(RATE);
         let mut block = vec![0.0; BLOCK_FRAMES * 2];
         for i in 0..100 {
-            stretch.render(&mut block, &track, i * BLOCK_FRAMES / 2, BLOCK_FRAMES / 2, 0.5, 0);
+            stretch.render(&mut block, track.as_slice(), i * BLOCK_FRAMES / 2, BLOCK_FRAMES / 2, 0.5, 0);
         }
         (stretch, track)
     }

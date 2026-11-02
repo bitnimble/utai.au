@@ -54,7 +54,10 @@ router = APIRouter(prefix="/music")
 _STEM_ROLES = ("vocals", "accompaniment")
 _STEM_FILES = {f"{role}.flac": role for role in _STEM_ROLES}
 
-PCM_RATES = frozenset({8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000})
+PCM_RATES = frozenset({
+    8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000, 64_000, 88_200,
+    96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000,
+})
 _pcm_writes: dict[Path, asyncio.Future[None]] = {}
 
 

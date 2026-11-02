@@ -125,7 +125,7 @@ export class PlaybackEngine {
     pitchContour?: PitchContour;
   }): Promise<AudioTrack> {
     const id: AudioTrackId = `track-${++this.trackIdCounter}`;
-    const durationSec = stem.pcm.frames / this.output.sampleRate();
+    const durationSec = stem.pcm.frames / stem.pcm.sampleRate;
     const track = new AudioTrack({ id, ...stem, durationSec });
     track.pitchContour = stem.pitchContour;
     await this.output.preloadTrack(track);

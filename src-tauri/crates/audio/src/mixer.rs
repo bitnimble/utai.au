@@ -2,9 +2,9 @@
 //! one interleaved-stereo output block. Pure and allocation-free so it's safe
 //! to call from the cpal output callback (and trivially unit-testable).
 //!
-//! The callback zeroes the block (`silence`), accumulates each track
-//! (`add_track`, per-track gain) and the mic (`add_block`), then scales the sum
-//! by the master gain (`apply_master`). Splitting the mix into accumulate
+//! The callback zeroes the block (`silence`), accumulates each track and the
+//! mic (`add_block`, each at its gain), then scales the sum by the master gain
+//! (`apply_master`). Splitting the mix into accumulate
 //! steps lets the caller loop over a variable track set without allocating a
 //! per-block collection.
 
@@ -13,33 +13,20 @@ pub fn silence(out: &mut [f32]) {
     out.iter_mut().for_each(|s| *s = 0.0);
 }
 
-/// Add one interleaved-stereo track into `out` at `gain`, starting at
-/// `start_frame`. Frames past the track's end (or the whole track when
-/// `gain == 0`) contribute nothing. `out` must be pre-zeroed / already holding
-/// the running sum.
-pub fn add_track(out: &mut [f32], track: &[f32], start_frame: usize, gain: f32) {
-    if gain == 0.0 {
-        return;
-    }
-    let frames = out.len() / 2;
-    let track_frames = track.len() / 2;
-    for i in 0..frames {
-        let tf = start_frame + i;
-        if tf >= track_frames {
-            break; // past this track's end: the rest of the block is silence for it
-        }
-        out[i * 2] += track[tf * 2] * gain;
-        out[i * 2 + 1] += track[tf * 2 + 1] * gain;
-    }
+/// An interleaved-stereo track as the mix reads it.
+pub trait ReadFrames {
+    /// Fills `out` from `start_frame`, silence wherever there's no audio. Allocation-free.
+    fn read_frames(&self, out: &mut [f32], start_frame: usize);
 }
 
-/// Copy one interleaved-stereo track's block starting at `start_frame` into
-/// `out`, silence past the track's end.
-pub fn read_track(out: &mut [f32], track: &[f32], start_frame: usize) {
-    silence(out);
-    let start = (start_frame * 2).min(track.len());
-    let n = out.len().min(track.len() - start);
-    out[..n].copy_from_slice(&track[start..start + n]);
+#[cfg(test)]
+impl ReadFrames for [f32] {
+    fn read_frames(&self, out: &mut [f32], start_frame: usize) {
+        silence(out);
+        let start = (start_frame * 2).min(self.len());
+        let n = out.len().min(self.len() - start);
+        out[..n].copy_from_slice(&self[start..start + n]);
+    }
 }
 
 /// Add block-aligned frames (the mic, an effected track) into `out` at `gain`.
@@ -114,8 +101,10 @@ mod tests {
     /// mic, scale by master.
     fn mix(out: &mut [f32], tracks: &[(&[f32], f32)], start: usize, mic: &[f32], mic_gain: f32, master: f32) {
         silence(out);
+        let mut block = vec![0.0; out.len()];
         for (t, g) in tracks {
-            add_track(out, t, start, *g);
+            t.read_frames(&mut block, start);
+            add_block(out, &block, *g);
         }
         add_block(out, mic, mic_gain);
         apply_master(out, master);
@@ -155,12 +144,12 @@ mod tests {
     }
 
     #[test]
-    fn read_track_copies_from_start_frame_and_silences_past_the_end() {
+    fn read_frames_copies_from_start_frame_and_silences_past_the_end() {
         let track = [0.1, 0.1, 0.2, 0.2, 0.3, 0.3];
         let mut out = [9.0f32; 6];
-        read_track(&mut out, &track, 1);
+        track.read_frames(&mut out, 1);
         assert_eq!(out, [0.2, 0.2, 0.3, 0.3, 0.0, 0.0]);
-        read_track(&mut out, &track, 5);
+        track.read_frames(&mut out, 5);
         assert_eq!(out, [0.0; 6]);
     }
 

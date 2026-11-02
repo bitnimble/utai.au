@@ -41,6 +41,11 @@ tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 # never pulls cpal/alsa; the `audio` module is additionally `#[cfg(desktop)]`.
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 utai-audio = { path = "crates/audio", features = ["device"] }
+# Reads a track's PCM off the backend from its feeder thread, hence blocking.
+reqwest = { version = "0.13", default-features = false, features = ["blocking"] }
+# The updater turns on reqwest's rustls with no crypto provider, which a plain client
+# then panics without. ring is the one the updater already builds.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 # LAN session gateway (`session_gateway`): phones join a desktop-hosted session.
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
 tokio = { version = "1", features = ["net"] }
