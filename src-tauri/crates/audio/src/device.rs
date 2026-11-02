@@ -275,12 +275,12 @@ impl AudioEngine {
         publish(&self.shared, &sources);
     }
 
-    /// Set one track's effective gain in [0, 1] (mute == 0). No-op for an
-    /// unknown id.
+    /// Set one track's effective gain (mute == 0), above 1 when volume
+    /// normalisation boosts a quiet song. No-op for an unknown id.
     pub fn set_track_gain(&self, id: &str, gain: f32) {
         let mut sources = self.shared.sources.lock().unwrap();
         if let Some(s) = sources.iter_mut().find(|s| s.id == id) {
-            s.gain = gain.clamp(0.0, 1.0);
+            s.gain = gain.max(0.0);
             publish(&self.shared, &sources);
         }
     }

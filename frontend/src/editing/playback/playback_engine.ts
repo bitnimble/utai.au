@@ -7,6 +7,7 @@ import {
   decodeAudioTrackFile,
   decodeAudioTrackUrl,
 } from './audio_tracks';
+import { measureSongLoudnessGain } from './loudness_worker_client';
 import { buildLinearTimeline, EMPTY_TIMELINE, UtaiTimeline } from './timeline';
 import { trackEffectMask, type TrackEffect } from './track_effects';
 import { waveformWorker } from './waveform_worker_client';
@@ -57,6 +58,9 @@ export class PlaybackEngine {
   ended = false;
   audioTracks: Map<AudioTrackId, AudioTrack> = new Map();
 
+  private normalizeVolume = true;
+  private measuredLoudnessGain = 1;
+  private loudnessToken = 0;
   private rafId: number | undefined;
   private endTimerId: number | undefined;
   private trackIdCounter = 0;
@@ -71,6 +75,9 @@ export class PlaybackEngine {
     makeAutoObservable<
       this,
       | 'output'
+      | 'normalizeVolume'
+      | 'measuredLoudnessGain'
+      | 'loudnessToken'
       | 'rafId'
       | 'endTimerId'
       | 'trackIdCounter'
@@ -80,6 +87,9 @@ export class PlaybackEngine {
       | 'mixByRole'
     >(this, {
       output: false,
+      normalizeVolume: false,
+      measuredLoudnessGain: false,
+      loudnessToken: false,
       feedStartSec: false,
       rafId: false,
       endTimerId: false,
@@ -118,6 +128,7 @@ export class PlaybackEngine {
 
   clearAudioTrack(id: AudioTrackId): void {
     if (!this.audioTracks.has(id)) return;
+    this.loudnessToken++;
     this.audioTracks.delete(id);
     this.output.removeTrack(id);
     waveformWorker.dropTrack(id);
@@ -148,6 +159,11 @@ export class PlaybackEngine {
     if (!track || trackEffectMask(track.effects) === trackEffectMask(effects)) return;
     track.effects = effects;
     this.output.setTrackEffects(id, effects);
+  }
+
+  setNormalizeVolume(on: boolean): void {
+    this.normalizeVolume = on;
+    this.applyLoudnessGain();
   }
 
   /** Positive delays the audio itself; negative holds everything else back by as much instead. */
@@ -276,7 +292,25 @@ export class PlaybackEngine {
     });
     this.output.setTrackGain(id, track.outputGain);
     waveformWorker.registerTrack(id, buffer);
+    // Awaited so the song's first play is already at its level.
+    await this.measureLoudness();
     return id;
+  }
+
+  private async measureLoudness(): Promise<void> {
+    const token = ++this.loudnessToken;
+    const gain = await measureSongLoudnessGain(Array.from(this.audioTracks.values(), (t) => t.buffer));
+    if (token !== this.loudnessToken) return;
+    this.measuredLoudnessGain = gain;
+    this.applyLoudnessGain();
+  }
+
+  private applyLoudnessGain(): void {
+    const gain = this.normalizeVolume ? this.measuredLoudnessGain : 1;
+    for (const track of this.audioTracks.values()) {
+      track.loudnessGain = gain;
+      this.output.setTrackGain(track.id, track.outputGain);
+    }
   }
 
   private applyMix(track: AudioTrack): void {

@@ -1009,6 +1009,7 @@ const AudioMenu = observer(function AudioMenu() {
     >
       {() => (
         <>
+          <NormalizeVolumeItem />
           <SubmenuItem label="Vocal track effects">{() => <VocalEffectItems />}</SubmenuItem>
           <DropdownSection label="Audio timing (ms)">
             <AudioTimingControl />
@@ -1019,6 +1020,18 @@ const AudioMenu = observer(function AudioMenu() {
         </>
       )}
     </DropdownButton>
+  );
+});
+
+const NormalizeVolumeItem = observer(function NormalizeVolumeItem() {
+  return (
+    <ToggleMenuItem
+      label="Normalise volume"
+      active={appSettingsStore.normalizeVolume}
+      onToggle={() => appSettingsPresenter.setNormalizeVolume(!appSettingsStore.normalizeVolume)}
+      title="Play every song at the same loudness"
+      testId="normalize-volume"
+    />
   );
 });
 

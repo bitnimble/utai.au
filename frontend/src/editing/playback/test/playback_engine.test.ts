@@ -51,7 +51,7 @@ class FakeOutput implements AudioOutput {
   }
   async addTrack(): Promise<void> {}
   removeTrack(): void {}
-  setTrackGain(): void {}
+  setTrackGain(_id: string, _gain: number): void {}
   effectCalls: Array<readonly TrackEffect[]> = [];
   setTrackEffects(_id: string, effects: readonly TrackEffect[]): void {
     this.effectCalls.push(effects);
@@ -340,4 +340,68 @@ test('track effects reach the output only when they change', () => {
 
   expect(output.effectCalls).toEqual([['surround-reverb'], []]);
   expect(engine.audioTracks.get('t')?.effects).toEqual([]);
+});
+
+test('volume normalisation: a cleared song\'s late measurement is dropped, and the setting and mix apply on top', async () => {
+  const measurements: Array<{ reply: (gain: number) => void }> = [];
+  class FakeWorker {
+    onmessage: ((e: { data: number }) => void) | undefined;
+    constructor(url: URL) {
+      if (url.pathname.endsWith('loudness_worker.ts')) {
+        measurements.push({ reply: (gain) => this.onmessage?.({ data: gain }) });
+      }
+    }
+    postMessage(): void {}
+    terminate(): void {}
+  }
+  class DecodingOutput extends FakeOutput {
+    gains = new Map<string, number>();
+    override decodeContext(): AudioContext {
+      const buffer = {
+        duration: 10,
+        length: 480,
+        sampleRate: 48000,
+        numberOfChannels: 1,
+        getChannelData: () => new Float32Array(480),
+      };
+      return { decodeAudioData: async () => buffer } as unknown as AudioContext;
+    }
+    override setTrackGain(id: string, gain: number): void {
+      this.gains.set(id, gain);
+    }
+  }
+  const measurementsStarted = async (count: number): Promise<void> => {
+    while (measurements.length < count) await Bun.sleep(1);
+  };
+
+  const realWorker = globalThis.Worker;
+  Reflect.set(globalThis, 'Worker', FakeWorker);
+  try {
+    const output = new DecodingOutput();
+    const engine = new PlaybackEngine(output);
+    const file = new File([new Uint8Array(4)], 'a.wav');
+
+    const firstSong = engine.loadAudioTrack(file);
+    await measurementsStarted(1);
+    engine.clearAudioTrack('track-1');
+    const secondSong = engine.loadAudioTrack(file);
+    await measurementsStarted(2);
+    measurements[1].reply(0.5);
+    await secondSong;
+    measurements[0].reply(3);
+    await firstSong;
+    expect(output.gains.get('track-2')).toBe(0.5);
+
+    engine.setNormalizeVolume(false);
+    expect(output.gains.get('track-2')).toBe(1);
+    engine.setNormalizeVolume(true);
+    expect(output.gains.get('track-2')).toBe(0.5);
+
+    engine.setTrackVolume('track-2', 0.5);
+    expect(output.gains.get('track-2')).toBe(0.25);
+    engine.setTrackMuted('track-2', true);
+    expect(output.gains.get('track-2')).toBe(0);
+  } finally {
+    Reflect.set(globalThis, 'Worker', realWorker);
+  }
 });
