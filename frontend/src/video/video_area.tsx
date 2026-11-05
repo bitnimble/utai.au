@@ -1,6 +1,7 @@
 import classNames from 'classnames';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
+import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { VideoPresenterContext, VideoStoreContext } from './video_contexts';
 import { VideoPresenter } from './video_presenter';
 import styles from './video_area.module.css';
@@ -42,17 +43,42 @@ const NativePlayer = observer(function NativePlayer({ presenter }: { presenter: 
     presenter.attachNative([first.current, second.current]);
     return () => presenter.detach();
   }, [presenter]);
-  return [first, second].map((ref, slot) => (
-    <video
-      key={slot}
-      ref={ref}
-      className={classNames(styles.videoHost, slot !== store.activeSlot && styles.videoStandby)}
-      data-testid={slot === store.activeSlot ? 'video-native' : 'video-standby'}
-      muted
-      playsInline
-    />
-  ));
+  return (
+    <>
+      {[first, second].map((ref, slot) => (
+        <video
+          key={slot}
+          ref={ref}
+          className={classNames(styles.videoHost, slot !== store.activeSlot && styles.videoStandby)}
+          data-testid={slot === store.activeSlot ? 'video-native' : 'video-standby'}
+          // WebGL can only read a cross-origin video's frames under CORS.
+          crossOrigin="anonymous"
+          muted
+          playsInline
+        />
+      ))}
+      {appSettingsStore.videoEffect !== 'none' && <EffectCanvas presenter={presenter} first={first} second={second} />}
+    </>
+  );
 });
+
+const EffectCanvas = ({
+  presenter,
+  first,
+  second,
+}: {
+  presenter: VideoPresenter;
+  first: React.RefObject<HTMLVideoElement | null>;
+  second: React.RefObject<HTMLVideoElement | null>;
+}) => {
+  const canvas = React.useRef<HTMLCanvasElement>(null);
+  React.useEffect(() => {
+    if (!canvas.current || !first.current || !second.current) return;
+    presenter.attachEffect(canvas.current, [first.current, second.current]);
+    return () => presenter.detachEffect();
+  }, [presenter, first, second]);
+  return <canvas ref={canvas} className={styles.effectCanvas} data-testid="video-effect-canvas" />;
+};
 
 const EmbedPlayer = ({ presenter }: { presenter: VideoPresenter }) => {
   const hostRef = React.useRef<HTMLDivElement>(null);

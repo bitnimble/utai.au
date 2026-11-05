@@ -78,6 +78,7 @@ import { VideoStore } from 'src/video/video_store';
 import { VideoPresenter } from 'src/video/video_presenter';
 import { VideoPresenterContext, VideoStoreContext } from 'src/video/video_contexts';
 import { VideoArea } from 'src/video/video_area';
+import { VIDEO_EFFECTS, VideoEffect } from 'src/video/video_effects';
 import { SkipSegmentsStore } from 'src/skip_segments/skip_segments_store';
 import { SkipSegmentsPresenter } from 'src/skip_segments/skip_segments_presenter';
 import {
@@ -992,10 +993,36 @@ const ViewMenu = observer(function ViewMenu() {
               onToggle={() => appSettingsPresenter.toggleTheme()}
               testId="light-theme"
             />
+            <SubmenuItem label="Video effect">{() => <VideoEffectItems />}</SubmenuItem>
           </DropdownSection>
         </>
       )}
     </DropdownButton>
+  );
+});
+
+const VIDEO_EFFECT_LABELS: Record<VideoEffect, string> = {
+  none: 'None',
+  crt: 'CRT',
+  vhs: 'VHS',
+  film: 'Old film',
+  pixel: '8-bit',
+};
+
+const VideoEffectItems = observer(function VideoEffectItems() {
+  return (
+    <>
+      {VIDEO_EFFECTS.map((effect) => (
+        <ToggleMenuItem
+          key={effect}
+          label={VIDEO_EFFECT_LABELS[effect]}
+          active={appSettingsStore.videoEffect === effect}
+          onToggle={() => appSettingsPresenter.setVideoEffect(effect)}
+          role="menuitemradio"
+          testId={`video-effect-${effect}`}
+        />
+      ))}
+    </>
   );
 });
 

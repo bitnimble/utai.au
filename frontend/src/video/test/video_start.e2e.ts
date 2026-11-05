@@ -1,8 +1,7 @@
 import { expect, type Page } from '@playwright/test';
-import { strToU8, zipSync } from 'fflate';
 import { fileURLToPath } from 'node:url';
 import { HOST_PATH, test } from 'src/testing/e2e_test';
-import { makeWav } from 'src/testing/wav';
+import { makeSongBundle } from 'src/testing/song_bundle';
 
 const VIDEO_ID = 'R03cqGg40GU';
 const VIDEO_PATH = fileURLToPath(new URL('./static_art.mp4', import.meta.url));
@@ -18,18 +17,11 @@ function bundleWithVideo(
   videoId = VIDEO_ID,
   seconds = 30,
 ): { name: string; mimeType: string; buffer: Buffer } {
-  const index = {
-    version: 1,
-    title,
-    sourceUrl: `https://youtu.be/${videoId}`,
-    audio: [{ role: 'backing', file: 'audio/backing.wav', filename: 'backing.wav' }],
-    lyrics: [],
+  return {
+    name: `${title}.utai.zip`,
+    mimeType: 'application/zip',
+    buffer: makeSongBundle(seconds, { title, lyrics: false, sourceUrl: `https://youtu.be/${videoId}` }),
   };
-  const zip = zipSync({
-    'index.json': strToU8(JSON.stringify(index)),
-    'audio/backing.wav': new Uint8Array(makeWav(seconds)),
-  });
-  return { name: `${title}.utai.zip`, mimeType: 'application/zip', buffer: Buffer.from(zip) };
 }
 
 async function queueSong(page: Page): Promise<void> {

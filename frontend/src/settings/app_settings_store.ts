@@ -1,5 +1,6 @@
 import { makeAutoObservable } from 'mobx';
 import type { JapaneseScript } from 'src/lyrics/furigana';
+import type { VideoEffect } from 'src/video/video_effects';
 
 /** Compiled-in fallback for {@link AppSettingsStore.alignerUrl}. Only the
  *  default is baked; the live value is user-editable + persisted. Dev / docker
@@ -93,6 +94,9 @@ export class AppSettingsStore {
 
   /** Jump past a SponsorBlock non-music section at a song's start or end. */
   autoSkipNonMusic: boolean = true;
+
+  /** Shader drawn over the native backing video. */
+  videoEffect: VideoEffect = 'none';
 
   constructor() {
     makeAutoObservable(this);

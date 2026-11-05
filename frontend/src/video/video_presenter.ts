@@ -1,9 +1,11 @@
-import { reaction, runInAction, when, type IReactionDisposer } from 'mobx';
+import { autorun, reaction, runInAction, when, type IReactionDisposer } from 'mobx';
 import { playbackEngine } from 'src/editing/playback/player';
+import { appSettingsStore } from 'src/settings/app_settings_presenter';
 import { BackingVideo } from './backing_video';
 import { createNativeVideo } from './native_video';
 import { resolveBackingVideoUrl } from './video_client';
 import { VideoClockFollower } from './video_clock_follower';
+import { VideoEffectRenderer } from './video_effect_renderer';
 import { VideoStore } from './video_store';
 import { createYouTubePlayer, YouTubePlayerHandle } from './youtube_player';
 
@@ -45,6 +47,7 @@ export class VideoPresenter {
    *  produce). */
   private epoch = 0;
   private follower: VideoClockFollower | undefined;
+  private effectOverlay: { renderer: VideoEffectRenderer; dispose: IReactionDisposer } | undefined;
 
   constructor(private readonly store: VideoStore) {}
 
@@ -103,6 +106,22 @@ export class VideoPresenter {
     this.slots = undefined;
     this.loadedVideoId = undefined;
     this.setFirstFrameVideoId(undefined);
+  }
+
+  attachEffect(canvas: HTMLCanvasElement, slots: readonly [HTMLVideoElement, HTMLVideoElement]): void {
+    const renderer = VideoEffectRenderer.create(canvas);
+    if (renderer == null) return;
+    const dispose = autorun(() => {
+      const effect = appSettingsStore.videoEffect;
+      if (effect !== 'none') renderer.show(slots[this.store.activeSlot], effect);
+    });
+    this.effectOverlay = { renderer, dispose };
+  }
+
+  detachEffect(): void {
+    this.effectOverlay?.dispose();
+    this.effectOverlay?.renderer.destroy();
+    this.effectOverlay = undefined;
   }
 
   // --- native <video> backing (primary) ---

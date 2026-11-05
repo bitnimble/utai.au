@@ -6,6 +6,7 @@ import {
   MIN_LYRIC_FONT_SIZE_PX,
   ViewMode,
 } from './app_settings_store';
+import { VIDEO_EFFECTS, VideoEffect } from 'src/video/video_effects';
 
 const STORAGE_KEY = 'utai.settings';
 
@@ -42,6 +43,7 @@ export class AppSettingsPresenter {
         vocalSurroundReverb: this.settings.vocalSurroundReverb,
         normalizeVolume: this.settings.normalizeVolume,
         autoSkipNonMusic: this.settings.autoSkipNonMusic,
+        videoEffect: this.settings.videoEffect,
       });
       try {
         localStorage.setItem(STORAGE_KEY, snapshot);
@@ -126,6 +128,10 @@ export class AppSettingsPresenter {
     this.settings.autoSkipNonMusic = on;
   }
 
+  setVideoEffect(effect: VideoEffect): void {
+    this.settings.videoEffect = effect;
+  }
+
   setLyricsFontSize(px: number): void {
     this.settings.lyricsFontSizePx = Math.max(
       MIN_LYRIC_FONT_SIZE_PX,
@@ -197,6 +203,10 @@ export class AppSettingsPresenter {
       }
       if (typeof obj.autoSkipNonMusic === 'boolean') {
         this.settings.autoSkipNonMusic = obj.autoSkipNonMusic;
+      }
+      const videoEffect = VIDEO_EFFECTS.find((effect) => effect === obj.videoEffect);
+      if (videoEffect != null) {
+        this.settings.videoEffect = videoEffect;
       }
     } catch {
       // corrupt JSON; keep defaults
